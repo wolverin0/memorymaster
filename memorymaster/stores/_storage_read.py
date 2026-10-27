@@ -743,8 +743,21 @@ class _ReadMixin:
         if not subject or not predicate:
             return []
 
-        clauses = ["status = 'confirmed'", "subject = ?", "predicate = ?", "scope = ?"]
-        params: list[object] = [subject, predicate, scope or "project"]
+        # T-1863 F6: tuple identity is case/whitespace-insensitive. The exact
+        # match stays as an OR arm so non-ASCII text (SQLite lower() is ASCII
+        # only) still matches itself. shortcut: internal whitespace runs are
+        # not collapsed in SQL; upgrade with a normalized column if it matters.
+        clauses = [
+            "status = 'confirmed'",
+            "(subject = ? OR lower(trim(subject)) = ?)",
+            "(predicate = ? OR lower(trim(predicate)) = ?)",
+            "scope = ?",
+        ]
+        params: list[object] = [
+            subject, subject.strip().lower(),
+            predicate, predicate.strip().lower(),
+            scope or "project",
+        ]
         clauses.append("tenant_id IS ?")
         params.append(tenant_id)
         visibility, source_agent = normalize_claim_identity(visibility, source_agent)

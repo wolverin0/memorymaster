@@ -35,7 +35,7 @@ from memorymaster.core import llm_budget
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
 from memorymaster.core.lifecycle import transition_claim
-from memorymaster.core.models import Claim
+from memorymaster.core.models import Claim, normalize_identity_part
 from memorymaster.core.security import redact_text
 
 logger = logging.getLogger(__name__)
@@ -150,8 +150,23 @@ def _embed_text(claim: Claim) -> str:
 def _same_subject_predicate(a: Claim, b: Claim) -> bool:
     return (
         bool(a.subject) and bool(a.predicate)
-        and (a.subject or "").strip().lower() == (b.subject or "").strip().lower()
-        and (a.predicate or "").strip().lower() == (b.predicate or "").strip().lower()
+        and normalize_identity_part(a.subject) == normalize_identity_part(b.subject)
+        and normalize_identity_part(a.predicate) == normalize_identity_part(b.predicate)
+    )
+
+
+def _deterministic_relation(a: Claim, b: Claim) -> bool:
+    """Same tuple AND both objects present: conflict_resolver / find_conflicts
+    can compare the values, so the semantic probe may skip the pair.
+
+    T-1863 F6: with an object missing on either side the deterministic path
+    cannot establish any relation, so the pair is NOT handled and must reach
+    the semantic check.
+    """
+    return (
+        _same_subject_predicate(a, b)
+        and bool(normalize_identity_part(a.object_value))
+        and bool(normalize_identity_part(b.object_value))
     )
 
 
@@ -167,7 +182,7 @@ def _prefiltered(a: Claim, b: Claim) -> bool:
     """Cheap skip BEFORE the LLM: deterministic-domain or already-resolved pairs."""
     if a.status in _SKIP_STATUSES or b.status in _SKIP_STATUSES:
         return True
-    if _same_subject_predicate(a, b):
+    if _deterministic_relation(a, b):
         return True  # conflict_resolver / find_conflicts already own these
     if _already_linked(a, b):
         return True
@@ -471,7 +486,7 @@ def probe_for_claim(
             continue
         if peer.status in _SKIP_STATUSES:
             continue
-        if _same_subject_predicate(claim, peer):
+        if _deterministic_relation(claim, peer):
             continue  # deterministic resolver's domain
         if _already_linked(claim, peer):
             continue

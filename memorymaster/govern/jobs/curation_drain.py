@@ -13,8 +13,8 @@ EL CONTRATO:
   pineado, que siguen siendo del operador en el dashboard.
 - Resolucion DETERMINISTICA, sin LLM: el rival se localiza por la misma tupla
   del indice unico de confirmadas (tenant, subject, predicate, scope) o por el
-  evento `conflicts_with_confirmed_claim:<id>`; gana `_pick_winner` (pinned >
-  confianza > frescura > citas > id).
+  evento `conflicts_with_confirmed_claim:<id>`; gana el vinculo explicito de
+  supersesion o el pin (ver T-1863 abajo; ya no gana la confianza).
 - TRES VEREDICTOS deterministas, medidos en dry-run sobre la base viva antes
   de elegirlos (5.976 conflicted: 260 pierden, 1.422 ganarian, 4.222 sin rival):
     (a) el conflicted PIERDE  -> superseded con puntero al ganador;
@@ -38,6 +38,7 @@ import logging
 import re
 from typing import Any
 
+from memorymaster.core.models import normalize_identity_part
 from memorymaster.core.promotion_policy import auto_promotion_blocked, structure_blocks_auto_promotion
 from memorymaster.govern.conflict_resolver import (
     SupersessionRaceLost,
@@ -75,11 +76,18 @@ def _find_rival(service: Any, claim: Any) -> Any | None:
             row = conn.execute(
                 """SELECT id FROM claims
                    WHERE COALESCE(tenant_id,'') = COALESCE(?, '')
-                     AND subject = ? AND predicate = ? AND scope = ?
+                     AND (subject = ? OR lower(trim(subject)) = ?)
+                     AND (predicate = ? OR lower(trim(predicate)) = ?)
+                     AND scope = ?
                      AND status = 'confirmed' AND visibility = 'public'
                      AND id != ?
                    LIMIT 1""",
-                (claim.tenant_id, claim.subject, claim.predicate, claim.scope, claim.id),
+                (
+                    claim.tenant_id,
+                    claim.subject, claim.subject.strip().lower(),
+                    claim.predicate, claim.predicate.strip().lower(),
+                    claim.scope, claim.id,
+                ),
             ).fetchone()
         if row is not None:
             return store.get_claim(int(row["id"]), include_citations=True)
@@ -89,6 +97,28 @@ def _find_rival(service: Any, claim: Any) -> Any | None:
             rival = store.get_claim(int(match.group(1)), include_citations=True)
             if rival is not None and rival.status == "confirmed":
                 return rival
+    return None
+
+
+def _verdict(claim: Any, rival: Any) -> tuple[str, str] | None:
+    """Who wins between a conflicted claim and its confirmed rival, or None.
+
+    T-1863 F5: different-value contradictions are settled ONLY by an explicit
+    supersession link (either direction) or by the operator's pin on the rival.
+    Confidence / freshness / citations (``_pick_winner``) are used solely when
+    both claims assert the same non-empty value, i.e. a duplicate rather than a
+    contradiction. Missing objects count as unknown, not as "same".
+    """
+    if claim.supersedes_claim_id == rival.id:
+        return "claim_wins", "supersedes_explicit"
+    if rival.supersedes_claim_id == claim.id:
+        return "claim_loses", "rival_supersedes_explicit"
+    if rival.pinned and not claim.pinned:
+        return "claim_loses", "pinned_wins"
+    claim_object = normalize_identity_part(claim.object_value)
+    if claim_object and claim_object == normalize_identity_part(rival.object_value):
+        pair = _pick_winner(claim, rival)
+        return ("claim_loses" if pair.loser.id == claim.id else "claim_wins"), pair.reason
     return None
 
 
@@ -103,6 +133,7 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
         "resolved_won": 0,
         "resolved_orphan": 0,
         "pending_revalidation": 0,
+        "held_for_review": 0,
         "kept_for_operator": 0,
         "held_by_source_policy": 0,
         "held_by_structure_policy": 0,
@@ -120,15 +151,24 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
                 # status until the normal validator checks evidence/policy.
                 summary["pending_revalidation"] += 1
                 continue
-            pair = _pick_winner(claim, rival)
-            if pair.loser.id == claim.id:
+            decided = _verdict(claim, rival)
+            if decided is None:
+                # T-1863 F5: different (or unknown) values and no explicit
+                # supersession link. Confidence/recency/citation counts are not
+                # evidence of which side is true; a newer correction at .69 must
+                # not lose to the older claim it corrects at .79. Leave both
+                # untouched for review.
+                summary["held_for_review"] += 1
+                continue
+            verdict, verdict_reason = decided
+            if verdict == "claim_loses":
                 # (a) el conflicted pierde contra la confirmada.
                 if apply:
                     supersede_claim(
                         store,
                         old_claim_id=claim.id,
                         new_claim_id=rival.id,
-                        reason=f"{DRAIN_DETAILS}: pierde contra confirmada #{rival.id} ({pair.reason})",
+                        reason=f"{DRAIN_DETAILS}: pierde contra confirmada #{rival.id} ({verdict_reason})",
                     )
                 summary["resolved_lost"] += 1
             else:
@@ -148,7 +188,7 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
                 if apply:
                     transition_claim(
                         store, claim.id, "confirmed",
-                        reason=f"{DRAIN_DETAILS}: gana el conflicto contra #{rival.id} ({pair.reason})",
+                        reason=f"{DRAIN_DETAILS}: gana el conflicto contra #{rival.id} ({verdict_reason})",
                         supersedes_claim_id=rival.id,
                     )
                 summary["resolved_won"] += 1

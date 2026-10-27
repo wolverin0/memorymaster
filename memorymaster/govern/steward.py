@@ -14,6 +14,7 @@ from memorymaster.core import observability
 from memorymaster.core import llm_budget
 from memorymaster.core.event_scan import scan_proposal_events
 from memorymaster.core.lifecycle import transition_claim
+from memorymaster.core.models import normalize_identity_part
 from memorymaster.core.security import is_sensitive_claim, sanitize_persisted_json
 from memorymaster.core.service import MemoryService
 import contextlib
@@ -699,8 +700,8 @@ def _is_newer(left: Any, right: Any) -> bool:
 
 
 def _claim_key(claim: Any) -> tuple[str, str, str] | None:
-    subject = _normalize_text(claim.subject)
-    predicate = _normalize_text(claim.predicate)
+    subject = normalize_identity_part(claim.subject)
+    predicate = normalize_identity_part(claim.predicate)
     scope = _normalize_text(claim.scope) or "project"
     if not subject or not predicate:
         return None
@@ -742,11 +743,16 @@ def _find_replacement_or_conflict(claim: Any, relation_index: dict[tuple[str, st
         for peer in relation_index.get(key, []):
             if peer.id == claim.id:
                 continue
-            if _normalize_text(peer.object_value) == _normalize_text(claim.object_value):
+            peer_object = normalize_identity_part(peer.object_value)
+            claim_object = normalize_identity_part(claim.object_value)
+            # T-1863 F6: two missing objects are "unknown", not "equal".
+            if peer_object and peer_object == claim_object:
                 continue
             if peer.status == "confirmed":
                 has_conflict = True
-                if _is_newer(peer, claim):
+                # A newer peer replaces only on a real value comparison; with a
+                # missing object the relation is unknown and goes to review.
+                if peer_object and claim_object and _is_newer(peer, claim):
                     replacement = peer
                     break
     return replacement, has_conflict

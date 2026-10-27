@@ -53,6 +53,16 @@ STATUS_TRANSITION_EVENT_TYPES = (
 )
 
 
+def normalize_identity_part(value: str | None) -> str:
+    """Canonical form of a subject/predicate/object for tuple comparison.
+
+    T-1863 F6: ``API`` vs ``api`` and `` authentication`` vs ``authentication``
+    are the same tuple. Every conflict check (store lookup, validator, steward,
+    contradiction probe) must compare through this one function.
+    """
+    return " ".join((value or "").split()).lower()
+
+
 def validate_event_type(event_type: str) -> str:
     if not isinstance(event_type, str):
         raise ValueError("event_type must be a string.")

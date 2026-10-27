@@ -2587,24 +2587,24 @@ class PostgresStore(SQLiteStore):
         bounded = max(0.0, min(1.0, confidence))
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
-            # Read the pre-update row first: the event is only worth writing if
-            # the value actually moves. See the SQLite twin in
-            # `_storage_write_claims.set_confidence` -- a no-op adjustment row
-            # says only "I looked and changed nothing", and 489,927 of them were
-            # 20% of the production event log.
-            current_status = None
-            changed = True
-            if details:
-                cur.execute("SELECT status, confidence FROM claims WHERE id = %s", (claim_id,))
-                status_row = cur.fetchone()
-                if status_row is not None:
-                    current_status = str(status_row["status"])
-                    changed = confidence_changed(status_row["confidence"], bounded)
+            # Read the pre-update row first: nothing is written (event, value
+            # or updated_at) unless the value actually moves. T-1863 F7: decay
+            # ages from updated_at, so a no-op write must not reset it. See the
+            # SQLite twin in `_storage_write_claims.set_confidence`.
+            cur.execute("SELECT status, confidence FROM claims WHERE id = %s", (claim_id,))
+            status_row = cur.fetchone()
+            if status_row is None:
+                return
+            current_status = str(status_row["status"])
+            if not confidence_changed(status_row["confidence"], bounded):
+                if details:
+                    bump_counter("claim_confidence_noop_total", writer=details_writer(details))
+                return
             cur.execute(
                 "UPDATE claims SET confidence = %s, updated_at = %s WHERE id = %s",
                 (bounded, now, claim_id),
             )
-            if details and changed:
+            if details:
                 self._insert_event_row(
                     conn,
                     claim_id=claim_id,
@@ -2615,8 +2615,6 @@ class PostgresStore(SQLiteStore):
                     payload=None,
                     created_at=now,
                 )
-            elif details:
-                bump_counter("claim_confidence_noop_total", writer=details_writer(details))
 
     def set_pinned(self, claim_id: int, pinned: bool, reason: str) -> None:
         now = utc_now()
@@ -3008,8 +3006,18 @@ class PostgresStore(SQLiteStore):
         if not subject or not predicate:
             return []
 
-        clauses = ["status = 'confirmed'", "subject = %s", "predicate = %s", "scope = %s"]
-        params: list[object] = [subject, predicate, scope or "project"]
+        # T-1863 F6: case/whitespace-insensitive tuple identity (see SQLite twin).
+        clauses = [
+            "status = 'confirmed'",
+            "(subject = %s OR lower(btrim(subject)) = %s)",
+            "(predicate = %s OR lower(btrim(predicate)) = %s)",
+            "scope = %s",
+        ]
+        params: list[object] = [
+            subject, subject.strip().lower(),
+            predicate, predicate.strip().lower(),
+            scope or "project",
+        ]
         visibility, source_agent = normalize_claim_identity(
             visibility,
             source_agent,
