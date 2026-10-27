@@ -43,7 +43,7 @@ from pathlib import Path
 from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.core.security import sanitize_persisted_text
 from memorymaster.recall.recall_tokenizer import _candidate_tokens
-from memorymaster.stores._storage_shared import open_conn
+from memorymaster.stores._storage_shared import connect_ro, open_conn
 
 logger = logging.getLogger(__name__)
 
@@ -354,10 +354,8 @@ def search(
         args.append(since)
     sql += " ORDER BY x.rank LIMIT ?"
     args.append(max(limit * 10, 50))
-    uri = f"file:{index_path.resolve().as_posix()}?mode=ro"
     try:
-        with closing(sqlite3.connect(uri, uri=True)) as conn:
-            conn.row_factory = sqlite3.Row
+        with closing(connect_ro(index_path.resolve().as_posix())) as conn:
             rows = conn.execute(sql, args).fetchall()
     except sqlite3.OperationalError as exc:
         logger.warning("transcript_index: search failed: %s", exc)
