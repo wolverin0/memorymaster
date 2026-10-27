@@ -118,6 +118,8 @@
     "steward-proposals",
     "train-model",
     "transcribe-source-item",
+    "transcript-index",
+    "transcript-search",
     "unlink",
     "verbatim-cleanup",
     "verify-claims",
@@ -141,11 +143,11 @@
     "memorymaster-workflow-hook"
   ],
   "counts": {
-    "cli_commands": 128,
+    "cli_commands": 130,
     "console_entrypoints": 9,
     "mcp_tools": 51,
     "ops_cli_commands": 5,
-    "pytest_test_functions": 6121
+    "pytest_test_functions": 6130
   },
   "feature_profile_matrix": {
     "capture_hook": [

@@ -36,6 +36,11 @@ from memorymaster.surfaces.backfill_cli import handle_backfill, register_backfil
 from memorymaster.surfaces.session_scope import handle_session_scope
 from memorymaster.surfaces.cli_handlers_skills import SKILL_COMMAND_HANDLERS, register_skill_parsers
 from memorymaster.surfaces.cli_handlers_jev import JEV_COMMAND_HANDLERS, LEDGER_COMMANDS, register_jev_parsers
+from memorymaster.surfaces.cli_handlers_transcripts import (
+    TRANSCRIPT_COMMAND_HANDLERS,
+    TRANSCRIPT_COMMANDS,
+    register_transcript_parsers,
+)
 from memorymaster.surfaces.cli_handlers_workflow import (
     WORKFLOW_COMMAND_HANDLERS,
     register_workflow_parser,
@@ -80,6 +85,7 @@ COMMAND_HANDLERS["demo"] = handle_demo
 COMMAND_HANDLERS["session-scope"] = handle_session_scope
 COMMAND_HANDLERS["hooks"] = _handle_hooks
 COMMAND_HANDLERS.update(SKILL_COMMAND_HANDLERS)
+COMMAND_HANDLERS.update(TRANSCRIPT_COMMAND_HANDLERS)
 COMMAND_HANDLERS.update(WORKFLOW_COMMAND_HANDLERS)
 COMMAND_HANDLERS.update(JEV_COMMAND_HANDLERS)
 
@@ -843,6 +849,7 @@ def build_parser() -> argparse.ArgumentParser:
     register_skill_parsers(sub)
     register_workflow_parser(sub)
     register_jev_parsers(sub)
+    register_transcript_parsers(sub)
 
     return parser
 
@@ -865,6 +872,7 @@ def main(argv: list[str] | None = None) -> int:
         "dream-status",
         "dream-backfill",
         "workflow",
+        *TRANSCRIPT_COMMANDS,  # sidecar transcript index only: never open the memory DB
         *LEDGER_COMMANDS,  # decisions ledger / Dreaming ledger only: never open the memory DB
     }
 
