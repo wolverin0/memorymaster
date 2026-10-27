@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "summary_graph",
+  "run": {
+    "run_id": "compaction-2026-10-20T15:01:00+00:00",
+    "generated_at": "2026-10-20T15:01:00+00:00",
+    "retain_days": 30,
+    "event_retain_days": 60,
+    "candidate_claims": 0,
+    "skipped_sensitive": 0,
+    "archived_claims": 0,
+    "deleted_events": 0
+  },
+  "nodes": {
+    "summaries": [],
+    "claims": [],
+    "citations": []
+  },
+  "edges": []
+}
