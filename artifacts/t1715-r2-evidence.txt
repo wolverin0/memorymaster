@@ -1,0 +1,89 @@
+T-1715 round 2 command evidence
+
+One commit per finding:
+3c9814b - major 1: stock Gemini route rejects every non-extract stage before providers/services.
+128baf9 - major 2: tests use default selection and the real GeminiBoundedClient/model validation.
+
+Execution notes:
+- Every pytest invocation selected one file, with WEZBRIDGE_OPERATOR_ALLOW_HEAVY=1.
+- HOME and USERPROFILE were redirected before Python startup; the CLI fixture redirects both to tmp_path.
+- Temporary pytest launcher: .tmp_tests/t1715-r2-pytest.py.
+- Launcher changes Windows mkdir mode only for disposable fixtures under .tmp_tests/t1715-r2-fixtures.
+- Source checkout is first on sys.path; no provider requests or authoritative database were used.
+- Round-one runtime regression is loaded from git into the test process only; production files are unchanged.
+- Initial sandbox ACL failures, a missing temporary parent, and a launcher import-path error remain in the separate raw logs.
+- The first public demo attempt failed on the same ACL issue in system temp; redirecting TEMP/TMP to the disposable workspace fixed it.
+- GitNexus/Serena tools were absent after discovery and the checkout index was missing. Scoped caller search plus staged diffs supplied the documented native fallback.
+
+New tests against round-one runtime (expected failure):
+Command: pytest tests/test_dreaming_backfill_cli.py -q -p pytest_timeout -k uses_real_client_and_stage_validation or rejects_non_gemini_extractor --tb=short --basetemp=.tmp_tests/t1715-r2-fixtures/red-real-client-source
+HOME and USERPROFILE redirected before imports; fixtures use disposable workspace paths.
+Regression check: round-one runtime loaded in this process only.
+.FFFF.                                                                   [100%]
+================================== FAILURES ===================================
+_ test_gemini_api_cli_preflight_uses_real_client_and_stage_validation[consolidate] _
+tests\test_dreaming_backfill_cli.py:521: in test_gemini_api_cli_preflight_uses_real_client_and_stage_validation
+    configure_backfill_runtime(args, runner)
+round1_backfill_cli.py:77: in configure_backfill_runtime
+    ???
+round1_backfill_cli.py:61: in bounded
+    ???
+memorymaster\dreaming\providers.py:610: in __init__
+    raise ProviderConfigError("Gemini API requires a gemini-api-qualified model", reason="invalid_model")
+E   memorymaster.dreaming.providers.ProviderConfigError: Gemini API requires a gemini-api-qualified model
+_ test_gemini_api_cli_preflight_uses_real_client_and_stage_validation[quality] _
+tests\test_dreaming_backfill_cli.py:521: in test_gemini_api_cli_preflight_uses_real_client_and_stage_validation
+    configure_backfill_runtime(args, runner)
+round1_backfill_cli.py:77: in configure_backfill_runtime
+    ???
+round1_backfill_cli.py:61: in bounded
+    ???
+memorymaster\dreaming\providers.py:610: in __init__
+    raise ProviderConfigError("Gemini API requires a gemini-api-qualified model", reason="invalid_model")
+E   memorymaster.dreaming.providers.ProviderConfigError: Gemini API requires a gemini-api-qualified model
+_ test_gemini_api_cli_preflight_uses_real_client_and_stage_validation[apply] __
+tests\test_dreaming_backfill_cli.py:521: in test_gemini_api_cli_preflight_uses_real_client_and_stage_validation
+    configure_backfill_runtime(args, runner)
+round1_backfill_cli.py:77: in configure_backfill_runtime
+    ???
+round1_backfill_cli.py:61: in bounded
+    ???
+memorymaster\dreaming\providers.py:610: in __init__
+    raise ProviderConfigError("Gemini API requires a gemini-api-qualified model", reason="invalid_model")
+E   memorymaster.dreaming.providers.ProviderConfigError: Gemini API requires a gemini-api-qualified model
+__ test_gemini_api_cli_preflight_uses_real_client_and_stage_validation[all] ___
+tests\test_dreaming_backfill_cli.py:521: in test_gemini_api_cli_preflight_uses_real_client_and_stage_validation
+    configure_backfill_runtime(args, runner)
+round1_backfill_cli.py:77: in configure_backfill_runtime
+    ???
+round1_backfill_cli.py:61: in bounded
+    ???
+memorymaster\dreaming\providers.py:610: in __init__
+    raise ProviderConfigError("Gemini API requires a gemini-api-qualified model", reason="invalid_model")
+E   memorymaster.dreaming.providers.ProviderConfigError: Gemini API requires a gemini-api-qualified model
+=========================== short test summary info ===========================
+FAILED tests/test_dreaming_backfill_cli.py::test_gemini_api_cli_preflight_uses_real_client_and_stage_validation[consolidate]
+FAILED tests/test_dreaming_backfill_cli.py::test_gemini_api_cli_preflight_uses_real_client_and_stage_validation[quality]
+FAILED tests/test_dreaming_backfill_cli.py::test_gemini_api_cli_preflight_uses_real_client_and_stage_validation[apply]
+FAILED tests/test_dreaming_backfill_cli.py::test_gemini_api_cli_preflight_uses_real_client_and_stage_validation[all]
+4 failed, 2 passed, 31 deselected in 0.54s
+Command: pytest tests/test_dreaming_backfill_cli.py -q -p pytest_timeout --basetemp=.tmp_tests/t1715-r2-fixtures/full-cli
+HOME and USERPROFILE redirected before imports; fixtures use disposable workspace paths.
+.....................................                                    [100%]
+37 passed in 10.11s
+Command: pytest tests/test_dreaming_providers.py -q -p pytest_timeout --basetemp=.tmp_tests/t1715-r2-fixtures/full-providers
+HOME and USERPROFILE redirected before imports; fixtures use disposable workspace paths.
+.........................................................                [100%]
+57 passed in 0.69s
+Command: pytest tests/test_public_demo.py -q -p pytest_timeout --basetemp=.tmp_tests/t1715-r2-fixtures/public-demo-workspace
+HOME and USERPROFILE redirected before imports; fixtures use disposable workspace paths.
+..                                                                       [100%]
+2 passed in 1.61s
+Command: python -m ruff check memorymaster/dreaming/providers.py memorymaster/surfaces/backfill_cli.py tests/test_dreaming_providers.py tests/test_dreaming_backfill_cli.py
+All checks passed!
+Command: python scripts/generate_release_truth.py
+Release truth generated.
+Command: python scripts/generate_release_truth.py --check
+Release truth verified.
+Command: python scripts/check_contract_witness.py --base origin/main
+contract-witness: ok ? 2 archivo(s) de codigo con 2 de tests, sin testigos huerfanos
