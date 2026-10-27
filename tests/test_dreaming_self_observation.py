@@ -88,7 +88,8 @@ def test_live_capture_keeps_contamination_across_incremental_reads(tmp_path):
 
 def test_separated_authored_spans_are_distinct_persisted_extractor_evidence(tmp_path):
     from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
-    from memorymaster.dreaming.worker import DreamConfig, DreamWorker
+    from memorymaster.dreaming.extraction_window import next_window
+    from memorymaster.dreaming.worker import DreamConfig
 
     raw = "Use " + GENERATED_OPENER + "injected gap" + GENERATED_CLOSER + "SQLite for production."
     row = {"role": "assistant", "uuid": "original-turn", "content": raw}
@@ -101,6 +102,6 @@ def test_separated_authored_spans_are_distinct_persisted_extractor_evidence(tmp_
     result = capture_transcript(transcript, provider="claude", session_id="spans", cwd=str(tmp_path),
                                 ledger=ledger, live_workspace=True)
     persisted = ledger.get_capture(result["capture_id"])["messages"]
-    worker = object.__new__(DreamWorker)
-    worker.config = DreamConfig()
-    assert [message["text"] for message in worker._bounded_messages(persisted)] == ["Use", "SQLite for production."]
+    window, end = next_window(persisted, 0, DreamConfig().max_input_chars)
+    assert [message["text"] for message in window] == ["Use", "SQLite for production."]
+    assert end == 2

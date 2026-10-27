@@ -21,6 +21,7 @@ from memorymaster.core.antigravity_client import AntigravityError
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 from memorymaster.dreaming import held
+from memorymaster.dreaming.extraction_window import extraction_complete, next_window
 from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.models import (
     ConsolidationResult,
@@ -77,6 +78,8 @@ class DreamProviderStopped(RuntimeError):
 # errors and every AntigravityError (quota, CLI unavailable, timeout). The
 # client's deterministic pre-call prompt cap is never reached: _fit_prompt keeps
 # each batch under it or raises DreamPromptTooLarge, which counts (review B1).
+# shortcut: fixed per-capture extractor-call bound per run; make it config when a capture needs more.
+MAX_EXTRACT_WINDOWS_PER_RUN = 4
 _PROVIDER_WIDE_HTTP = frozenset({401, 403, 408, 429})
 _TRANSIENT_ERRORS = (TimeoutError, ConnectionError, subprocess.TimeoutExpired, AntigravityError)
 _TRANSPORT_CAUSES = (OSError, http.client.HTTPException, subprocess.TimeoutExpired, AntigravityError)
@@ -474,9 +477,27 @@ class DreamWorker:
         rows = self.ledger.eligible(idle_minutes=self.config.idle_minutes, max_sessions=limit, scope=scope, now=self.now())
         extracted: list[dict[str, Any]] = []
         for row in rows:
-            if row.get("extraction") is not None:
+            if row.get("extraction") is not None and extraction_complete(row):
                 extracted.append(row)
                 continue
+            done, stop = self._extract_windows(run_id, row, summary)
+            if done is not None:
+                extracted.append(done)
+            if stop:
+                break
+        return extracted
+
+    def _extract_windows(
+        self, run_id: str, row: dict[str, Any], summary: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Extract a capture window by window (T-1864); ``(row, stop_run)``.
+
+        The row is returned only once every unit was sent. Each window is saved with a
+        compare-and-swap that never covers messages appended during the provider call; a
+        capture appended to mid-call, or still holding more than the per-run window
+        bound, is left for a later run. No DB transaction is open during the call.
+        """
+        for _ in range(MAX_EXTRACT_WINDOWS_PER_RUN):
             # Subscription-backed extractors (Claude CLI) opt out of the paid-API daily caps.
             if not getattr(type(self.extractor), "uncapped_daily", False) and (
                 self.ledger.provider_calls_today(
@@ -488,22 +509,21 @@ class DreamWorker:
                 )
             ):
                 summary["deferred_extract_budget"] += 1
-                continue
+                return None, False
             called = False
             messages: list[dict[str, Any]] = []
             try:
-                messages = self._bounded_messages(list(row["messages"]))
+                cursor = int(row.get("extracted_through") or 0)
+                messages, window_end = next_window(list(row["messages"]), cursor, self.config.max_input_chars)
+                capture_hash = str(row["content_hash"]) + (f":{cursor}" if cursor else "")
                 self._hold_lease()
                 called = True
-                result = self.extractor.extract(messages, scope=str(row["scope"]), capture_hash=str(row["content_hash"]))
+                result = self.extractor.extract(messages, scope=str(row["scope"]), capture_hash=capture_hash)
                 called = False
                 self._record_usage(run_id, result.usage, "ok")
                 candidates = [candidate.to_dict() for candidate in result.candidates]
                 self._hold_lease()
-                self.ledger.set_extraction(int(row["id"]), candidates, run_id)
-                row["extraction"] = candidates
-                extracted.append(row)
-                summary["extracted"] += 1
+                saved = self.ledger.save_extraction_window(int(row["id"]), candidates, window_end, run_id)
             except DreamLeaseLost:
                 raise
             except Exception as exc:
@@ -521,9 +541,15 @@ class DreamWorker:
                 self._hold_lease()
                 self._mark_semantic_failure(row, run_id, exc, stage="extract")
                 summary["errors"] += 1
-                if isinstance(exc, ProviderCallError) and exc.http_status == 429:
-                    break
-        return extracted
+                return None, isinstance(exc, ProviderCallError) and exc.http_status == 429
+            appended = saved["content_hash"] != row["content_hash"]
+            row = saved
+            if extraction_complete(row):
+                summary["extracted"] += 1
+                return row, False
+            if appended:
+                break  # active again: the idle gate decides when the new tail is extracted
+        return None, False
 
     def _mark_semantic_failure(
         self, row: dict[str, Any], run_id: str, error: Exception, *, stage: str, charge: bool = False,
@@ -555,17 +581,6 @@ class DreamWorker:
             self.ledger.mark_quarantined(capture_id, run_id, detail, error_count=errors)
             return
         self.ledger.mark_retryable(capture_id, run_id, detail, error_count=errors)
-
-    def _bounded_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        kept: list[dict[str, Any]] = []
-        used = 0
-        for message in reversed(messages):
-            size = len(str(message.get("text", "")))
-            if kept and used + size > self.config.max_input_chars:
-                break
-            kept.append(message)
-            used += size
-        return list(reversed(kept))
 
     def _consolidation_inputs(self, run_id: str, rows: list[dict[str, Any]], summary: dict[str, Any]):
         from memorymaster.dreaming.source_review import REVIEW_VERSION, bind_source

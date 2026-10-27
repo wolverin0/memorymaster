@@ -33,7 +33,7 @@ def test_old_database_retained_and_old_reader_compatible(tmp_path):
     with ledger._connect() as conn:
         # Prior reader projection and selector continue to work after migration.
         assert conn.execute("SELECT id FROM dream_captures WHERE state IN ('captured','retryable')").fetchall() == []
-        assert conn.execute("SELECT COUNT(*) FROM dream_schema_versions").fetchone()[0] == 4
+        assert conn.execute("SELECT COUNT(*) FROM dream_schema_versions").fetchone()[0] == 5
     # v2 adds the absolute failure count and v3 the Jev-held candidate count;
     # historical rows start at zero for both. v4 (AO-2 beat) adds a nullable source_mtime.
     assert ledger.get_capture(old_id)["error_count"] == 0
