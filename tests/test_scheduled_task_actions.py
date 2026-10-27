@@ -117,6 +117,17 @@ def test_provider_readiness_uses_opencode_for_dream_extraction(monkeypatch) -> N
     assert readiness["graph_extractor"] is True
 
 
+def test_provider_readiness_uses_claude_cli_for_dream_extraction(monkeypatch) -> None:
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "claude")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        setup_hooks.shutil, "which", lambda command: "claude.cmd" if command == "claude" else None,
+    )
+    assert setup_hooks._provider_readiness()["dream_extractor"] is True
+    monkeypatch.setattr(setup_hooks.shutil, "which", lambda command: None)
+    assert setup_hooks._provider_readiness()["dream_extractor"] is False
+
+
 def test_provider_readiness_accepts_ready_capture_fallback(monkeypatch) -> None:
     monkeypatch.setenv("MEMORYMASTER_LLM_PROVIDER", "google")
     monkeypatch.setenv("MEMORYMASTER_LLM_FALLBACK_PROVIDER", "opencode")

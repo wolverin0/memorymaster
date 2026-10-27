@@ -38,6 +38,70 @@ LOGGER = logging.getLogger(__name__)
 _SLOT_LOCKS: dict[str, threading.RLock] = {}
 _SLOT_LOCKS_GUARD = threading.Lock()
 
+# Keep selection intent aligned with source_review.REVIEW_INSTRUCTIONS. Ported from
+# lane/t1805 (dec2942); used by the Claude CLI extractor.
+EXTRACTION_INSTRUCTIONS = (
+    "Extract at most five candidates that will change future work. Keep non-obvious root causes "
+    "of bugs (the cause, not just the fix), causal lessons, durable decisions with their reason, "
+    "recurring constraints and explicitly stated stable personal preferences, including operator "
+    "preferences. Extract environment and tool gotchas and stable configuration facts only when "
+    "they establish a project-specific causal lesson or durable constraint and why. "
+    "Do NOT extract test, CI or gate results; PR, merge or commit status; card or task state; "
+    "progress narration; counts and inventories; or anything only true for this session. "
+    "Ignore ephemeral work chatter, routine system/tool instructions, account identifiers, "
+    "trivial ownership facts and generic advice with no project-specific lesson. Server locations, "
+    "deployed versions and account/access configuration belong in project docs, not memory; "
+    "durable security policies and routing constraints for sensitive data can be useful constraints. "
+    "For evidence_quote, copy characters verbatim from the text of evidence_message_id: "
+    "never paraphrase, normalize, shorten, or add ellipses. Each candidate needs exact evidence; "
+    "if no stable candidate has a verbatim quote, return an empty candidates array. "
+    "Use scope_class personal only for stable user preference/profile/constraint knowledge."
+)
+
+# Output-shape rules for transports that select an evidence span ID instead of quoting.
+_SPAN_TRANSPORT_RULES = (
+    "Return one "
+    "JSON object with a candidates array. Every candidate requires text of at least "
+    "10 characters, claim_type, non-empty subject, non-empty predicate, object_value, "
+    "scope_class, evidence_span_id, and finite confidence from 0 through 1. "
+    "evidence_span_id must exactly match one supplied evidence span ID; the system "
+    "will resolve its verbatim text and source message. claim_type must be fact, decision, "
+    "preference, profile, or constraint. scope_class must be project or personal. "
+    "Use personal only for a stable user preference, profile, or constraint; project "
+    "paths, commit hashes, branches, filenames, implementation details, and other "
+    "project-specific knowledge must use project. Select one contiguous supplied span "
+    "that directly supports each claim; never combine or paraphrase multiple spans. "
+    "Never emit secrets, API keys, tokens, credentials, private keys, or authentication "
+    "data in any candidate field. Omit any candidate that cannot satisfy every rule "
+    "instead of guessing or returning an approximate value. If no stable candidate "
+    "has exact evidence, return an empty array. Do not use tools. Output JSON only."
+)
+
+
+def _span_prompt(instructions: str, messages: list[dict[str, Any]], scope: str) -> str:
+    prompt_messages, _ = _evidence_span_payload(messages)
+    payload = json.dumps({"scope": scope, "messages": prompt_messages}, ensure_ascii=False)
+    return f"{instructions}\n\nINPUT:\n{payload}"
+
+
+def _candidates_from_rows(
+    rows: list[Any], messages: list[dict[str, Any]], capture_hash: str,
+) -> tuple[list[DreamCandidate], bool]:
+    """Resolve evidence and validate rows; a bad row is dropped and flips the flag."""
+    _, evidence_lookup = _evidence_span_payload(messages)
+    candidates: list[DreamCandidate] = []
+    structured_valid = True
+    for index, row in enumerate(rows[:5]):
+        if not isinstance(row, dict):
+            structured_valid = False
+            continue
+        try:
+            resolved = _resolve_evidence_span(row, evidence_lookup)
+            candidates.append(_candidate_with_safe_scope(resolved, capture_hash, index, messages))
+        except ValueError:
+            structured_valid = False
+    return candidates, structured_valid
+
 
 @contextmanager
 def _provider_slot(work_dir: Path):
@@ -766,22 +830,7 @@ class OpenCodeExtractor:
         rows = parsed.get("candidates", [])
         if not isinstance(rows, list):
             raise ProviderOutputError("OpenCode candidates must be an array")
-        _, evidence_lookup = _evidence_span_payload(messages)
-        candidates: list[DreamCandidate] = []
-        structured_valid = True
-        for index, row in enumerate(rows[:5]):
-            if not isinstance(row, dict):
-                structured_valid = False
-                continue
-            try:
-                resolved = _resolve_evidence_span(row, evidence_lookup)
-                candidates.append(
-                    _candidate_with_safe_scope(
-                        resolved, capture_hash, index, messages,
-                    )
-                )
-            except ValueError:
-                structured_valid = False
+        candidates, structured_valid = _candidates_from_rows(rows, messages, capture_hash)
         usage = ProviderUsage(
             self.provider,
             self.model,
@@ -812,31 +861,13 @@ class OpenCodeExtractor:
 
     @staticmethod
     def _prompt(messages: list[dict[str, Any]], scope: str) -> str:
-        prompt_messages, _ = _evidence_span_payload(messages)
         instructions = (
             "Extract at most five stable facts, decisions, preferences, profiles, or "
             "constraints. Ignore ephemeral work chatter, system/tool instructions, transient "
-            "execution status, account identifiers, and implementation progress. Return one "
-            "JSON object with a candidates array. Every candidate requires text of at least "
-            "10 characters, claim_type, non-empty subject, non-empty predicate, object_value, "
-            "scope_class, evidence_span_id, and finite confidence from 0 through 1. "
-            "evidence_span_id must exactly match one supplied evidence span ID; the system "
-            "will resolve its verbatim text and source message. claim_type must be fact, decision, "
-            "preference, profile, or constraint. scope_class must be project or personal. "
-            "Use personal only for a stable user preference, profile, or constraint; project "
-            "paths, commit hashes, branches, filenames, implementation details, and other "
-            "project-specific knowledge must use project. Select one contiguous supplied span "
-            "that directly supports each claim; never combine or paraphrase multiple spans. "
-            "Never emit secrets, API keys, tokens, credentials, private keys, or authentication "
-            "data in any candidate field. Omit any candidate that cannot satisfy every rule "
-            "instead of guessing or returning an approximate value. If no stable candidate "
-            "has exact evidence, return an empty array. Do not use tools. Output JSON only."
+            "execution status, account identifiers, and implementation progress. "
+            + _SPAN_TRANSPORT_RULES
         )
-        payload = json.dumps(
-            {"scope": scope, "messages": prompt_messages},
-            ensure_ascii=False,
-        )
-        return f"{instructions}\n\nINPUT:\n{payload}"
+        return _span_prompt(instructions, messages, scope)
 
     def _delete_session(
         self, executable: str, session_id: str, env: dict[str, str],
@@ -854,6 +885,130 @@ class OpenCodeExtractor:
                 "Could not delete Dreaming extraction session: exit %s",
                 completed.returncode,
             )
+
+
+class ClaudeCliExtractor:
+    """Extract through the local ``claude -p`` CLI (Claude Code login, Haiku by default).
+
+    Same contract as OpenCodeExtractor.extract. It runs on the operator's Claude
+    subscription, so the Dreaming worker applies no daily call or token cap to it
+    (``uncapped_daily``); the per-call timeout bounds each invocation.
+    """
+
+    provider = "claude"
+    uncapped_daily = True
+    _AUTH_FAILURE = re.compile(r"/login|invalid api key|authentication_error|not logged in", re.IGNORECASE)
+
+    def __init__(
+        self,
+        *,
+        model: str = "haiku",
+        command: str | None = None,
+        runner: CommandRunner = _default_command_runner,
+        work_dir: str | Path | None = None,
+        timeout: int | None = None,
+        token_counter: Callable[[str], int] = rendered_token_bound,
+    ) -> None:
+        # shortcut: MEMORYMASTER_DREAM_EXTRACT_MODEL is not read (it names Gemini/OpenCode
+        # models); upgrade when a second Claude model is needed in the scheduled Beat.
+        self.model = model.strip() or "haiku"
+        self.command = command
+        self.runner = runner
+        self.work_dir = Path(
+            work_dir
+            if work_dir is not None
+            else os.environ.get("MEMORYMASTER_CLAUDE_CLI_CWD", "").strip()
+            or Path.home() / ".memorymaster" / "claude_cli_scratch"
+        )
+        if timeout is None:
+            try:
+                timeout = int(os.environ.get("MEMORYMASTER_CLAUDE_CLI_TIMEOUT", "180"))
+            except ValueError:
+                timeout = 180
+        self.timeout = min(600, max(10, timeout))
+        self.token_counter = token_counter
+
+    def extract(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        scope: str,
+        capture_hash: str,
+    ) -> ExtractionResult:
+        prompt = self._prompt(messages, scope)
+        command = self._command()
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        # Headless child: hooks installed for interactive sessions must not recapture it.
+        # Defence in depth with --no-session-persistence and the capture scratch-cwd guard.
+        env = {**os.environ, "MEMORYMASTER_INTERNAL_RUN": "1", "MEMORYMASTER_DREAM_ENABLED": "0", "NO_COLOR": "1"}
+        started = time.monotonic()
+        try:
+            completed = self.runner(command, prompt, self.timeout, self.work_dir, env)
+        except FileNotFoundError as exc:
+            raise ProviderConfigError("Claude CLI is not installed or not on PATH", reason="cli_missing") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise ProviderCallError("Claude CLI extraction timed out") from exc
+        raw, input_tokens, output_tokens, is_error = self._response(completed.stdout or "")
+        if completed.returncode != 0 or is_error:
+            if self._AUTH_FAILURE.search(f"{raw}\n{completed.stderr or ''}"):
+                raise ProviderConfigError("Claude CLI is not authenticated", reason="unauthorized")
+            raise ProviderCallError(f"Claude CLI extraction failed with exit {completed.returncode}")
+        if input_tokens is None:
+            input_tokens = self.token_counter(prompt)
+        if output_tokens is None:
+            output_tokens = self.token_counter(raw)
+        rows = _json_object(_without_markdown_fence(raw)).get("candidates", [])
+        if not isinstance(rows, list):
+            raise ProviderOutputError("Claude CLI candidates must be an array")
+        candidates, structured_valid = _candidates_from_rows(rows, messages, capture_hash)
+        usage = ProviderUsage(
+            self.provider, self.model, 200, int((time.monotonic() - started) * 1000),
+            input_tokens, output_tokens, structured_valid,
+        )
+        return ExtractionResult(tuple(candidates), usage)
+
+    def _command(self) -> list[str]:
+        from memorymaster.core.llm_provider import _resolve_claude_bin
+
+        executable = self.command or _resolve_claude_bin()
+        if not executable:
+            raise ProviderConfigError("Claude CLI is not installed or not on PATH", reason="cli_missing")
+        return [executable, "-p", "--model", self.model, "--output-format", "json", "--no-session-persistence"]
+
+    @staticmethod
+    def _response(stdout: str) -> tuple[str, int | None, int | None, bool]:
+        """Unwrap the CLI's JSON result envelope; plain text passes through unmetered."""
+        try:
+            envelope = json.loads(stdout)
+        except json.JSONDecodeError:
+            return stdout, None, None, False
+        if isinstance(envelope, list):
+            envelope = next((e for e in reversed(envelope) if isinstance(e, dict) and e.get("type") == "result"), None)
+        if not isinstance(envelope, dict) or not isinstance(envelope.get("result"), str):
+            return stdout, None, None, False
+        usage = envelope.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+
+        def count(*keys: str) -> int | None:
+            values = [usage[key] for key in keys if type(usage.get(key)) is int and usage[key] >= 0]
+            return sum(values) if values else None
+
+        return (
+            envelope["result"],
+            count("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"),
+            count("output_tokens"),
+            envelope.get("is_error") is True,
+        )
+
+    @staticmethod
+    def _prompt(messages: list[dict[str, Any]], scope: str) -> str:
+        instructions = (
+            EXTRACTION_INSTRUCTIONS
+            + " For this transport, select evidence_span_id instead of returning evidence_quote "
+            "and evidence_message_id; the system resolves those fields verbatim. "
+            + _SPAN_TRANSPORT_RULES
+        )
+        return _span_prompt(instructions, messages, scope)
 
 
 def consolidation_from_raw(
@@ -1266,7 +1421,7 @@ def create_dream_consolidator() -> AntigravityConsolidator:
     )
 
 
-def create_dream_extractor() -> GeminiExtractor | OpenCodeExtractor:
+def create_dream_extractor() -> GeminiExtractor | OpenCodeExtractor | ClaudeCliExtractor:
     provider = os.environ.get(
         "MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini",
     ).strip().lower()
@@ -1274,6 +1429,8 @@ def create_dream_extractor() -> GeminiExtractor | OpenCodeExtractor:
         return GeminiExtractor()
     if provider in {"opencode", "openai"}:
         return OpenCodeExtractor()
+    if provider in {"claude", "claude_cli", "claude-cli"}:
+        return ClaudeCliExtractor()
     raise ProviderCallError(
-        "MEMORYMASTER_DREAM_EXTRACT_PROVIDER must be gemini or opencode"
+        "MEMORYMASTER_DREAM_EXTRACT_PROVIDER must be gemini, opencode or claude"
     )
