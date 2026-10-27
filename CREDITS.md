@@ -22,6 +22,7 @@ deserve, and doubles as a **re-survey watchlist** so we periodically steal what'
 | **claude-mem** | multi-account isolation (per-UID worker ports), the "cynical deletion" audit philosophy (kill *defenders* & *tolerators*) |
 | **My-Brain-Is-Full-Crew** | multi-platform adapter pattern (one source → Claude / Codex / Gemini / OpenCode) |
 | **GitNexus** | cross-repo impact routing; also the code-intelligence layer MemoryMaster itself runs on |
+| **hindsight** (vectorize-io, MIT) | the opt-in `rrf` recall mode (T-1838): parallel lexical / dense / entity / time-range retrieval merged by reciprocal rank fusion (k=60), then a local cross-encoder rerank of the fused head |
 
 ## 2. Systems we define ourselves *against* (design positioning)
 
