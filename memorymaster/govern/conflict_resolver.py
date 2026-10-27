@@ -22,7 +22,7 @@ from typing import Any
 
 from memorymaster.stores._storage_shared import utc_now
 from memorymaster.core.lifecycle import can_transition
-from memorymaster.core.models import Claim
+from memorymaster.core.models import Claim, normalize_identity_part
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +242,7 @@ def _build_conflict_groups(claims: list[Claim]) -> dict[tuple[str, str, str], li
     for claim in claims:
         if not claim.subject or not claim.predicate:
             continue
-        key = (claim.subject, claim.predicate, claim.scope)
+        key = (normalize_identity_part(claim.subject), normalize_identity_part(claim.predicate), claim.scope)
         index.setdefault(key, []).append(claim)
 
     # Filter to groups with actual conflicts (different object_value)

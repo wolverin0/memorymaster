@@ -5,7 +5,7 @@ import sqlite3
 
 from memorymaster.core.config import get_config
 from memorymaster.core.lifecycle import is_tuple_predecessor, transition_claim
-from memorymaster.core.models import Claim
+from memorymaster.core.models import Claim, normalize_identity_part
 from memorymaster.core.promotion_policy import (
     PromotionPolicyBlocked,
     auto_promotion_blocked,
@@ -286,7 +286,11 @@ def run(
         predecessor = next((x for x in related if is_tuple_predecessor(claim, x)), None)
         related = [x for x in related if not is_tuple_predecessor(claim, x)]
 
-        duplicate = next((x for x in related if x.object_value == claim.object_value and x.object_value), None)
+        claim_object = normalize_identity_part(claim.object_value)
+        duplicate = next(
+            (x for x in related if claim_object and normalize_identity_part(x.object_value) == claim_object),
+            None,
+        )
         if duplicate is not None and not is_revalidation:
             outcome = _retire_duplicate(store, claim, duplicate)
             superseded += int(outcome == "superseded")
@@ -341,19 +345,22 @@ def run(
             pending += 1
             continue
 
+        # T-1863 F6: a rival whose object differs OR is missing on either side
+        # is a conflict. Two missing objects are "unknown", never "same value".
         conflict = next(
-            (
-                x
-                for x in related
-                if x.object_value
-                and claim.object_value
-                and x.object_value != claim.object_value
-            ),
+            (x for x in related if not claim_object or normalize_identity_part(x.object_value) != claim_object),
             None,
+        )
+        # Without both objects there is no value comparison to lean on: only an
+        # explicit supersession link (already split out as `predecessor`) or a
+        # human can settle it, never the validation score.
+        relation_unknown = conflict is not None and not (
+            claim_object and normalize_identity_part(conflict.object_value)
         )
 
         if conflict is not None and (
             conflict.pinned
+            or relation_unknown
             or score <= (conflict.confidence + cfg.conflict_margin)
             or claim.supersedes_claim_id not in {None, conflict.id}
         ):

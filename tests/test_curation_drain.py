@@ -50,6 +50,16 @@ def _status(svc, claim_id, *estados):
         transition_claim(svc.store, claim_id, estado, reason="fixture")
 
 
+def _link(svc, replacement_id, predecessor_id):
+    """Explicit supersession link. T-1863: the drain settles different-value
+    contradictions only through one of these (confidence alone never does)."""
+    with svc.store.connect() as conn:
+        conn.execute(
+            "UPDATE claims SET supersedes_claim_id = ? WHERE id = ?",
+            (predecessor_id, replacement_id),
+        )
+
+
 def _get(svc, claim_id):
     return svc.store.get_claim(claim_id, include_citations=False)
 
@@ -63,6 +73,7 @@ def test_a_losing_conflicted_claim_is_superseded_by_its_rival(svc):
     perdedor = _claim(svc, "la version conflictiva mas debil del mismo hecho",
                       subject="s", predicate="p", object_value="v2", confidence=0.3)
     _status(svc, perdedor, "conflicted")
+    _link(svc, rival, perdedor)
 
     r = curation_drain.drain_conflicts(svc, apply=True)
 
@@ -82,6 +93,7 @@ def test_a_winning_conflicted_claim_is_promoted_and_the_rival_superseded(svc):
     ganador = _claim(svc, "la conflictiva nueva con mas confianza",
                      subject="s", predicate="p", object_value="v2", confidence=0.95)
     _status(svc, ganador, "conflicted")
+    _link(svc, ganador, rival)
 
     r = curation_drain.drain_conflicts(svc, apply=True)
 
@@ -142,6 +154,7 @@ def test_dry_run_mutates_nothing(svc):
     perdedor = _claim(svc, "conflictiva debil", subject="s", predicate="p",
                       object_value="v2", confidence=0.2)
     _status(svc, perdedor, "conflicted")
+    _link(svc, rival, perdedor)
     huerfano = _claim(svc, "huerfana sin rival vigente")
     _status(svc, huerfano, "conflicted")
 
@@ -193,6 +206,7 @@ def test_a_stop_hook_winner_is_not_promoted_and_does_not_supersede_the_rival(svc
         source_agent="llm-stop-hook",
     ).id
     _status(svc, ganador, "conflicted")
+    _link(svc, ganador, rival)
 
     r = curation_drain.drain_conflicts(svc, apply=True)
 
@@ -211,6 +225,7 @@ def test_a_predicate_without_subject_winner_is_not_promoted_and_does_not_superse
     ganador = _claim(svc, "la conflictiva nueva con el predicado corrido de campo",
                      predicate="p", object_value="v2", confidence=0.95)
     _status(svc, ganador, "conflicted")
+    _link(svc, ganador, rival)
     # sin sujeto no hay rival por tupla; el dren la encuentra en la auditoria
     svc.store.record_event(claim_id=ganador, event_type="validator",
                            details=f"conflicts_with_confirmed_claim:{rival}")

@@ -553,20 +553,23 @@ class _WriteClaimsMixin:
             # Read status AND the current confidence BEFORE the update: status to
             # avoid a race in the event audit trail, confidence to decide whether
             # there is anything worth recording at all.
-            current_status = None
-            changed = True
-            if details:
-                row = conn.execute(
-                    "SELECT status, confidence FROM claims WHERE id = ?", (claim_id,)
-                ).fetchone()
-                if row is not None:
-                    current_status = str(row["status"])
-                    changed = confidence_changed(row["confidence"], bounded)
+            row = conn.execute(
+                "SELECT status, confidence FROM claims WHERE id = ?", (claim_id,)
+            ).fetchone()
+            if row is None:
+                return
+            current_status = str(row["status"])
+            if not confidence_changed(row["confidence"], bounded):
+                # T-1863 F7: a no-op write must not touch updated_at -- decay
+                # ages claims from it, and the cycle runs this before decay.
+                if details:
+                    bump_counter("claim_confidence_noop_total", writer=details_writer(details))
+                return
             conn.execute(
                 "UPDATE claims SET confidence = ?, updated_at = ? WHERE id = ?",
                 (bounded, now, claim_id),
             )
-            if details and changed:
+            if details:
                 self._insert_event_row(
                     conn,
                     claim_id=claim_id,
@@ -577,13 +580,6 @@ class _WriteClaimsMixin:
                     payload_json=None,
                     created_at=now,
                 )
-            elif details:
-                # No-op adjustment: the row's entire content would be "I looked
-                # and changed nothing". 489,927 such rows (`deterministic_adjust=
-                # +0.000`) were 20% of a 2.4M-row production log, written ~15k/day
-                # -- the flood that collapsed the health check's scan window to
-                # 13.9 minutes. Keep the metric, drop the row.
-                bump_counter("claim_confidence_noop_total", writer=details_writer(details))
             conn.commit()
 
 

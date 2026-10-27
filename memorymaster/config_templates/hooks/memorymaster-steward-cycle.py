@@ -126,8 +126,9 @@ except Exception as e:
 # Curation drain (2026-08-26, autorizado por el operador tras medir que solo 72
 # de 5.976 conflictos tocaban scope=user o pinned): la maquina resuelve
 # conflictos y propuestas NO-operador. Excluye pinned y scope=user SIEMPRE;
-# tres veredictos deterministas (pierde->superseded, gana->promovido,
-# huerfano->stale), todo con evento de auditoria y reversible. Relaja el
+# solo liquida conflictos con vinculo explicito de supersesion (T-1863: la
+# confianza ya no decide; el resto queda conflicted, `held_for_review`), todo
+# con evento de auditoria y reversible. Relaja el
 # "nunca aplica" de MM6 con la palabra explicita del operador.
 try:
     from memorymaster.govern.jobs import curation_drain
