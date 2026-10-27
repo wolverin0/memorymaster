@@ -319,3 +319,15 @@ def test_synthetic_row_has_ranker_attributes() -> None:
     for field in ("lexical_score", "freshness_score", "confidence_score",
                   "vector_score", "entity_score"):
         assert row[field] == 0.0
+
+
+def test_excerpt_is_centered_on_the_match_not_the_start(tmp_path: Path) -> None:
+    """T-1862 (review F2): a long verbatim row surfaces the passage that matched."""
+    db = tmp_path / "long.db"
+    conn = sqlite3.connect(db)
+    _init_verbatim_schema(conn)
+    _insert_verbatim(conn, "filler " * 200 + "the zebrafish gateway decision was final " + "tail " * 60)
+    conn.close()
+    (hit,) = recall_verbatim("zebrafish gateway decision", scope="project:test", db_path=str(db))
+    assert "zebrafish gateway decision" in hit.excerpt
+    assert len(hit.excerpt) <= 310

@@ -300,3 +300,15 @@ def test_latin_boundary_preserves_accents() -> None:
     # split at the accented character.
     assert "próximo" in toks
     assert "usará" in toks
+
+
+def test_identifiers_survive_and_rank_in_salient_terms(tmp_path: Path) -> None:
+    """T-1862 (review F1): an inline-code identifier is kept, flagged as an identifier and not crowded out."""
+    from memorymaster.recall.recall_tokenizer import identifier_tokens, salient_terms
+
+    question = "Why did we stop using `fstrim` on the nightly cleanup job after the migration plan changed again"
+    assert "fstrim" in identifier_tokens(question)
+    assert "context_hook" in identifier_tokens("see memorymaster/recall/context_hook.py")
+    terms = salient_terms(question, str(tmp_path / "none.db"), max_terms=4)
+    assert "fstrim" in terms and len(terms) == 4
+    assert salient_terms("", str(tmp_path / "none.db")) == []

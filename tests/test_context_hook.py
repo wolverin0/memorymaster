@@ -364,3 +364,40 @@ class TestFinishRecallStages:
         assert with_stages == without and "mm-7" in with_stages[0]
         assert set(stages) == {"render_ms", "remember_ms", "access_ms"} and all(v >= 0 for v in stages.values())
         svc._record_accesses.assert_called()
+
+
+def test_whole_token_coverage_never_matches_a_substring():
+    """T-1862 (review F8): "port" is not found in "report"; a plural folds onto its singular."""
+    from memorymaster.recall import hook_lexical
+
+    keys = hook_lexical.term_keys(["port", "redis", "deploy"])
+    assert hook_lexical.matched_terms(keys, "Quarterly report on redis usage") == {hook_lexical.term_key("redis")}
+    assert hook_lexical.matched_terms(keys, "the ports and deploys of redis") == keys
+    assert not hook_lexical.covers(frozenset({"redis"}), 3, frozenset())  # one generic term of three
+    assert hook_lexical.covers(frozenset({"redis"}), 3, frozenset({"redis"}))  # an exact identifier
+    assert hook_lexical.covers(frozenset(), 0, frozenset())  # nothing to match: nothing gated
+
+
+def test_truth_eligibility_drops_a_predecessor_whose_correction_is_in_the_pool(monkeypatch):
+    """T-1862 (review F4): the correction stays, the claim it replaces does not precede it."""
+    from memorymaster.recall import hook_lexical, retrieval
+
+    monkeypatch.setattr(retrieval, "pending_supersession_ids", lambda _svc: frozenset({1, 3}))
+    old = SimpleNamespace(id=1, supersedes_claim_id=None, replaced_by_claim_id=None)
+    new = SimpleNamespace(id=2, supersedes_claim_id=1, replaced_by_claim_id=None)
+    pending_only = SimpleNamespace(id=3, supersedes_claim_id=None, replaced_by_claim_id=None)
+    other = SimpleNamespace(id=4, supersedes_claim_id=None, replaced_by_claim_id=None)
+    rows = [{"claim": c} for c in (old, pending_only, new, other)]
+    ids = [r["claim"].id for r in hook_lexical.apply_truth_eligibility(rows, MagicMock())]
+    assert ids == [2, 4, 3]  # old dropped (correction present); pending-only sinks below undisputed rows
+
+
+def test_truth_eligibility_fails_open(monkeypatch):
+    from memorymaster.recall import hook_lexical, retrieval
+
+    def boom(_svc):
+        raise RuntimeError("scan failed")
+
+    monkeypatch.setattr(retrieval, "pending_supersession_ids", boom)
+    rows = [{"claim": SimpleNamespace(id=1, supersedes_claim_id=None, replaced_by_claim_id=None)}]
+    assert hook_lexical.apply_truth_eligibility(rows, MagicMock()) == rows

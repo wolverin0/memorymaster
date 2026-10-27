@@ -379,7 +379,8 @@ def search(
                 conn.set_progress_handler(lambda: 1 if time.perf_counter() > expires else 0, 5000)
             rows = conn.execute(sql, args).fetchall()
     except sqlite3.OperationalError as exc:
-        logger.warning("transcript_index: search failed: %s", exc)
+        # an expired deadline is the caller's budget working, not a fault
+        (logger.debug if "interrupted" in str(exc) else logger.warning)("transcript_index: search failed: %s", exc)
         return []
     hits = []
     for row in _rank(rows, limit):
