@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.models import Claim
+from memorymaster.stores.claim_identity import identity_namespace_key
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,17 @@ def _object_values_conflict(a: Claim, b: Claim) -> bool:
     return bool(a_value and b_value and a_value != b_value)
 
 
+def _same_identity(a: Claim, b: Claim) -> bool:
+    """True when both claims share tenant, scope, visibility and (non-public) owner.
+
+    Dedup and conflict marking mutate one claim on behalf of another, so they may
+    only ever pair claims one authorization identity can see together.
+    """
+    return identity_namespace_key(
+        a.tenant_id, a.scope, a.visibility, a.source_agent
+    ) == identity_namespace_key(b.tenant_id, b.scope, b.visibility, b.source_agent)
+
+
 def _pick_survivor(a: Claim, b: Claim) -> tuple[Claim, Claim]:
     """Return (keep, archive) picking the claim with highest confidence.
 
@@ -144,6 +156,8 @@ def find_duplicates(
         for j in range(i + 1, len(claims)):
             if claims[j].id in archived_ids:
                 continue
+            if not _same_identity(claims[i], claims[j]):
+                continue
             sim = cosine_similarity(embeddings[i], embeddings[j])
             if sim < threshold:
                 continue
@@ -199,6 +213,8 @@ def find_conflicts(
     pairs: list[ConflictPair] = []
     for i in range(len(claims)):
         for j in range(i + 1, len(claims)):
+            if not _same_identity(claims[i], claims[j]):
+                continue
             sim = cosine_similarity(embeddings[i], embeddings[j])
             if sim < threshold:
                 continue
@@ -318,6 +334,24 @@ def run(
                 logger.warning("Failed to mark conflicting claim %d: %s", claim_id, exc)
 
         for pair in pairs:
+            # Re-read both claims: the candidate list is a snapshot and an
+            # identity (scope, tenant, visibility, owner) or status may have
+            # changed since collection. Fail closed on anything unexpected.
+            keep_now = store.get_claim(pair.keep_id, include_citations=False)
+            archive_now = store.get_claim(pair.archive_id, include_citations=False)
+            if (
+                keep_now is None
+                or archive_now is None
+                or keep_now.status == "archived"
+                or archive_now.status == "archived"
+                or not _same_identity(keep_now, archive_now)
+            ):
+                logger.warning(
+                    "Dedup skipped pair %d -> %d: claims changed identity or status since scan",
+                    pair.archive_id,
+                    pair.keep_id,
+                )
+                continue
             try:
                 transition_claim(
                     store,
