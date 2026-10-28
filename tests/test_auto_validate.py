@@ -151,8 +151,9 @@ def test_auto_validate_disabled_via_flag() -> None:
 
     fake_extraction = {
         "subject": "server",
-        "predicate": "ip_address",
-        "object_value": "10.0.0.1",
+        "predicate": "hostname",
+        # A private IP here would be redacted by the claim sanitizer (T-1865), so use a plain value.
+        "object_value": "build-01",
         "confidence": 0.9,
         "action": "confirm",
     }
