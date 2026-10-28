@@ -195,3 +195,6 @@ def test_backfill_bindings_updates_claims_from_frontmatter(tmp_path: Path) -> No
     assert rows[c1] == "qdrant"
     assert rows[c2] == "qdrant"
     assert rows[c3] is None  # not listed in any article
+
+
+pytestmark = pytest.mark.usefixtures("readable_supersession_scan")  # mocked service (T-1877 F4)

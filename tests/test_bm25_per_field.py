@@ -227,3 +227,6 @@ class TestBm25PerFieldRanking:
         # Just verify both show up and we got a valid rendered block.
         assert "postgres" in result.lower()
         assert result.startswith("# Memory Context")
+
+
+pytestmark = pytest.mark.usefixtures("readable_supersession_scan")  # mocked service (T-1877 F4)

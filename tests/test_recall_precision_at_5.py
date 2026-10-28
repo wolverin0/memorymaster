@@ -262,3 +262,6 @@ def test_precision_at_5_floor_with_grid_winner_weights(
     assert hits >= len(_PROMPTS_AND_RELEVANT) - 1, (
         f"grid-winner p@5 floor broken: {hits}/{len(_PROMPTS_AND_RELEVANT)}"
     )
+
+
+pytestmark = pytest.mark.usefixtures("readable_supersession_scan")  # mocked service (T-1877 F4)

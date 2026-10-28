@@ -15,13 +15,7 @@ import pytest
 from memorymaster.recall.context_hook import classify_observation, observe, recall
 
 
-@pytest.fixture(autouse=True)
-def _no_pending_supersessions(monkeypatch):
-    """These tests drive recall with a MagicMock service; truth eligibility fails closed on an unreadable scan
-    (T-1877, F4), so give it a readable, empty one. Tests that care patch it again."""
-    from memorymaster.recall import retrieval
-
-    monkeypatch.setattr(retrieval, "pending_supersession_ids", lambda _svc, **_kw: frozenset())
+pytestmark = pytest.mark.usefixtures("readable_supersession_scan")  # mocked service (T-1877 F4)
 
 
 def test_governed_prompt_rows_keep_exact_then_fill_without_recording_discarded(monkeypatch):

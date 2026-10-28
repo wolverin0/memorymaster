@@ -460,3 +460,6 @@ def test_recall_fanout_reshuffles_with_positive_w_entity(
         f"fanout claim must rank above low-score FTS rows; got "
         f"hook_pos={hook_pos}, low_pos={low_pos}, out={out!r}"
     )
+
+
+pytestmark = pytest.mark.usefixtures("readable_supersession_scan")  # mocked service (T-1877 F4)

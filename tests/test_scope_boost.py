@@ -299,3 +299,6 @@ def test_boost_zero_point_one_yields_required_score_margin(
     current_score = base * 1.1
     cross_score = base * 1.0
     assert current_score > cross_score
+
+
+pytestmark = pytest.mark.usefixtures("readable_supersession_scan")  # mocked service (T-1877 F4)
