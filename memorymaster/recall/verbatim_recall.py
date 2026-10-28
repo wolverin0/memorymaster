@@ -38,7 +38,7 @@ import os
 import sqlite3
 from dataclasses import dataclass
 
-from memorymaster.recall.recall_tokenizer import _candidate_tokens
+from memorymaster.recall.recall_tokenizer import _candidate_tokens, centered_excerpt
 from memorymaster.recall.verbatim_store import _verbatim_row_has_sensitive_field
 
 logger = logging.getLogger(__name__)
@@ -231,7 +231,7 @@ def recall_verbatim(
         # Flip sign so bigger == better (ranker convention).
         normalised = abs(float(raw_score))
         content = r["content"] or ""
-        excerpt = content[:_EXCERPT_CHARS]
+        excerpt = centered_excerpt(content, query, _EXCERPT_CHARS)  # around the match, not the start (review F2)
         out.append(
             VerbatimHit(
                 verbatim_id=int(r["id"]),

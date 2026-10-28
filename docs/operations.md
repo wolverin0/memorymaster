@@ -54,6 +54,21 @@ session and 400 sessions, expiring after 12 hours and cleared by SessionStart.
 `MEMORYMASTER_RECALL_SESSION_DEDUP=0` disables it. The MCP-Shared service
 applies the cap and the dedup, so restart it after deploying.
 
+Retrieval and gate (T-1862): the hook searches the whole question first (salient
+terms, inline-code and path identifiers kept), then a bounded per-term search, and
+scores the pooled rows against the full question before the cap. A row is injected
+only with whole-token evidence: at least `MEMORYMASTER_RECALL_HOOK_MIN_TERMS`
+(default 2) distinct question terms, or one exact identifier; confidence never lets a
+row in. A claim with a pending or explicit correction never precedes the correction.
+When fewer claims than the cap are injected, up to 2 dated, redacted, match-centred
+fragments of raw past conversation from the transcript sidecar
+(`memorymaster transcript-index`) follow, labelled as possibly outdated and limited
+to the current project. On when the sidecar file exists;
+`MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK=0` turns it off,
+`MEMORYMASTER_RECALL_TRANSCRIPT_DEADLINE_MS` (default 120) bounds the query, and any
+error injects nothing. While it is active the older `verbatim_memories` stream is
+bypassed in the hook. Measurement: `scripts/bench_hook_recall.py`.
+
 Turn the hook off for some projects, default on, without touching code or
 restarting anything: write `~/.memorymaster/recall-hook.json`. The wisp lane:
 

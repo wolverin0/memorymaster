@@ -42,7 +42,7 @@ from pathlib import Path
 
 from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.core.security import sanitize_persisted_text
-from memorymaster.recall.recall_tokenizer import _candidate_tokens
+from memorymaster.recall.recall_tokenizer import _candidate_tokens, centered_excerpt
 from memorymaster.stores._storage_shared import connect_ro, open_conn
 
 logger = logging.getLogger(__name__)
@@ -342,12 +342,18 @@ def search(
     limit: int = 5,
     scope: str | None = None,
     since: str | None = None,
+    excerpt_chars: int = EXCERPT_CHARS,
+    deadline_ms: float | None = None,
 ) -> list[TranscriptHit]:
     """Search the sidecar index; return redacted, dated, cited fragments.
 
     Read-only: opens the sidecar with ``mode=ro`` and returns ``[]`` when it
-    does not exist yet.  ``scope`` matches exactly (``project:<slug>``);
-    ``since`` is an ISO date lower bound.
+    does not exist yet.  ``scope`` matches exactly (``project:<slug>``) and is
+    applied in SQL, before the top-k cut; ``since`` is an ISO date lower bound.
+    The excerpt is the window of the fragment around the query terms (T-1862),
+    cut from the already-redacted text so a window edge cannot split a secret.
+    ``deadline_ms`` aborts the query once that wall-clock budget is spent
+    (returns ``[]``), for callers on a latency budget such as the prompt hook.
     """
     index_path = index_path or default_index_path()
     match = _fts_query(query)
@@ -368,13 +374,18 @@ def search(
     args.append(max(limit * 10, 50))
     try:
         with closing(connect_ro(index_path.resolve().as_posix())) as conn:
+            if deadline_ms is not None:
+                expires = time.perf_counter() + deadline_ms / 1000.0
+                conn.set_progress_handler(lambda: 1 if time.perf_counter() > expires else 0, 5000)
             rows = conn.execute(sql, args).fetchall()
     except sqlite3.OperationalError as exc:
-        logger.warning("transcript_index: search failed: %s", exc)
+        # an expired deadline is the caller's budget working, not a fault
+        (logger.debug if "interrupted" in str(exc) else logger.warning)("transcript_index: search failed: %s", exc)
         return []
     hits = []
     for row in _rank(rows, limit):
-        excerpt, _ = sanitize_persisted_text(row["text"][:EXCERPT_CHARS])
+        redacted, _ = sanitize_persisted_text(row["text"])
+        excerpt = centered_excerpt(redacted, query, excerpt_chars)
         hits.append(
             TranscriptHit(
                 date=row["date"], session_id=row["session_id"], scope=row["scope"],
