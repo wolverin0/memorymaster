@@ -8,6 +8,23 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### Integrity fixes from the external review (T-1865, F13-F15)
+
+- Event hash chain: the SQLite event writer takes `BEGIN IMMEDIATE` before reading
+  the chain head (a caller-owned transaction is kept), so concurrent writers can no
+  longer fork the chain (`broken_prev_link`).
+- Content dedup no longer depends on the first copy's idempotency key. Migration 30
+  adds the nullable `claims.content_fingerprint` (SQLite only; PostgreSQL stays
+  fail-closed like every migration since 19) plus an index, and fills it for every
+  existing row in one transaction. It does not touch `text`, `status`, `updated_at`
+  or `version`; the migration-29 change cursor fires once per row. The ingest facade
+  looks the fingerprint up under tenant, scope, visibility and private owner, so an
+  unkeyed copy of an explicitly keyed claim now returns the original. Rows written by
+  raw-SQL paths keep a NULL fingerprint and the previous hash-as-key lookup.
+- Migration 0013 is documented as legacy-only: a refusal on orphaned legacy graph rows
+  leaves it half applied and it cannot be edited (checksum guard). The tested recovery
+  is in `docs/troubleshooting.md`.
+
 ### PreCompact residual (AO-1, T-1633)
 
 - New opt-in `MEMORYMASTER_PRECOMPACT_RESIDUAL=1`: when a compaction is allowed
