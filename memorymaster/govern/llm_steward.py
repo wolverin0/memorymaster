@@ -527,6 +527,32 @@ def _confirm_candidate_cas(
     return cur.rowcount > 0
 
 
+def _identity_sql(tenant_id: Any, visibility: Any, source_agent: Any) -> tuple[str, tuple[Any, ...]]:
+    """Row filter for the source claim's identity (mirrors the store's claim identity).
+
+    Tenant and visibility always apply; the author partitions only non-public claims.
+    """
+    if visibility == "public":
+        return "tenant_id IS ? AND visibility = 'public'", (tenant_id,)
+    return "tenant_id IS ? AND visibility = ? AND source_agent = ?", (tenant_id, visibility, source_agent)
+
+
+def _sanitize_extraction(
+    subject: Any, predicate: Any, object_value: Any, *, text: str = "",
+) -> tuple[Any, Any, Any, list[str]]:
+    """Run model-generated structured fields through the canonical sanitizer.
+
+    Returns the sanitized ``(subject, predicate, object_value)`` and the findings.
+    Callers drop the extraction when there are findings (default-deny): a
+    credential in model output must never reach the claims table.
+    """
+    sanitized = sanitize_claim_input(
+        text=text, object_value=object_value, citations=[],
+        subject=subject, predicate=predicate,
+    )
+    return sanitized.subject, sanitized.predicate, sanitized.object_value, list(sanitized.findings)
+
+
 def run_steward(
     db_path: str,
     api_key: str,
@@ -620,14 +646,16 @@ def run_steward(
     )
     if scope is not None:
         candidates = conn.execute(
-            "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
+            "SELECT id, text, scope, version, tenant_id, visibility, source_agent "
+            "FROM claims WHERE status = 'candidate' "
             "AND COALESCE(claim_type, '') <> 'observation' "
             f"AND text IS NOT NULL AND scope = ? {policy_sql}ORDER BY id LIMIT ?",
             (scope, *blocked, limit),
         ).fetchall()
     else:
         candidates = conn.execute(
-            "SELECT id, text, scope, version FROM claims WHERE status = 'candidate' "
+            "SELECT id, text, scope, version, tenant_id, visibility, source_agent "
+            "FROM claims WHERE status = 'candidate' "
             "AND COALESCE(claim_type, '') <> 'observation' "
             f"AND text IS NOT NULL {policy_sql}ORDER BY id LIMIT ?",
             (*blocked, limit),
@@ -675,6 +703,7 @@ def run_steward(
         text = row["text"] or ""
         scope = row["scope"] or ""
         claim_version = row["version"]
+        id_sql, id_params = _identity_sql(row["tenant_id"], row["visibility"], row["source_agent"])
 
         if len(text.strip()) < 10:
             if not dry_run:
@@ -782,10 +811,19 @@ def run_steward(
             ]
             if confirm_extractions:
                 first = confirm_extractions[0]
-                f_subj = first.get("subject")
-                f_pred = first.get("predicate")
-                f_obj = first.get("object_value")
+                f_subj, f_pred, f_obj, f_findings = _sanitize_extraction(
+                    first.get("subject"), first.get("predicate"), first.get("object_value"),
+                )
                 f_conf = min(1.0, max(0.0, float(first.get("confidence", 0.7))))
+                if f_findings:
+                    # Like svc.ingest: persist the redacted fields and carry on. Leaving the
+                    # candidate unconfirmed would re-send it to the LLM every cycle.
+                    observability.bump_claim_filtered("steward_extraction_sensitive")
+                    log.warning(
+                        "steward: redacted extraction fields for claim #%d [REDACTED findings=%s]",
+                        claim_id, ",".join(f_findings),
+                    )
+                    stats["claims_filtered_sensitive"] += 1
                 if not dry_run:
                     # F-1 fix (mm-d53d, 2026-05-04): scope must match the source
                     # claim's scope, not the literal 'project' which never appears
@@ -794,8 +832,8 @@ def run_steward(
                     # filters on a hardcoded value the data never contains.
                     dup = conn.execute(
                         "SELECT id FROM claims WHERE subject = ? AND predicate = ? "
-                        "AND status = 'confirmed' AND scope = ? AND id != ? LIMIT 1",
-                        (f_subj, f_pred, scope, claim_id),
+                        f"AND status = 'confirmed' AND scope = ? AND id != ? AND {id_sql} LIMIT 1",
+                        (f_subj, f_pred, scope, claim_id, *id_params),
                     ).fetchone()
                     if dup:
                         if not _archive_candidate_cas(
@@ -831,20 +869,29 @@ def run_steward(
                     )
 
                     for extra in confirm_extractions[1:]:
-                        subj = extra.get("subject")
-                        pred = extra.get("predicate")
-                        obj_val = extra.get("object_value")
+                        subj, pred, obj_val, extra_findings = _sanitize_extraction(
+                            extra.get("subject"), extra.get("predicate"), extra.get("object_value"),
+                        )
                         conf = min(1.0, max(0.0, float(extra.get("confidence", 0.7))))
+                        if extra_findings:
+                            observability.bump_claim_filtered("steward_extraction_sensitive")
+                            log.warning(
+                                "steward: redacted extra extraction fields from "
+                                "claim #%d [REDACTED findings=%s]",
+                                claim_id, ",".join(extra_findings),
+                            )
 
                         # F-1 fix (mm-d53d, 2026-05-04): same as above — scope
                         # is the source claim's scope, not the literal 'project'.
                         existing = conn.execute(
                             "SELECT id FROM claims WHERE subject = ? AND predicate = ? "
-                            "AND status = 'confirmed' AND scope = ? LIMIT 1",
-                            (subj, pred, scope),
+                            f"AND status = 'confirmed' AND scope = ? AND {id_sql} LIMIT 1",
+                            (subj, pred, scope, *id_params),
                         ).fetchone()
 
                         if existing:
+                            # Redacted fields are written, as svc.ingest would.
+                            stats["claims_filtered_sensitive"] += bool(extra_findings)
                             conn.execute(
                                 "UPDATE claims SET object_value = ?, confidence = MAX(confidence, ?), "
                                 "updated_at = datetime('now') WHERE id = ?",
@@ -862,8 +909,13 @@ def run_steward(
                                 citations=[],
                                 subject=subj,
                                 predicate=pred,
+                                tenant_id=row["tenant_id"],
+                                source_agent=row["source_agent"],
+                                visibility=row["visibility"],
                             )
-                            if sanitized.is_sensitive:
+                            # A NEW row is default-deny: any finding in the model fields
+                            # (already redacted above) or in the source text skips it.
+                            if sanitized.is_sensitive or extra_findings:
                                 observability.bump_claim_filtered(
                                     "steward_extraction_sensitive"
                                 )
@@ -871,7 +923,7 @@ def run_steward(
                                     "steward: skipped sensitive extraction from "
                                     "claim #%d [REDACTED findings=%s]",
                                     claim_id,
-                                    ",".join(sanitized.findings),
+                                    ",".join(sanitized.findings or extra_findings),
                                 )
                                 stats["claims_filtered_sensitive"] += 1
                                 continue
@@ -881,9 +933,15 @@ def run_steward(
                                 # from the same recall path as their source.
                                 cursor = conn.execute(
                                     "INSERT INTO claims (text, subject, predicate, object_value, "
-                                    "confidence, status, scope, created_at, updated_at) "
-                                    "VALUES (?, ?, ?, ?, ?, 'confirmed', ?, datetime('now'), datetime('now'))",
-                                    (text[:200], subj, pred, obj_val, conf, scope),
+                                    "confidence, status, scope, tenant_id, visibility, source_agent, "
+                                    "created_at, updated_at) "
+                                    "VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, "
+                                    "datetime('now'), datetime('now'))",
+                                    (
+                                        sanitized.text, sanitized.subject, sanitized.predicate,
+                                        sanitized.object_value, conf, scope,
+                                        row["tenant_id"], row["visibility"], row["source_agent"],
+                                    ),
                                 )
                                 new_id = cursor.lastrowid
                                 if new_id is None:

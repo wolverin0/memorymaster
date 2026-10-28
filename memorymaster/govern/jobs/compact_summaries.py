@@ -24,6 +24,7 @@ from memorymaster.govern.llm_steward import (
 from memorymaster.core.models import CitationInput
 from memorymaster.core.promotion_policy import auto_promotion_blocked
 from memorymaster.core.security import redact_text
+from memorymaster.stores.claim_identity import identity_namespace_key
 
 log = logging.getLogger(__name__)
 
@@ -62,12 +63,18 @@ class CompactSummaryResult:
 
 
 def _inherited_source_agent(sources: list[Any]) -> str | None:
-    """The author a summary inherits when EVERY source claim is non-auto-promotable.
+    """The author a summary inherits.
+
+    A non-public cluster (one owner by construction, see ``_partition_by_identity``)
+    keeps its owner. Otherwise the author is inherited only when EVERY source claim
+    is non-auto-promotable.
 
     A summary of hook claims must not launder them into confirmed through a
     NULL author; mixed clusters keep the compactor's own (unset) author.
     """
     agents = {str(c.source_agent or "").strip() for c in sources}
+    if sources[0].visibility != "public" and len(agents) == 1:
+        return sorted(agents)[0]
     if agents and all(auto_promotion_blocked(agent) for agent in agents):
         return sorted(agents)[0]
     return None
@@ -93,11 +100,19 @@ def _build_claim_text_block(claims: list[Any]) -> str:
     return redacted_text
 
 
-def _partition_by_scope_and_tenant(claims: list[Any]) -> list[list[Any]]:
-    """Split claims by (scope, tenant_id); clustering happens inside each part only."""
-    parts: dict[tuple[str, str | None], list[Any]] = {}
+def _partition_by_identity(claims: list[Any]) -> list[list[Any]]:
+    """Split claims by (tenant, scope, visibility, private owner); cluster inside each part only.
+
+    A part therefore has one visibility and (when non-public) one owner, so a summary
+    can inherit exactly its sources' visibility and never mixes owners.
+    """
+    parts: dict[tuple[Any, ...], list[Any]] = {}
     for claim in claims:
-        parts.setdefault((claim.scope or "project", getattr(claim, "tenant_id", None)), []).append(claim)
+        key = identity_namespace_key(
+            getattr(claim, "tenant_id", None), claim.scope or "project",
+            getattr(claim, "visibility", "public"), claim.source_agent,
+        )
+        parts.setdefault(key, []).append(claim)
     return list(parts.values())
 
 
@@ -300,7 +315,7 @@ def run(
     # 2. Cluster claims, never across a scope or tenant: archived claims come from every
     # scope, and one confirmed summary must not mix projects or owners (2026-10-04).
     clusters: list[list[Any]] = []
-    for partition in _partition_by_scope_and_tenant(archived_claims):
+    for partition in _partition_by_identity(archived_claims):
         if embedding_provider is not None and embedding_provider.is_semantic:
             clusters.extend(_cluster_by_embedding(
                 partition, store, embedding_provider,
@@ -404,12 +419,14 @@ def run(
                     confidence=confidence,
                     tenant_id=getattr(sub_cluster[0], "tenant_id", None),
                     source_agent=inherited_agent,
+                    visibility=sub_cluster[0].visibility,
                 )
 
                 # Transition summary claim to confirmed status, unless its sources
                 # are all authors that never auto-promote (T-1354): it stays candidate.
                 from memorymaster.core.lifecycle import transition_claim
-                if not auto_promotion_blocked(inherited_agent):
+                # Never auto-confirm a summary of non-public sources: it stays a candidate.
+                if sub_cluster[0].visibility == "public" and not auto_promotion_blocked(inherited_agent):
                     transition_claim(
                         store,
                         claim_id=summary_claim.id,

@@ -76,10 +76,8 @@ class TestBuildClaimTextBlock:
 
 class TestGetUnsummarizedArchivedClaims:
     def test_returns_archived_without_derived_links(self, store):
-        claims = [
+        for i in range(3):
             _create_archived_claim(store, f"fact {i}", subject="topic")
-            for i in range(3)
-        ]
         unsummarized = _get_unsummarized_archived_claims(store)
         assert len(unsummarized) == 3
 
@@ -168,7 +166,6 @@ class TestRunWithMockedLLM:
         assert result.errors == 0
 
         # Verify summary claim was created
-        all_candidates = store.list_claims(status="candidate")
         all_confirmed = store.list_claims(status="confirmed")
         # The summary claim should be confirmed
         summary_claims = [c for c in all_confirmed if c.claim_type == "summary"]
@@ -177,7 +174,7 @@ class TestRunWithMockedLLM:
 
         # Verify derived_from links were created
         links = store.get_claim_links(summary_claims[0].id)
-        derived_links = [l for l in links if l.link_type == "derived_from"]
+        derived_links = [link for link in links if link.link_type == "derived_from"]
         assert len(derived_links) == 4
 
     @patch("memorymaster.govern.jobs.compact_summaries._call_llm")
@@ -353,4 +350,24 @@ def test_summary_of_mixed_sources_is_still_confirmed(mock_llm, store):
 
     summaries = [c for c in store.list_claims(limit=50, include_archived=True) if c.claim_type == "summary"]
     assert len(summaries) == 1 and summaries[0].status == "confirmed"
+
+
+@patch("memorymaster.govern.jobs.compact_summaries._call_llm")
+def test_summary_is_never_more_visible_than_its_private_sources(mock_llm, store):
+    """T-1865 F10: private archived claims used to be summarised into a public, confirmed claim."""
+    mock_llm.return_value = json.dumps({"summary_text": "Private summary", "subject": "topic",
+                                        "predicate": "summary_of", "object_value": "x", "confidence": 0.9})
+    from memorymaster.core.lifecycle import transition_claim
+
+    for i in range(3):
+        claim = store.create_claim(text=f"private fact {i}", citations=[CitationInput(source="test")], subject="topic",
+                                   predicate=f"p{i}", object_value=f"v{i}", visibility="private", source_agent="alice")
+        for status, event in (("confirmed", "transition"), ("stale", "decay"), ("archived", "compactor")):
+            transition_claim(store, claim.id, to_status=status, reason="test", event_type=event,
+                             event_payload={"actor": "operator"})
+
+    run(store, provider="gemini", api_key="fake-key", min_cluster=3, dry_run=False)
+
+    [summary] = [c for c in store.list_claims(limit=50) if c.claim_type == "summary"]
+    assert (summary.visibility, summary.source_agent, summary.status) == ("private", "alice", "candidate")
 

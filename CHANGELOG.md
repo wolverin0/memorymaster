@@ -25,6 +25,23 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
   leaves it half applied and it cannot be edited (checksum guard). The tested recovery
   is in `docs/troubleshooting.md`.
 
+### Authorization and sanitizer fixes from the external review (T-1865, F10-F11)
+
+- Dedup (`dedup` CLI/MCP, `MemoryService.dedup`) pairs claims only inside one
+  tenant, scope, visibility and (for non-public claims) owner, for duplicates and for
+  conflict marking, and re-reads both claims right before archiving a duplicate,
+  skipping the pair if identity or status changed since the scan.
+- `memorymaster-steward` (`govern/llm_steward.py`): every model-generated field (first
+  extraction, duplicate update, extra insert) goes through the canonical sanitizer. A
+  confirmed or updated claim stores the redacted value, as `ingest` does (a private IP
+  in a `server/ip_address` triple is now stored as `[REDACTED:private_ipv4]`); a NEW
+  extra row with any finding is skipped. Duplicate lookups stay inside the source
+  claim's tenant, visibility and owner, and inserted rows carry them.
+- `compact-summaries` clusters per tenant, scope, visibility and owner, so a summary
+  inherits its sources' visibility and owner and a private cluster needs `min_cluster`
+  claims from one owner (fewer eligible clusters). A summary of non-public sources is no
+  longer auto-confirmed by the job; it stays a candidate.
+
 ### PreCompact residual (AO-1, T-1633)
 
 - New opt-in `MEMORYMASTER_PRECOMPACT_RESIDUAL=1`: when a compaction is allowed
