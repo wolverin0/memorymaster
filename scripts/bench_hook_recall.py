@@ -58,11 +58,13 @@ def _isolate(state_dir: Path) -> None:
     os.environ["MEMORYMASTER_RECALL_SEEN_DIR"] = str(state_dir / "seen")
     os.environ["MEMORYMASTER_RECALL_HOOK_CONFIG"] = str(state_dir / "no-recall-hook.json")
     os.environ["MEMORYMASTER_RECALL_STATE_DIR"] = str(state_dir / "delivery")
+    os.environ["MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK"] = "1"  # opt-in since T-1876; this bench measures it
 
 
 def _session_scopes(index: Path) -> dict[str, str]:
     with closing(sqlite3.connect(f"file:{index.resolve().as_posix()}?mode=ro", uri=True)) as con:
-        return dict(con.execute("SELECT session_id, scope FROM files"))
+        # a session can span scopes since T-1876 (scope is per record): the oracle uses the first one
+        return dict(con.execute("SELECT session_id, scope FROM fragments GROUP BY session_id"))
 
 
 def _package_dir_name() -> str:

@@ -63,11 +63,17 @@ row in. A claim with a pending or explicit correction never precedes the correct
 When fewer claims than the cap are injected, up to 2 dated, redacted, match-centred
 fragments of raw past conversation from the transcript sidecar
 (`memorymaster transcript-index`) follow, labelled as possibly outdated and limited
-to the current project. On when the sidecar file exists;
-`MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK=0` turns it off,
-`MEMORYMASTER_RECALL_TRANSCRIPT_DEADLINE_MS` (default 120) bounds the query, and any
-error injects nothing. While it is active the older `verbatim_memories` stream is
-bypassed in the hook. Measurement: `scripts/bench_hook_recall.py`.
+to the current project. Off by default: it needs `MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK=1`
+and the sidecar file; the sidecar alone enables nothing. Excerpts sit inside an
+`<untrusted-transcript-excerpts>` block (markup escaped, role markers and
+instruction-like phrases neutralised), are labelled with date, project, session id and
+line range, and count against the caller's budget with the claims.
+`MEMORYMASTER_RECALL_TRANSCRIPT_DEADLINE_MS` (default 120, from entry, covering the
+connection) bounds the query, and any error injects nothing. When the fallback finds
+usable fragments the older `verbatim_memories` stream is bypassed in the hook; when it
+finds nothing or fails, that stream still runs. The index is sanitised before it is
+stored and carries a format version: an index built by an older version is not served
+until `memorymaster transcript-index` rebuilds it. Measurement: `scripts/bench_hook_recall.py`.
 
 Turn the hook off for some projects, default on, without touching code or
 restarting anything: write `~/.memorymaster/recall-hook.json`. The wisp lane:

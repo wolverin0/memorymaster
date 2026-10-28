@@ -1200,6 +1200,9 @@ def recall(
         scope_token = shared_token = None
 
     try:
+        # Raw past conversation is fetched BEFORE the claims pipeline: whether the older verbatim stream may
+        # be bypassed depends on the fallback having produced usable fragments (T-1876 N8).
+        fallback_found = _transcript_fragments(query, budget, phase_ms) if hook_data is not None else []
         rendered = _recall_impl(
             query,
             db_path=db_path,
@@ -1210,9 +1213,10 @@ def recall(
             _memory_service_cls=MemoryService,
             _rendered_ids=rendered_ids if (return_ids or hook_data is not None) else None,
             _hook_data=hook_data,
+            _fallback_found=fallback_found,
         )
         if hook_data is not None:
-            rendered = _with_transcript_fallback(query, rendered, len(rendered_ids), phase_ms)
+            rendered = _with_transcript_fallback(rendered, fallback_found, len(rendered_ids), budget)
         if return_ids:
             return rendered, rendered_ids
         return rendered
@@ -1223,29 +1227,36 @@ def recall(
         _emit_recall_latency(phase_ms, total_start)
 
 
-def _transcript_fallback_active() -> bool:
-    try:
-        from memorymaster.recall import transcript_fallback
-
-        return transcript_fallback.enabled()
-    except Exception:  # noqa: BLE001 - an unavailable fallback means the verbatim stream keeps working
-        return False
-
-
-def _with_transcript_fallback(query: str, rendered: str, claims: int, phase_ms: dict[str, float]) -> str:
-    """Append raw past conversation (dated, labelled, this project only) when the hook has free slots.
-
-    ``claims`` is how many claims the hook injected; the cap minus that is the number of free slots (two at
-    most). Fragments are not claims: they are never recorded as accesses nor as session-seen ids. Fails open.
-    """
-    slots = hook_policy.max_claims() - claims
-    if slots <= 0:
-        return rendered
+def _transcript_fragments(query: str, budget: int, phase_ms: dict[str, float]) -> list:
+    """Relevant raw-conversation fragments of the current project; ``[]`` when off, unavailable or no budget."""
+    if budget <= 0:
+        return []
     try:
         from memorymaster.recall import transcript_fallback
 
         with _phase_timer(phase_ms, "transcript_fallback"):
-            block = transcript_fallback.block(query, _current_scope(), slots)
+            return transcript_fallback.fragments(query, _current_scope(), transcript_fallback.MAX_FRAGMENTS)
+    except Exception as exc:  # noqa: BLE001 - optional evidence never breaks the hook
+        logger.debug("transcript fallback unavailable: %s", type(exc).__name__)
+        return []
+
+
+def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: int) -> str:
+    """Append raw past conversation (dated, labelled, this project only) when the hook has free slots AND room.
+
+    ``claims`` is how many claims the hook injected; the cap minus that is the number of free slots (two at
+    most). The block is counted against the caller's ``budget`` (four characters per token) together with the
+    claims block, framing included; what does not fit is dropped whole, and ``budget=0`` yields nothing.
+    Fragments are not claims: they are never recorded as accesses nor as session-seen ids. Fails open.
+    """
+    slots = hook_policy.max_claims() - claims
+    if slots <= 0 or not found:
+        return rendered
+    room = max(0, budget) * 4 - (len(rendered) + 2 if rendered else 0)
+    try:
+        from memorymaster.recall import transcript_fallback
+
+        block = transcript_fallback.render(found[:slots], room)
     except Exception as exc:  # noqa: BLE001 - optional evidence never breaks the hook
         logger.debug("transcript fallback unavailable: %s", type(exc).__name__)
         return rendered
@@ -1452,6 +1463,7 @@ def _recall_impl(
     _memory_service_cls,
     _rendered_ids: list[int] | None = None,
     _hook_data: dict | None = None,
+    _fallback_found: list | None = None,
 ) -> str:
     """Inner recall body. Kept separate from ``recall()`` so the outer
     function's ``try/finally`` can emit latency logs from every return path
@@ -1643,9 +1655,10 @@ def _recall_impl(
     # Verbatim stream is opt-in — time + emit only when enabled so the
     # disabled case produces zero latency lines (roadmap 5.1). The prompt hook
     # already appends raw past conversation through ``transcript_fallback``
-    # (T-1862): while that is active this older stream is bypassed there, so
-    # the hook carries ONE raw-evidence mechanism, not two.
-    if _verbatim_enabled() and not (_hook_data is not None and _transcript_fallback_active()):
+    # (T-1862): when that produced usable fragments this older stream is bypassed
+    # there, so the hook carries ONE raw-evidence mechanism, not two. An off,
+    # failing or empty fallback never suppresses it (T-1876 N8).
+    if _verbatim_enabled() and not (_hook_data is not None and _fallback_found):
         with _phase_timer(phase_ms, "verbatim"):
             try:
                 verbatim_hits = recall_verbatim(query, scope=_current_scope(), db_path=db, limit=5)
@@ -1659,8 +1672,11 @@ def _recall_impl(
                 known = [" ".join(str(getattr(r.get("claim"), "text", "")).lower().split()) for r in rows]
                 added_excerpts: set[str] = set()
                 for hit in verbatim_hits:
-                    key = " ".join(hit.excerpt.lower().split())[:100]
-                    if key in added_excerpts or any(key and (key in text or text in key) for text in known if len(text) >= 20):
+                    full = " ".join(hit.excerpt.lower().split())
+                    key = full[:100]
+                    # Only an excerpt that adds nothing is a duplicate: one the claim text contains whole.
+                    # A claim contained in a LONGER excerpt leaves the extra evidence in (T-1876, review F2).
+                    if key in added_excerpts or any(full and full in text for text in known if len(text) >= 20):
                         continue
                     added_excerpts.add(key)
                     rows.append(hit_to_synthetic_row(hit))

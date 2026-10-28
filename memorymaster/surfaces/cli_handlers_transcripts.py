@@ -71,7 +71,11 @@ def _search(args: Any, service: Any, parser: Any, effective_db: str) -> int:
         print(json.dumps({"ok": True, "rows": len(hits), "hits": [h.to_dict() for h in hits]}))
         return 0
     if not hits:
-        print("transcript-search: no fragments (index missing or no match; run transcript-index first)")
+        if ti.index_status(Path(args.index_path) if args.index_path else None) == "outdated":
+            print("transcript-search: the index was built by an older version and is not served; "
+                  "rebuild it with `memorymaster transcript-index`")
+        else:
+            print("transcript-search: no fragments (index missing or no match; run transcript-index first)")
         return 0
     # Fragments are arbitrary UTF-8; a cp1252 Windows console must degrade, not crash.
     sys.stdout.reconfigure(errors="replace")  # type: ignore[attr-defined]

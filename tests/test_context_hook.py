@@ -401,3 +401,23 @@ def test_truth_eligibility_fails_open(monkeypatch):
     monkeypatch.setattr(retrieval, "pending_supersession_ids", boom)
     rows = [{"claim": SimpleNamespace(id=1, supersedes_claim_id=None, replaced_by_claim_id=None)}]
     assert hook_lexical.apply_truth_eligibility(rows, MagicMock()) == rows
+
+
+def test_transcript_fallback_block_is_counted_in_the_callers_budget(monkeypatch):
+    """T-1876 N10: fragments share the claims' budget (4 chars per token); budget=0 yields nothing."""
+    from memorymaster.recall import context_hook, hook_policy, transcript_fallback
+    from memorymaster.recall.transcript_index import TranscriptHit
+
+    monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS", "2")
+    assert hook_policy.max_claims() == 2
+    hit = TranscriptHit(date="2026-08-01T00:00:00Z", session_id="0123456789abcdef", scope="project:fixture",
+                        first_line=3, last_line=4, score=1.0, excerpt="router firmware 7.18.2 was chosen")
+    claims_block = "# Memory Context\n- [mm-1] a claim"
+    block = transcript_fallback.render([hit])
+    assert "session=0123456789abcdef lines 3-4" in block
+    need = (len(claims_block) + 2 + len(block) + 3) // 4  # tokens that fit both, rounded up
+
+    assert context_hook._with_transcript_fallback(claims_block, [hit], 1, need) == f"{claims_block}\n\n{block}"
+    assert context_hook._with_transcript_fallback(claims_block, [hit], 1, need - 10) == claims_block
+    assert context_hook._with_transcript_fallback("", [hit], 0, 0) == ""
+    assert context_hook._with_transcript_fallback(claims_block, [hit], 2, 10_000) == claims_block  # cap is full
