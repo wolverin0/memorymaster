@@ -816,15 +816,14 @@ def run_steward(
                 )
                 f_conf = min(1.0, max(0.0, float(first.get("confidence", 0.7))))
                 if f_findings:
-                    # shortcut: the candidate stays 'candidate' and is re-extracted next run; archive it here if that churn matters.
+                    # Like svc.ingest: persist the redacted fields and carry on. Leaving the
+                    # candidate unconfirmed would re-send it to the LLM every cycle.
                     observability.bump_claim_filtered("steward_extraction_sensitive")
                     log.warning(
-                        "steward: skipped sensitive extraction for claim #%d [REDACTED findings=%s]",
+                        "steward: redacted extraction fields for claim #%d [REDACTED findings=%s]",
                         claim_id, ",".join(f_findings),
                     )
                     stats["claims_filtered_sensitive"] += 1
-                    stats["results"].append({"claim_id": claim_id, "action": "filtered_sensitive"})
-                    continue
                 if not dry_run:
                     # F-1 fix (mm-d53d, 2026-05-04): scope must match the source
                     # claim's scope, not the literal 'project' which never appears
@@ -877,12 +876,10 @@ def run_steward(
                         if extra_findings:
                             observability.bump_claim_filtered("steward_extraction_sensitive")
                             log.warning(
-                                "steward: skipped sensitive extra extraction from "
+                                "steward: redacted extra extraction fields from "
                                 "claim #%d [REDACTED findings=%s]",
                                 claim_id, ",".join(extra_findings),
                             )
-                            stats["claims_filtered_sensitive"] += 1
-                            continue
 
                         # F-1 fix (mm-d53d, 2026-05-04): same as above — scope
                         # is the source claim's scope, not the literal 'project'.
@@ -893,6 +890,8 @@ def run_steward(
                         ).fetchone()
 
                         if existing:
+                            # Redacted fields are written, as svc.ingest would.
+                            stats["claims_filtered_sensitive"] += bool(extra_findings)
                             conn.execute(
                                 "UPDATE claims SET object_value = ?, confidence = MAX(confidence, ?), "
                                 "updated_at = datetime('now') WHERE id = ?",
@@ -914,7 +913,9 @@ def run_steward(
                                 source_agent=row["source_agent"],
                                 visibility=row["visibility"],
                             )
-                            if sanitized.is_sensitive:
+                            # A NEW row is default-deny: any finding in the model fields
+                            # (already redacted above) or in the source text skips it.
+                            if sanitized.is_sensitive or extra_findings:
                                 observability.bump_claim_filtered(
                                     "steward_extraction_sensitive"
                                 )
@@ -922,7 +923,7 @@ def run_steward(
                                     "steward: skipped sensitive extraction from "
                                     "claim #%d [REDACTED findings=%s]",
                                     claim_id,
-                                    ",".join(sanitized.findings),
+                                    ",".join(sanitized.findings or extra_findings),
                                 )
                                 stats["claims_filtered_sensitive"] += 1
                                 continue

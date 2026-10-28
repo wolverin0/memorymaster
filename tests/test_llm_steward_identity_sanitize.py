@@ -77,14 +77,26 @@ def _dump(db: Path) -> str:
     )
 
 
-def test_first_extraction_with_secret_is_not_persisted(db, monkeypatch):
+def test_first_extraction_with_secret_is_stored_redacted_and_confirmed(db, monkeypatch):
+    """Same as svc.ingest: the redacted field is persisted; the candidate does not stay
+    pending (it would be re-sent to the LLM every cycle)."""
     cid = _candidate(db)
     stats = _run(db, monkeypatch, [
         {"subject": "compactor", "predicate": "uses", "object_value": f"token {SECRET}", "confidence": 0.8},
     ])
     assert SECRET not in _dump(db)
-    assert stats["claims_filtered_sensitive"] >= 1
-    assert _rows(db, "SELECT status FROM claims WHERE id=?", (cid,))[0]["status"] != "confirmed"
+    row = _rows(db, "SELECT status, object_value FROM claims WHERE id=?", (cid,))[0]
+    assert row["status"] == "confirmed" and "[REDACTED:" in row["object_value"]
+    assert stats["claims_filtered_sensitive"] == 1
+
+
+def test_infra_triple_with_a_private_ip_still_confirms_with_the_ip_redacted(db, monkeypatch):
+    cid = _candidate(db)
+    _run(db, monkeypatch, [
+        {"subject": "server", "predicate": "ip_address", "object_value": "10.0.0.1", "confidence": 0.9},
+    ])
+    row = _rows(db, "SELECT status, object_value FROM claims WHERE id=?", (cid,))[0]
+    assert row["status"] == "confirmed" and "10.0.0.1" not in row["object_value"]
 
 
 def test_first_extraction_with_secret_in_subject_or_predicate(db, monkeypatch):
@@ -95,18 +107,18 @@ def test_first_extraction_with_secret_in_subject_or_predicate(db, monkeypatch):
     assert SECRET not in _dump(db)
 
 
-def test_duplicate_update_with_secret_is_not_persisted(db, monkeypatch):
+def test_duplicate_update_with_secret_writes_the_redacted_value(db, monkeypatch):
     dup = _confirmed(db, "compactor", "uses")
     _candidate(db)
     stats = _run(db, monkeypatch, [
         {"subject": "compactor", "predicate": "uses", "object_value": f"token {SECRET}", "confidence": 0.9},
     ])
     assert SECRET not in _dump(db)
-    assert _rows(db, "SELECT object_value FROM claims WHERE id=?", (dup,))[0]["object_value"] == "old"
-    assert stats["claims_filtered_sensitive"] >= 1
+    assert "[REDACTED:" in _rows(db, "SELECT object_value FROM claims WHERE id=?", (dup,))[0]["object_value"]
+    assert stats["claims_filtered_sensitive"] == 1
 
 
-def test_extra_extraction_update_and_insert_never_store_secret(db, monkeypatch):
+def test_extra_extraction_update_is_redacted_and_new_row_is_dropped(db, monkeypatch):
     dup = _confirmed(db, "extra-a", "uses")
     _candidate(db)
     stats = _run(db, monkeypatch, [
@@ -115,8 +127,9 @@ def test_extra_extraction_update_and_insert_never_store_secret(db, monkeypatch):
         {"subject": "extra-b", "predicate": f"p {SECRET}", "object_value": "ok", "confidence": 0.8},
     ])
     assert SECRET not in _dump(db)
-    assert _rows(db, "SELECT object_value FROM claims WHERE id=?", (dup,))[0]["object_value"] == "old"
-    assert stats["claims_filtered_sensitive"] >= 2
+    assert "[REDACTED:" in _rows(db, "SELECT object_value FROM claims WHERE id=?", (dup,))[0]["object_value"]
+    assert _rows(db, "SELECT id FROM claims WHERE subject='extra-b'") == []  # a NEW row is default-deny
+    assert stats["claims_filtered_sensitive"] == 2
 
 
 def test_benign_extraction_still_confirms_and_inserts(db, monkeypatch):
