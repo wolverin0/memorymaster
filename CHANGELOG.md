@@ -8,6 +8,18 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### Partial-fix follow-ups from the external review (T-1877, prompt recall hook)
+
+- Retrieval (F1): every selected question term is now searched (the first six together, three on their own as
+  before, and each remaining term with a small bounded search), so an answer that only contains a late
+  identifier enters the candidate pool. Scoring and the cap still run on the union.
+- Identifiers (F8): an identifier (inline code, path segment, identifier-shaped word) is matched verbatim,
+  never through the stemmer; only natural-language terms are stemmed. `rate` no longer passes the identifier
+  gate through "rated".
+- Truth eligibility (F4): a claim whose supersession is pending or explicit is dropped from the injected block
+  even when its correction was not retrieved. The decision fails closed: if the pending-proposal scan faults,
+  the hook injects nothing instead of an unchecked claim.
+
 ### Integrity fixes from the external review (T-1865, F13-F15)
 
 - Event hash chain: the SQLite event writer takes `BEGIN IMMEDIATE` before reading
