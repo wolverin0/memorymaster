@@ -679,6 +679,44 @@ def test_budget_deferral_preserves_semantic_failure_count(tmp_path):
     assert Bad.calls == 2
 
 
+def test_capture_larger_than_the_daily_allowance_resumes_instead_of_repeating(tmp_path):
+    """T-1877 (review N4): 61 candidates, 12 calls of 5 a day: day two must finish the 61st, not redo the 60."""
+    from dataclasses import replace
+
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+    original = _Extractor().extract([], scope="project:test", capture_hash="hash").candidates[0]
+    ledger.set_extraction(capture_id, [replace(original, candidate_id=f"c{i:02d}").to_dict() for i in range(61)], "fixture")
+
+    class Counting(_Consolidator):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reviewed: list[str] = []
+
+        def consolidate(self, candidates, current_claims, *, scope):
+            self.reviewed.extend(c.candidate_id for c in candidates)
+            return super().consolidate(candidates, current_claims, scope=scope)
+
+    consolidator = Counting()
+    config = DreamConfig(jev_triage_enabled=False, max_consolidate_calls_daily=12, max_consolidate_candidates=5)
+
+    def day(offset: int):
+        when = NOW + timedelta(days=offset)
+        return DreamWorker(ledger, service, _NoCall(), consolidator, config=config, now=lambda: when).run(apply_candidates=False)
+
+    day(0)
+    assert ledger.get_capture(capture_id)["state"] == "extracted"  # still short of its last candidate
+    first_day = list(consolidator.reviewed)
+    assert len(first_day) == 60
+
+    day(1)
+    row = ledger.get_capture(capture_id)
+    assert row["state"] == "consolidated"
+    assert consolidator.reviewed[60:] == ["c60"]  # only the undecided candidate was sent again
+    assert sorted(d["candidate_id"] for d in row["decisions"]) == [f"c{i:02d}" for i in range(61)]
+
+
 def test_absolute_capture_error_cap_quarantines_persistent_unexpected_failures(tmp_path, monkeypatch):
     # Transient/provider-wide failures no longer count (operator, 2026-09-23);
     # an unexpected error with no provider-wide cause still does.

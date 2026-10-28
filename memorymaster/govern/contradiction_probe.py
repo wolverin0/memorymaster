@@ -35,7 +35,7 @@ from memorymaster.core import llm_budget
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
 from memorymaster.core.lifecycle import transition_claim
-from memorymaster.core.models import Claim, normalize_identity_part
+from memorymaster.core.models import Claim, normalize_identity_part, tuple_key
 from memorymaster.core.security import redact_text
 
 logger = logging.getLogger(__name__)
@@ -148,11 +148,8 @@ def _embed_text(claim: Claim) -> str:
 
 
 def _same_subject_predicate(a: Claim, b: Claim) -> bool:
-    return (
-        bool(a.subject) and bool(a.predicate)
-        and normalize_identity_part(a.subject) == normalize_identity_part(b.subject)
-        and normalize_identity_part(a.predicate) == normalize_identity_part(b.predicate)
-    )
+    key = tuple_key(a.subject, a.predicate)  # the identity the store lookup persists and compares (T-1877 F6)
+    return key is not None and key == tuple_key(b.subject, b.predicate)
 
 
 def _deterministic_relation(a: Claim, b: Claim) -> bool:

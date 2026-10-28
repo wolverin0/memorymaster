@@ -21,7 +21,7 @@ from memorymaster.core.antigravity_client import AntigravityError
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
 from memorymaster.dreaming import held
-from memorymaster.dreaming.extraction_window import extraction_complete, next_window
+from memorymaster.dreaming.extraction_window import PIECE_CHARS, extraction_complete, next_window
 from memorymaster.dreaming.ledger import DreamLedger
 from memorymaster.dreaming.models import (
     ConsolidationResult,
@@ -171,6 +171,19 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_input_chars(name: str, default: int) -> int:
+    """Per-call extraction input cap. An extraction unit is up to ``PIECE_CHARS`` long and cannot be split
+    (cursors count whole units), so a smaller cap would still send a full unit: clamp it and say so
+    (T-1877, review N11)."""
+    value = _env_int(name, default)
+    if value < PIECE_CHARS:
+        LOGGER.warning(
+            "%s=%d is below the %d-character extraction unit; using %d", name, value, PIECE_CHARS, PIECE_CHARS,
+        )
+        return PIECE_CHARS
+    return value
+
+
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -224,7 +237,7 @@ class DreamConfig:
         return cls(
             idle_minutes=_env_int("MEMORYMASTER_DREAM_IDLE_MINUTES", 30),
             max_sessions=_env_int("MEMORYMASTER_DREAM_MAX_SESSIONS", 20),
-            max_input_chars=_env_int("MEMORYMASTER_DREAM_MAX_INPUT_CHARS", 128_000),
+            max_input_chars=_env_input_chars("MEMORYMASTER_DREAM_MAX_INPUT_CHARS", 128_000),
             max_context_chars=_env_int("MEMORYMASTER_DREAM_MAX_CONTEXT_CHARS", 512_000),
             max_candidate_writes_daily=_env_int("MEMORYMASTER_DREAM_MAX_CANDIDATE_WRITES_DAILY", 200),
             max_extract_calls_daily=_env_int("MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY", 40),
@@ -609,8 +622,14 @@ class DreamWorker:
     @staticmethod
     def _reopened(row: dict[str, Any]) -> dict[str, Any]:
         """S3: consolidate released candidates of a decided capture, keeping its decisions."""
+        if row.get("decisions") is None:
+            return row
         released = held.released_undecided(row.get("extraction"), row.get("decisions"))
-        if row.get("decisions") is None or not released:
+        if not released and row.get("deferred_reason") == "consolidate_budget":
+            # A budget deferral that kept the decisions of its completed batches (T-1877, review N4):
+            # only the candidates without a decision still need a call.
+            released = held.undecided(row.get("extraction"), row.get("decisions"))
+        if not released:
             return row
         return {**row, "decisions": None, "base_decisions": list(row["decisions"]), "released": released}
 
@@ -918,6 +937,18 @@ class DreamWorker:
             self._hold_lease()
             self.ledger.defer_consolidation(capture_id, run_id)
         summary["deferred_consolidate_dependencies"] = len(dependent_deferred)
+        # Keep what a budget-deferred capture already decided (T-1877, review N4): without it a capture
+        # needing more calls than the daily allowance restarts from its first candidate every day. A capture
+        # whose decisions relied on another capture's withdrawn work keeps none (dependency rollback).
+        for row in rows:
+            capture_id = int(row["id"])
+            if (capture_id in deferred_captures and capture_id not in dependent_deferred
+                    and capture_id not in failed_captures and capture_id not in provider_deferred
+                    and decisions_by_capture[capture_id]
+                    and not reference_dependencies.get(capture_id, set()) & tainted):
+                self._hold_lease()
+                self.ledger.checkpoint_decisions(
+                    capture_id, [*row.get("base_decisions", []), *decisions_by_capture[capture_id]], run_id)
         deferred_captures.update(dependent_deferred)
         for row in rows:
             capture_id = int(row["id"])

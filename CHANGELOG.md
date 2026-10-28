@@ -20,6 +20,28 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
   even when its correction was not retrieved. The decision fails closed: if the pending-proposal scan faults,
   the hook injects nothing instead of an unchecked claim.
 
+### Partial-fix follow-ups from the external review (T-1877, govern and dreaming)
+
+- Validator (F5): a candidate whose score exceeds a confirmed rival's confidence no longer
+  retires a rival that holds a different value. Only an explicit supersession link retires a
+  rival (the rule the curation drain already applies); otherwise the candidate is `conflicted`.
+- Tuple identity (F6): migration 31 adds the nullable `claims.tuple_key` (SQLite only;
+  PostgreSQL stays fail-closed) with an index, filled in Python for every existing row in one
+  transaction (`text`, `status`, `updated_at`, `version` untouched). `find_confirmed_by_tuple`,
+  the drain's rival lookup and the contradiction probe now compare the same Python
+  canonicalization (Unicode lower case, whitespace collapsed). Rows written by raw-SQL paths keep
+  a NULL key and the old ASCII `lower(trim())` match.
+- Dream ledger (F12): producer coalescing writes with a compare-and-swap on the cursor and hash it
+  read and retries against the row the winner wrote, so a stale producer cannot drop a message.
+- Dreaming (N4): a capture needing more consolidation calls than the daily allowance keeps the
+  decisions of its completed batches (`deferred_reason=consolidate_budget`) and the next run sends
+  only the undecided candidates. Decisions that relied on withdrawn peer work are still withdrawn.
+- Dreaming (N11): `MEMORYMASTER_DREAM_MAX_INPUT_CHARS` below the 16,000-character extraction unit is
+  clamped to it with a warning.
+- Curation drain (N6): each run looks at `limit` conflicted claims (the old budget), taken by id after a
+  cursor persisted in the `miner_state` table (`curation_drain.conflicts_after_id`, moved only by `--apply`
+  runs) and wrapping at the end, so held conflicts no longer starve resolvable ones.
+
 ### Integrity fixes from the external review (T-1865, F13-F15)
 
 - Event hash chain: the SQLite event writer takes `BEGIN IMMEDIATE` before reading

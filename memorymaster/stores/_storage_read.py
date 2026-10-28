@@ -17,6 +17,7 @@ from memorymaster.core.models import (
     Claim,
     ClaimLink,
     Event,
+    tuple_key,
 )
 from memorymaster.stores.claim_identity import (
     normalize_claim_identity,
@@ -705,6 +706,26 @@ class _ReadMixin:
         )
 
 
+    def find_by_status_after(
+        self, status: str, *, after_id: int = 0, limit: int = 100, include_citations: bool = False,
+    ) -> list[Claim]:
+        """Claims in ``status`` with ``id > after_id``, ascending: a keyset page (T-1877, review N6).
+
+        A confidence-ordered ``find_by_status`` window never reaches past its first ``limit`` rows;
+        a worker that must see every row of a status pages with this instead.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM claims WHERE status = ? AND id > ? ORDER BY id ASC LIMIT ?",
+                (status, int(after_id), max(1, int(limit))),
+            ).fetchall()
+        claims = [self._row_to_claim(row) for row in rows]
+        if include_citations and claims:
+            cit_map = self.list_citations_batch([c.id for c in claims])
+            for claim in claims:
+                claim.citations = cit_map.get(claim.id, [])
+        return claims
+
     def find_archive_candidates(
         self, *, created_before: str, after_id: int = 0, limit: int = 500
     ) -> list[Claim]:
@@ -776,17 +797,19 @@ class _ReadMixin:
         if not subject or not predicate:
             return []
 
-        # T-1863 F6: tuple identity is case/whitespace-insensitive. The exact
-        # match stays as an OR arm so non-ASCII text (SQLite lower() is ASCII
-        # only) still matches itself. shortcut: internal whitespace runs are
-        # not collapsed in SQL; upgrade with a normalized column if it matters.
+        # T-1877 (review F6): the persisted, Python-computed ``tuple_key`` is the identity. A row without
+        # one (written by a raw-SQL path, or a guard-rejected backfill) keeps the legacy ASCII
+        # case/trim match. shortcut: that fallback cannot see Unicode/whitespace variants of unkeyed rows;
+        # drop it once every writer sets the key.
+        key = tuple_key(subject, predicate)
         clauses = [
             "status = 'confirmed'",
-            "(subject = ? OR lower(trim(subject)) = ?)",
-            "(predicate = ? OR lower(trim(predicate)) = ?)",
+            "(tuple_key = ? OR (tuple_key IS NULL AND (subject = ? OR lower(trim(subject)) = ?)"
+            " AND (predicate = ? OR lower(trim(predicate)) = ?)))",
             "scope = ?",
         ]
         params: list[object] = [
+            key,
             subject, subject.strip().lower(),
             predicate, predicate.strip().lower(),
             scope or "project",

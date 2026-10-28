@@ -107,6 +107,24 @@ def test_a_winning_conflicted_claim_is_promoted_and_the_rival_superseded(svc):
     assert viejo.replaced_by_claim_id == ganador
 
 
+# --- paginado (T-1877, N6) --------------------------------------------------
+
+def test_limit_bounds_resolutions_and_the_scan_reaches_every_conflict(svc):
+    """`limit` caps the resolutions applied per run; the claims scanned are not capped by it."""
+    for n in range(3):
+        rival = _claim(svc, f"confirmada {n}", subject=f"s{n}", predicate="p", object_value="v1", confidence=0.9)
+        _status(svc, rival, "confirmed")
+        perdedor = _claim(svc, f"conflictiva {n}", subject=f"s{n}", predicate="p", object_value="v2", confidence=0.3)
+        _status(svc, perdedor, "conflicted")
+        _link(svc, rival, perdedor)
+
+    primera = curation_drain.drain_conflicts(svc, limit=2, apply=True)
+    segunda = curation_drain.drain_conflicts(svc, limit=2, apply=True)
+
+    assert primera["resolved_lost"] == 2
+    assert segunda["resolved_lost"] == 1 and segunda["scanned"] == 1
+
+
 # --- veredicto (c): huerfano -----------------------------------------------
 
 def test_an_orphan_conflict_waits_for_revalidation(svc):
