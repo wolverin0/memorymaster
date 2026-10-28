@@ -6,6 +6,7 @@ principal so hidden rows cannot become uniqueness oracles.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Final, TypeVar
 
 
@@ -43,6 +44,16 @@ def normalize_claim_identity(
     if normalized_visibility != "public" and normalized_source is None:
         raise ValueError("Non-public claims require a non-blank source_agent principal.")
     return normalized_visibility, normalized_source
+
+
+def content_fingerprint(text: str) -> str:
+    """Stable digest of a claim's text, independent of any idempotency key.
+
+    Content dedup looks claims up by ``(tenant, scope, visibility, owner,
+    fingerprint)``. Case and edge whitespace are ignored; the text must already be
+    sanitized (the stored form), so the lookup and the stored value agree.
+    """
+    return hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()
 
 
 def identity_namespace_key(

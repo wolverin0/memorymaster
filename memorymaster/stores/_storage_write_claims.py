@@ -29,7 +29,7 @@ from memorymaster.stores._storage_shared import (
     details_writer,
     utc_now,
 )
-from memorymaster.stores.claim_identity import normalize_claim_identity
+from memorymaster.stores.claim_identity import content_fingerprint, normalize_claim_identity
 from memorymaster.stores.ingest_receipts import creation_payload, fill_outcome_receipt, prepare_outcome_receipt
 
 logger = logging.getLogger(__name__)
@@ -230,8 +230,9 @@ class _WriteClaimsMixin:
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
                         replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
-                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility, holder
-                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
+                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility, holder,
+                        content_fingerprint
+                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         text,
@@ -252,6 +253,7 @@ class _WriteClaimsMixin:
                         source_agent,
                         visibility,
                         holder or None,
+                        content_fingerprint(text),
                     ),
                 )
             except sqlite3.IntegrityError:

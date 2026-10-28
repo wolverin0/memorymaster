@@ -167,6 +167,39 @@ class _ReadMixin:
         return claim
 
 
+    def get_claim_by_content_fingerprint(
+        self,
+        fingerprint: str,
+        *,
+        tenant_id: str | None,
+        scope: str,
+        visibility: str = "public",
+        source_agent: str | None = None,
+    ) -> Claim | None:
+        """First claim with this content under the exact identity, whatever its idempotency key.
+
+        A live copy wins over an archived one. More than one match is legitimate
+        (rows ingested before the fingerprint existed), so this never raises on it.
+        """
+        visibility, source_agent = normalize_claim_identity(visibility, source_agent)
+        identity_sql, identity_params = self._claim_identity_filter(visibility, source_agent)
+        with self.connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT * FROM claims
+                WHERE content_fingerprint = ? AND tenant_id IS ? AND scope = ?
+                  AND {identity_sql}
+                ORDER BY (status = 'archived'), id
+                LIMIT 1
+                """,
+                (fingerprint, tenant_id, scope, *identity_params),
+            ).fetchone()
+        if row is None:
+            return None
+        claim = self._row_to_claim(row)
+        claim.citations = self.list_citations(claim.id)
+        return claim
+
     def get_claim_by_human_id(
         self,
         human_id: str,

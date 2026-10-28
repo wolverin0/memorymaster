@@ -225,7 +225,9 @@ class TestRunIntegration:
             "idempotency_key": f"dedup-test-{TestRunIntegration._counter}",
         }
         defaults.update(kwargs)
-        return service.ingest(text=text, **defaults)
+        # Straight to the store: the facade's content dedup would collapse the
+        # identical rows these tests need (T-1865 F14).
+        return service.store.create_claim(text, defaults.pop("citations"), **defaults)
 
     def test_dry_run_no_changes(self, service):
         self._ingest(service, "Python version is 3.12")
