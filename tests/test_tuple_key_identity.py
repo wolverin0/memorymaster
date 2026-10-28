@@ -70,3 +70,22 @@ def test_migration_backfills_the_key_and_unkeyed_rows_still_match(service: Memor
         migration.apply_sqlite(conn)
         keys = {r[0]: r[1] for r in conn.execute("SELECT id, tuple_key FROM claims")}
     assert keys[confirmed.id] and keys[confirmed.id] != keys[ascii_row.id]
+
+
+def test_legacy_steward_rewrite_keeps_the_key_in_step(service: MemoryService) -> None:
+    from memorymaster.core.models import tuple_key
+    from memorymaster.govern import llm_steward
+
+    claim = service.ingest(
+        text="gateway notes", citations=[CitationInput(source="tuple-key-steward")],
+        idempotency_key="steward", subject="old subject", predicate="old predicate", object_value="v1",
+    )
+    with service.store.connect() as conn:
+        version = conn.execute("SELECT version FROM claims WHERE id = ?", (claim.id,)).fetchone()[0]
+        assert llm_steward._confirm_candidate_cas(
+            conn, claim_id=claim.id, version=version, subject="API  Gateway", predicate="Serves",
+            object_value="v1", confidence=0.9,
+        )
+        conn.commit()
+        stored = conn.execute("SELECT tuple_key FROM claims WHERE id = ?", (claim.id,)).fetchone()[0]
+    assert stored == tuple_key("api gateway", "serves")
