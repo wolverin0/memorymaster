@@ -152,14 +152,15 @@ def test_mcp_extra_excludes_the_breaking_v2_sdk() -> None:
     source = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r"^mcp\s*=\s*\[(.*?)\]", source, re.MULTILINE | re.DOTALL)
     assert match is not None
-    assert '"mcp>=1.8.1,<2"' in match.group(1)
+    assert '"mcp>=1.30,<2"' in match.group(1)
 
 
 def test_dev_extra_installs_supply_chain_contract_runtime() -> None:
     source = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r"^dev\s*=\s*\[(.*?)\]", source, re.MULTILINE | re.DOTALL)
     assert match is not None
-    # The dependency audit runs through `uv audit` (T-0764); uv 0.12 is the first line with it.
-    assert '"uv>=0.12"' in match.group(1)
+    # The dependency audit runs through `uv audit` (T-0764); uv 0.12 is the first line with it,
+    # 0.13.4 the first without GHSA-hq85-5cpj-mr62.
+    assert '"uv>=0.13.4"' in match.group(1)
     assert "pip-audit" not in match.group(1)
     assert '"nox>=' in match.group(1)  # test sessions (unit / ml) are defined in noxfile.py
