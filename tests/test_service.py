@@ -83,3 +83,12 @@ def test_generated_fields_cannot_launder_an_atomic_claim(service, fields):
     with pytest.raises(ValueError, match="generated"):
         service.ingest(**args)
 
+
+def test_content_dedup_finds_a_copy_whatever_key_the_original_used(service):
+    """T-1865 F14: the content fingerprint, not the first copy's key, identifies a copy."""
+    cites = [CitationInput(source="fixture")]
+    first = service.ingest("Backups rotate after thirty days.", cites, idempotency_key="producer-key")
+    unkeyed = service.ingest("  BACKUPS rotate after thirty days.  ", cites)
+    assert unkeyed.id == first.id
+    other_scope = service.ingest("Backups rotate after thirty days.", cites, scope="project:other")
+    assert other_scope.id != first.id
