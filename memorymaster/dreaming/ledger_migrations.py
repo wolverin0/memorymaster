@@ -14,6 +14,9 @@ _STEPS = (
     # AO-2 beat: when the source transcript was last written (epoch seconds, UTC), so
     # the lag from "the file changed" to "the capture was processed" is measurable.
     (4, (("source_mtime", "source_mtime REAL"),)),
+    # T-1864: units of messages_json already sent to the extractor. NULL = historical row
+    # (its extraction is complete as stored; never re-windowed).
+    (5, (("extracted_through", "extracted_through INTEGER"),)),
 )
 
 

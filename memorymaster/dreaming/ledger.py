@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from memorymaster.dreaming import held
+from memorymaster.dreaming import extraction_window, held
 from memorymaster.dreaming.models import CaptureEnvelope
 from memorymaster.stores._storage_shared import connect_ro, open_conn
 
@@ -214,16 +214,18 @@ class DreamLedger:
         merged_hash = hashlib.sha256(
             json.dumps(merged, sort_keys=True).encode("utf-8"),
         ).hexdigest()
-        conn.execute(
+        # T-1864: the state guard makes the append lose cleanly (-> new capture row) if
+        # the worker finished extracting this capture between the read above and here.
+        updated = conn.execute(
             """UPDATE dream_captures
                SET last_activity_at=?, messages_json=?, cursor_end=?, content_hash=?,
-                   byte_count=?, turn_count=?, updated_at=? WHERE id=?""",
+                   byte_count=?, turn_count=?, updated_at=? WHERE id=? AND state='captured'""",
             (
                 envelope.last_activity_at, merged_json, envelope.cursor_end, merged_hash,
                 len(merged_json.encode("utf-8")), len(merged), now, int(latest["id"]),
             ),
         )
-        return int(latest["id"])
+        return int(latest["id"]) if updated.rowcount else None
 
     def enqueue(self, envelope: CaptureEnvelope, *, coalesce: bool = True) -> int:
         messages_json = json.dumps([message.to_dict() for message in envelope.messages], ensure_ascii=False)
@@ -322,6 +324,39 @@ class DreamLedger:
 
     def set_extraction(self, capture_id: int, candidates: Iterable[dict[str, Any]], run_id: str) -> None:
         self._set_capture(capture_id, state="extracted", run_id=run_id, extraction_json=json.dumps(list(candidates), ensure_ascii=False), error=None)
+
+    def save_extraction_window(
+        self, capture_id: int, candidates: Iterable[dict[str, Any]], window_end: int, run_id: str,
+    ) -> dict[str, Any]:
+        """Persist one extracted window (T-1864) and advance the cursor; return the fresh row.
+
+        Compare-and-swap in one short transaction: the total unit count is re-read here, so
+        messages coalesced into the capture while the provider call was in flight are
+        never covered by ``window_end``. Only when the cursor reaches the total does the
+        capture become ``extracted``; otherwise it stays eligible and keeps its state.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT messages_json, extraction_json, extracted_through FROM dream_captures WHERE id=?",
+                (int(capture_id),),
+            ).fetchone()
+            if row is None:
+                conn.rollback()
+                raise KeyError(capture_id)
+            total = len(extraction_window.units(json.loads(row[0])))
+            merged = json.loads(row[1]) if row[1] else []
+            known = {str(item.get("candidate_id")) for item in merged}
+            merged += [item for item in candidates if str(item.get("candidate_id")) not in known]
+            cursor = min(total, max(int(row[2] or 0), int(window_end)))
+            assignments = ["extraction_json=?", "extracted_through=?", "run_id=?", "updated_at=?", "extraction_run_id=?"]
+            values: list[Any] = [json.dumps(merged, ensure_ascii=False), cursor, run_id, _iso(_utc_now()), run_id]
+            if cursor >= total:
+                assignments += ["state='extracted'", "resume_eligible=1", "held_count=0",
+                                "last_error=NULL", "deferred_reason=NULL", "attempts=attempts+1"]
+            conn.execute(f"UPDATE dream_captures SET {', '.join(assignments)} WHERE id=?", (*values, int(capture_id)))
+            conn.commit()
+        return self.get_capture(capture_id)
 
     def set_decisions(self, capture_id: int, decisions: Iterable[dict[str, Any]], run_id: str, *, retry_error: str | None = None) -> None:
         # Reusing the same reviewed decisions must retain application retry state.

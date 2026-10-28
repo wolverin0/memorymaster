@@ -84,7 +84,8 @@ def _conversation_record(
 def _sanitize(text: str) -> str:
     redacted, _ = redact_text(text)
     redacted = _ABSOLUTE_WINDOWS_PATH.sub("[REDACTED:absolute_path]", redacted)
-    return redacted.strip()[:16_000]
+    # Full text: the extractor windows long messages (dreaming/extraction_window.py).
+    return redacted.strip()
 
 
 def parse_transcript_lines(
