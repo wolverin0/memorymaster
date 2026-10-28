@@ -44,6 +44,14 @@ def test_unkeyed_copy_of_a_keyed_original_returns_the_original(db):
     assert len(SQLiteStore(db).list_claims(limit=50, include_archived=True)) == 1
 
 
+def test_explicit_keys_still_mean_distinct_claims(db):
+    """A producer that chooses its own key (the rule miner: one per window) keeps one claim per key."""
+    first = _ingest(db, idempotency_key="window-1")
+    second = _ingest(db, idempotency_key="window-2")
+    assert first.id != second.id
+    assert _ingest(db, idempotency_key="window-1").id == first.id
+
+
 def test_case_and_edge_whitespace_do_not_create_copies(db):
     first = _ingest(db, idempotency_key="k")
     assert _ingest(db, text=f"  {TEXT.upper()}  ").id == first.id

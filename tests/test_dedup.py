@@ -225,9 +225,7 @@ class TestRunIntegration:
             "idempotency_key": f"dedup-test-{TestRunIntegration._counter}",
         }
         defaults.update(kwargs)
-        # Straight to the store: the facade's content dedup would collapse the
-        # identical rows these tests need (T-1865 F14).
-        return service.store.create_claim(text, defaults.pop("citations"), **defaults)
+        return service.ingest(text=text, **defaults)
 
     def test_dry_run_no_changes(self, service):
         self._ingest(service, "Python version is 3.12")
@@ -241,8 +239,8 @@ class TestRunIntegration:
         assert len(archived) == 0
 
     def test_dedup_archives_duplicate(self, service):
-        self._ingest(service, "Python version is 3.12")
-        self._ingest(service, "Python version is 3.12")
+        c1 = self._ingest(service, "Python version is 3.12")
+        c2 = self._ingest(service, "Python version is 3.12")
         result = service.dedup(dry_run=False)
         assert result["duplicates_found"] >= 1
         assert result["claims_archived"] >= 1
