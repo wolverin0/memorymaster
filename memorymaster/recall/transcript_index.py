@@ -13,17 +13,28 @@ Design
 * Source: ``~/.claude/projects/*/*.jsonl`` (read-only).  Only user/assistant
   ``text`` blocks are indexed; tool calls/results, sidechains and harness noise
   are skipped.
-* Incremental: per-file ``(size, mtime_ns, byte offset, line count)``.  Files
-  are append-only, so a grown file is parsed from the stored offset; an
-  unchanged one is skipped; a shrunk one is re-indexed from scratch.
+* Incremental: per-file ``(size, mtime_ns, byte offset, line count, prefix
+  sha256)``.  Files are append-only, so a grown file is parsed from the stored
+  offset *if* its indexed prefix still hashes to the stored digest; an
+  unchanged one is skipped; a shrunk or rewritten one is re-indexed from
+  scratch, and the fragments of a transcript that no longer exists are dropped.
+* Every message is sanitised whole (``core.security.sanitize_persisted_text``)
+  BEFORE it is cut into fragments and before anything is persisted, so a
+  credential straddling a fragment edge cannot survive, and the sidecar never
+  holds a raw secret.  Long messages are segmented into several fragments, never
+  truncated.  Scope is resolved per record from that record's own ``cwd``;
+  a record without one is not attributable and is not indexed.
+* ``PRAGMA user_version`` marks the format.  An index without the current
+  marker (built by the earlier unsanitised code) is never served by
+  :func:`search` and is dropped and rebuilt by :func:`index_transcripts`
+  (``memorymaster transcript-index``).
 * Session id = ``sha256(<project-dir>/<file>)[:16]`` -- opaque (no username
   leaks from the encoded project directory) and identical to the T-1817 bench
   transcript id.  Fragments store the 0-based JSONL line range they cover.
 * Ranking: FTS5 BM25 relevance first; among results whose relevance is within
   one band (``RELEVANCE_BAND``) of each other, newest date first.  Every hit
   carries its date so a stale conclusion is recognisable.
-* Display text goes through ``core.security.sanitize_persisted_text``
-  (secrets, encoded secrets, home paths) before it leaves this module.
+* Display text is sanitised once more on the way out (defence in depth).
 * No embedding model: FTS5 only, so indexing is one cheap process.
 """
 from __future__ import annotations
@@ -50,8 +61,8 @@ logger = logging.getLogger(__name__)
 INDEX_ENV = "MEMORYMASTER_TRANSCRIPT_INDEX"
 ROOT_ENV = "MEMORYMASTER_TRANSCRIPT_ROOT"
 
+FORMAT_VERSION = 1  # PRAGMA user_version; 0 = built before sanitise-on-write (T-1876)
 CHUNK_CHARS = 1800  # fragment size target (characters of "role: text")
-MAX_MESSAGE_CHARS = 3 * CHUNK_CHARS  # longer messages keep their head only
 MIN_MESSAGE_CHARS = 20
 RELEVANCE_BAND = 0.05  # relevance fraction within which recency breaks ties
 EXCERPT_CHARS = 600
@@ -66,11 +77,11 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     rel TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
-    scope TEXT NOT NULL,
     size INTEGER NOT NULL,
     mtime_ns INTEGER NOT NULL,
     offset INTEGER NOT NULL,
-    lines INTEGER NOT NULL
+    lines INTEGER NOT NULL,
+    prefix_sha TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS fragments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,11 +129,38 @@ def session_id_for(root: Path, path: Path) -> str:
     return hashlib.sha256(path.relative_to(root).as_posix().encode()).hexdigest()[:16]
 
 
-def _connect(index_path: Path) -> sqlite3.Connection:
+def _connect(index_path: Path) -> tuple[sqlite3.Connection, bool]:
+    """Open the sidecar for writing; ``(conn, rebuilt)``.
+
+    An index whose ``user_version`` is not :data:`FORMAT_VERSION` was built by the earlier unsanitised
+    code: its tables are dropped (with ``secure_delete`` and a ``VACUUM``, so the raw rows do not linger in
+    free pages) and recreated empty.  The sidecar is derived data; the caller re-indexes from the transcripts.
+    """
     index_path.parent.mkdir(parents=True, exist_ok=True)
     conn = open_conn(index_path)
+    conn.execute("PRAGMA secure_delete = ON")
+    rebuilt = False
+    has_tables = conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'files'").fetchone() is not None
+    if has_tables and conn.execute("PRAGMA user_version").fetchone()[0] != FORMAT_VERSION:
+        conn.executescript("DROP TABLE IF EXISTS fragments_fts; DROP TABLE IF EXISTS fragments; DROP TABLE IF EXISTS files;")
+        conn.execute("VACUUM")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        rebuilt = True
     conn.executescript(_SCHEMA)
-    return conn
+    conn.execute(f"PRAGMA user_version = {int(FORMAT_VERSION)}")
+    return conn, rebuilt
+
+
+def index_status(index_path: Path | None = None) -> str:
+    """``missing`` | ``ok`` | ``outdated`` (built by older code: rebuild it) | ``unreadable``."""
+    index_path = index_path or default_index_path()
+    if not index_path.is_file():
+        return "missing"
+    try:
+        with closing(connect_ro(index_path.resolve().as_posix())) as conn:
+            return "ok" if conn.execute("PRAGMA user_version").fetchone()[0] == FORMAT_VERSION else "outdated"
+    except sqlite3.Error:
+        return "unreadable"
 
 
 def _message_text(record: dict) -> tuple[str, str]:
@@ -141,7 +179,8 @@ def _message_text(record: dict) -> tuple[str, str]:
     text = content.strip()
     if len(text) < MIN_MESSAGE_CHARS or _NOISE.match(text):
         return "", ""
-    return role, text[:MAX_MESSAGE_CHARS]
+    # The COMPLETE message is sanitised here, before segmentation and persistence (T-1876 N1).
+    return role, sanitize_persisted_text(text)[0]
 
 
 def _iso_date(value: object, fallback: str) -> str:
@@ -162,29 +201,73 @@ def _mtime_iso(mtime_ns: int) -> str:
 
 
 def _pieces(text: str) -> list[str]:
-    return [text[i:i + CHUNK_CHARS] for i in range(0, len(text), CHUNK_CHARS)]
+    """Cut a complete message into pieces of at most :data:`CHUNK_CHARS`, preferring a whitespace edge."""
+    pieces: list[str] = []
+    start = 0
+    floor = CHUNK_CHARS * 4 // 5
+    while start < len(text):
+        end = start + CHUNK_CHARS
+        if end < len(text):
+            cut = max(text.rfind(" ", start + floor, end), text.rfind("\n", start + floor, end))
+            end = cut + 1 if cut > start else end
+        pieces.append(text[start:end])
+        start = end
+    return pieces
 
 
-def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, skip_automated: bool = True):
-    """Parse complete lines from ``offset``; return ``(fragments, scope_cwd, new_offset, new_lines, automated)``.
+def _verified_prefix(path: Path, length: int, expected: str):
+    """The sha256 state of the first ``length`` bytes of ``path`` if it matches ``expected``, else ``None``.
 
+    shortcut: re-reads the whole indexed prefix of a changed file (sequential, cheap next to parsing);
+    upgrade to a head+tail window if multi-hundred-MB transcripts become common.
+    """
+    hasher = hashlib.sha256()
+    remaining = length
+    with path.open("rb") as fh:
+        while remaining > 0:
+            block = fh.read(min(remaining, 1 << 20))
+            if not block:
+                return None  # shorter than what was indexed
+            hasher.update(block)
+            remaining -= len(block)
+    return hasher if hasher.hexdigest() == expected else None
+
+
+def _scope_for_cwd(cwd: object, cache: dict[str, str]) -> str:
+    """The scope of one record's ``cwd``; ``""`` when the record carries none (not attributable)."""
+    if not isinstance(cwd, str) or not cwd.strip():
+        return ""
+    if cwd not in cache:
+        try:
+            cache[cwd] = scope_from_cwd(cwd)
+        except (OSError, ValueError, RuntimeError):
+            cache[cwd] = ""
+    return cache[cwd]
+
+
+def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, skip_automated: bool,
+                     hasher, scopes: dict[str, str]):
+    """Parse complete lines from ``offset``; return ``(fragments, new_offset, new_lines, automated)``.
+
+    ``hasher`` (the sha256 state of the bytes before ``offset``) is advanced over every consumed line.
     ``automated`` is True (and fragments empty) when ``skip_automated`` and a record
     carries the headless-session entrypoint; the caller records the file as seen.
 
-    Fragments are ``(date, first_line, last_line, text)``.  An unterminated
-    trailing line that is not valid JSON is left for the next run.
+    Fragments are ``(scope, date, first_line, last_line, text)``; scope comes from each record's own ``cwd``
+    and a fragment never spans two scopes.  An unterminated trailing line that is not valid JSON is left for
+    the next run.
     """
-    fragments: list[tuple[str, int, int, str]] = []
-    cwd = ""
+    fragments: list[tuple[str, str, int, int, str]] = []
     buf: list[str] = []
     size = 0
     first = last = 0
     date = fallback_date
+    buf_scope = ""
 
     def flush() -> None:
         nonlocal buf, size
         if buf:
-            fragments.append((date, first, last, "\n".join(buf)))
+            fragments.append((buf_scope, date, first, last, "\n".join(buf)))
         buf, size = [], 0
 
     with path.open("rb") as fh:
@@ -198,17 +281,19 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, 
                 if not complete:
                     break  # partial write: re-read next time
             offset += len(raw)
+            hasher.update(raw)
             this_line = line_no
             line_no += 1
             if not isinstance(record, dict):
                 continue
             if skip_automated and record.get("entrypoint") == AUTOMATED_ENTRYPOINT:
-                return [], cwd, offset, line_no, True
-            if not cwd and isinstance(record.get("cwd"), str):
-                cwd = record["cwd"]
+                return [], offset, line_no, True
             role, text = _message_text(record)
-            if not text:
+            scope = _scope_for_cwd(record.get("cwd"), scopes) if text else ""
+            if not text or not scope:
                 continue
+            if buf and scope != buf_scope:
+                flush()
             for piece in _pieces(text):
                 entry = f"{role}: {piece}"
                 if buf and size + len(entry) > CHUNK_CHARS:
@@ -216,18 +301,12 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, 
                 if not buf:
                     first = this_line
                     date = _iso_date(record.get("timestamp"), fallback_date)
+                    buf_scope = scope
                 buf.append(entry)
                 last = this_line
                 size += len(entry)
     flush()
-    return fragments, cwd, offset, line_no, False
-
-
-def _scope_for_cwd(cwd: str) -> str:
-    try:
-        return scope_from_cwd(cwd) if cwd else "project:unknown"
-    except (OSError, ValueError, RuntimeError):
-        return "project:unknown"
+    return fragments, offset, line_no, False
 
 
 def _delete_session(conn: sqlite3.Connection, session_id: str) -> None:
@@ -254,13 +333,25 @@ def index_transcripts(
     """
     root = (root or default_root()).expanduser()
     index_path = index_path or default_index_path()
-    stats = {"files_seen": 0, "files_indexed": 0, "files_skipped": 0, "fragments_added": 0, "files_automated": 0, "errors": 0}
+    stats = {"files_seen": 0, "files_indexed": 0, "files_skipped": 0, "fragments_added": 0, "files_automated": 0,
+             "files_removed": 0, "rebuilt": 0, "errors": 0}
     if not root.is_dir():
         return stats
     cutoff = time.time() - since_days * 86400 if since_days else None
-    scope_cache: dict[str, str] = {}
-    with closing(_connect(index_path)) as conn:
-        for path in sorted(root.glob("*/*.jsonl")):
+    scopes: dict[str, str] = {}
+    paths = sorted(root.glob("*/*.jsonl"))
+    existing = {path.relative_to(root).as_posix() for path in paths}
+    conn, rebuilt = _connect(index_path)
+    stats["rebuilt"] = int(rebuilt)
+    with closing(conn):
+        # a transcript that no longer exists must stop being searchable (existence is judged over the whole
+        # root, so --since-days / --max-files never read as a deletion)
+        for gone in [r for r in conn.execute("SELECT rel, session_id FROM files").fetchall() if r["rel"] not in existing]:
+            with conn:
+                _delete_session(conn, gone["session_id"])
+                conn.execute("DELETE FROM files WHERE rel = ?", (gone["rel"],))
+            stats["files_removed"] += 1
+        for path in paths:
             if max_files is not None and stats["files_indexed"] >= max_files:
                 break
             try:
@@ -277,23 +368,24 @@ def index_transcripts(
             if row and row["size"] == st.st_size and row["mtime_ns"] == st.st_mtime_ns:
                 stats["files_skipped"] += 1
                 continue
-            offset, line_no, scope = 0, 0, ""
-            if row and st.st_size >= row["offset"]:
-                offset, line_no, scope = row["offset"], row["lines"], row["scope"]
+            offset, line_no = 0, 0
             try:
-                frags, cwd, new_offset, new_lines, automated = _parse_increment(
-                    path, offset, line_no, _mtime_iso(st.st_mtime_ns), not include_automated
+                hasher = _verified_prefix(path, row["offset"], row["prefix_sha"]) if row and st.st_size >= row["offset"] else None
+                if hasher is not None:
+                    offset, line_no = row["offset"], row["lines"]
+                else:
+                    hasher = hashlib.sha256()  # new, shrunk or rewritten file: parse from the start
+                frags, new_offset, new_lines, automated = _parse_increment(
+                    path, offset, line_no, _mtime_iso(st.st_mtime_ns), not include_automated, hasher, scopes
                 )
             except OSError as exc:
                 logger.warning("transcript_index: cannot read %s: %s", rel, exc)
                 stats["errors"] += 1
                 continue
-            if not scope:
-                scope = scope_cache.get(cwd) or scope_cache.setdefault(cwd, _scope_for_cwd(cwd))
             with conn:
                 if row and offset == 0:
                     _delete_session(conn, sid)  # file shrank/rewritten: rebuild
-                for date, first, last, text in frags:
+                for scope, date, first, last, text in frags:
                     cur = conn.execute(
                         "INSERT INTO fragments(session_id, scope, date, first_line, last_line, text) "
                         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -301,9 +393,9 @@ def index_transcripts(
                     )
                     conn.execute("INSERT INTO fragments_fts(rowid, text) VALUES (?, ?)", (cur.lastrowid, text))
                 conn.execute(
-                    "INSERT OR REPLACE INTO files(rel, session_id, scope, size, mtime_ns, offset, lines) "
+                    "INSERT OR REPLACE INTO files(rel, session_id, size, mtime_ns, offset, lines, prefix_sha) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (rel, sid, scope, st.st_size, st.st_mtime_ns, new_offset, new_lines),
+                    (rel, sid, st.st_size, st.st_mtime_ns, new_offset, new_lines, hasher.hexdigest()),
                 )
             if automated:
                 stats["files_automated"] += 1
@@ -356,6 +448,12 @@ def search(
     (returns ``[]``), for callers on a latency budget such as the prompt hook.
     """
     index_path = index_path or default_index_path()
+    started = time.perf_counter()
+    expires = started + deadline_ms / 1000.0 if deadline_ms is not None else None
+
+    def spent() -> bool:
+        return expires is not None and time.perf_counter() > expires
+
     match = _fts_query(query)
     if not match or not index_path.exists():
         return []
@@ -373,9 +471,16 @@ def search(
     sql += " ORDER BY x.rank LIMIT ?"
     args.append(max(limit * 10, 50))
     try:
-        with closing(connect_ro(index_path.resolve().as_posix())) as conn:
-            if deadline_ms is not None:
-                expires = time.perf_counter() + deadline_ms / 1000.0
+        # the connect/busy wait is bounded by what is left of the deadline, not by the 2 s reader default
+        wait = {} if expires is None else {"query_ms": max(1, int((expires - time.perf_counter()) * 1000))}
+        with closing(connect_ro(index_path.resolve().as_posix(), **wait)) as conn:
+            if spent():
+                return []
+            if conn.execute("PRAGMA user_version").fetchone()[0] != FORMAT_VERSION:
+                logger.warning("transcript_index: index was built by an older format and is not served; "
+                               "rebuild it with `memorymaster transcript-index`")
+                return []
+            if expires is not None:
                 conn.set_progress_handler(lambda: 1 if time.perf_counter() > expires else 0, 5000)
             rows = conn.execute(sql, args).fetchall()
     except sqlite3.OperationalError as exc:
@@ -384,6 +489,8 @@ def search(
         return []
     hits = []
     for row in _rank(rows, limit):
+        if spent():  # ranking and redaction are inside the budget too
+            return []
         redacted, _ = sanitize_persisted_text(row["text"])
         excerpt = centered_excerpt(redacted, query, excerpt_chars)
         hits.append(

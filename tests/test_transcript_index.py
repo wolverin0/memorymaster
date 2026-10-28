@@ -196,3 +196,168 @@ def test_search_honours_a_deadline_without_raising(tmp_path):
     ti.index_transcripts(root, idx)
     assert ti.search("quokka", idx, deadline_ms=5000)
     assert isinstance(ti.search("quokka", idx, deadline_ms=0.0001), list)  # an expired budget never raises
+
+
+# --- T-1876 hardening: sanitise-before-persist, per-record scope, whole messages, rewrites, format marker ---
+
+# credential-shaped values are assembled at runtime so no secret-looking literal sits in the source
+SECRET_BODY = "".join(a + b for a, b in zip("abcdefghijkl", "ABCDEFGHIJKL"))
+LEGACY_KEY = "sk" + "-" + "RAWKEY" * 4
+
+
+def _fragment_texts(idx: Path) -> list[str]:
+    with sqlite3.connect(idx) as con:
+        return [row[0] for row in con.execute("SELECT text FROM fragments")]
+
+
+def test_n1_a_credential_across_a_piece_boundary_is_never_persisted(tmp_path):
+    root = tmp_path / "projects"
+    pad = "word " * 357  # 1,785 chars: the key starts 15 chars before the 1,800 boundary and ends past it
+    body = f"pangolin notes {pad}key {LEGACY_KEY[:3]}{SECRET_BODY} then more pangolin export words after it"
+    _write(root / "p" / "s.jsonl", [_rec("assistant", body, "2026-04-04T00:00:00Z")])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    stored = " ".join(_fragment_texts(idx))
+    assert "pangolin export" in stored  # the message was indexed ...
+    for part in (SECRET_BODY, SECRET_BODY[8:], SECRET_BODY[:8]):  # ... but no piece of the key reached the sidecar
+        assert part not in stored
+    with sqlite3.connect(idx) as con:
+        hits = con.execute("SELECT count(*) FROM fragments_fts WHERE fragments_fts MATCH ?",
+                           (f'"{SECRET_BODY[8:]}"',)).fetchone()[0]
+    assert hits == 0
+    assert SECRET_BODY[8:] not in " ".join(h.excerpt for h in ti.search("pangolin export notes", idx))
+
+
+def test_n7_the_tail_of_a_long_message_is_indexed(tmp_path):
+    root = tmp_path / "projects"
+    body = "padding " * 1500 + " the router chosen firmware = 7.18.2 after the rollback"
+    assert len(body) > 3 * ti.CHUNK_CHARS
+    _write(root / "p" / "s.jsonl", [_rec("assistant", body, "2026-04-04T00:00:00Z")])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    hits = ti.search("router chosen firmware rollback", idx)
+    assert hits and "7.18.2" in hits[0].excerpt
+    texts = _fragment_texts(idx)
+    assert len(texts) > 3 and all(len(t) <= ti.CHUNK_CHARS + 20 for t in texts)
+
+
+def test_n2_scope_follows_each_record_not_the_first_cwd(tmp_path):
+    root = tmp_path / "projects"
+    _write(root / "p" / "s.jsonl", [
+        _rec("user", "Alpha decision: the zorblat firmware stays on the old release.", "2026-05-01T00:00:00Z",
+             cwd="/work/alpha-app"),
+        _rec("assistant", "Beta decision: the zorblat firmware moves to release 7.18.2.", "2026-05-01T00:00:05Z",
+             cwd="/work/beta-app"),
+        _rec("assistant", "Unattributable zorblat note without any cwd at all.", "2026-05-01T00:00:09Z", cwd=None),
+    ])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    alpha = " ".join(h.excerpt for h in ti.search("zorblat firmware", idx, scope="project:alpha-app"))
+    beta = " ".join(h.excerpt for h in ti.search("zorblat firmware", idx, scope="project:beta-app"))
+    assert "Alpha decision" in alpha and "7.18.2" not in alpha
+    assert "7.18.2" in beta and "Alpha decision" not in beta
+    everything = " ".join(h.excerpt for h in ti.search("zorblat", idx, limit=10))
+    assert "Unattributable" not in everything  # no scope proven: never served
+
+
+def test_n2_an_incremental_run_keeps_the_per_record_scope(tmp_path):
+    root = tmp_path / "projects"
+    path = root / "p" / "s.jsonl"
+    _write(path, [_rec("user", "Alpha first note about the zorblat firmware schedule.", "2026-05-01T00:00:00Z",
+                       cwd="/work/alpha-app")])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(_rec("assistant", "Beta later note about the zorblat firmware schedule.", "2026-05-02T00:00:00Z",
+                      cwd="/work/beta-app") + "\n")
+    ti.index_transcripts(root, idx)
+    assert [h.excerpt for h in ti.search("zorblat", idx, scope="project:beta-app")] == [
+        "assistant: Beta later note about the zorblat firmware schedule."]
+    assert len(ti.search("zorblat", idx, scope="project:alpha-app")) == 1
+
+
+def test_n5_deleted_and_rewritten_transcripts_leave_no_stale_fragments(tmp_path):
+    root = tmp_path / "projects"
+    gone, keep = root / "p" / "gone.jsonl", root / "p" / "keep.jsonl"
+    _write(gone, [_rec("assistant", "The quokka decision was to keep the old scheduler forever.", "2026-05-01T00:00:00Z")])
+    _write(keep, [_rec("assistant", "The wombat decision was to keep the old cache forever, fine.", "2026-05-01T00:00:00Z")])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    assert ti.search("quokka scheduler", idx) and ti.search("wombat cache", idx)
+
+    ti.index_transcripts(root, idx, max_files=0)  # a partial scan is not a deletion
+    assert ti.search("quokka scheduler", idx)
+
+    gone.unlink()
+    stats = ti.index_transcripts(root, idx)
+    assert ti.search("quokka scheduler", idx) == [] and stats["files_removed"] == 1
+    assert ti.search("wombat cache", idx)  # the surviving transcript is untouched
+
+    # same size, different bytes, newer mtime: the rewrite replaces the old statement
+    before = keep.stat()
+    keep.write_bytes(keep.read_bytes().replace(b"keep the old cache", b"drop the old cache"))
+    assert keep.stat().st_size == before.st_size
+    os.utime(keep, ns=(before.st_atime_ns, before.st_mtime_ns + 5_000_000_000))
+    ti.index_transcripts(root, idx)
+    texts = " ".join(_fragment_texts(idx))
+    assert "drop the old cache" in texts and "keep the old cache" not in texts
+
+
+def test_n1_old_format_index_is_refused_then_rebuilt(tmp_path):
+    root = tmp_path / "projects"
+    _write(root / "p" / "s.jsonl", [_rec("assistant", "Fresh zebra message about the gateway deployment.",
+                                         "2026-05-01T00:00:00Z")])
+    idx = tmp_path / "t.db"
+    assert ti.index_status(idx) == "missing"
+    ti.index_transcripts(root, idx)
+    assert ti.search("zebra gateway", idx) and ti.index_status(idx) == "ok"
+
+    with sqlite3.connect(idx) as con:  # what the unsanitised T-1860 code left behind: no version marker
+        con.execute("PRAGMA user_version = 0")
+        con.execute("DELETE FROM fragments_fts")
+        con.execute("DELETE FROM fragments")
+        con.execute("INSERT INTO fragments(session_id, scope, date, first_line, last_line, text) "
+                    "VALUES ('x', 'project:alpha-app', '2026-01-01T00:00:00Z', 0, 0, "
+                    "'legacy ' || ? || ' zebra gateway')", (LEGACY_KEY,))
+        con.execute("INSERT INTO fragments_fts(rowid, text) SELECT id, text FROM fragments")
+    assert ti.index_status(idx) == "outdated"
+    assert ti.search("zebra gateway", idx) == []  # an old-format index is never served
+
+    stats = ti.index_transcripts(root, idx)
+    assert stats["rebuilt"] == 1 and ti.index_status(idx) == "ok"
+    assert all(LEGACY_KEY not in t for t in _fragment_texts(idx))
+    hits = ti.search("zebra gateway", idx)
+    assert hits and "legacy" not in hits[0].excerpt
+
+
+def test_n9_an_expired_deadline_covers_connect_and_postprocessing(tmp_path, monkeypatch):
+    root = tmp_path / "projects"
+    _write(root / "p" / "s.jsonl", [_rec("assistant", "Fresh zebra message about the gateway deployment.",
+                                         "2026-05-01T00:00:00Z")])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    real = ti.connect_ro
+
+    def slow_connect(*args, **kwargs):
+        import time
+        time.sleep(0.15)  # lock/open contention that burns the whole budget before any query runs
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ti, "connect_ro", slow_connect)
+    assert ti.search("zebra gateway", idx, deadline_ms=50) == []
+    assert ti.search("zebra gateway", idx, deadline_ms=5000)  # a sane budget still answers
+
+
+def test_cli_search_tells_the_operator_to_rebuild_an_outdated_index(tmp_path, capsys, monkeypatch):
+    from memorymaster.surfaces.cli import main as cli_main
+
+    root = tmp_path / "projects"
+    _write(root / "p" / "s.jsonl", [_rec("assistant", "Fresh zebra message about the gateway deployment.",
+                                         "2026-05-01T00:00:00Z")])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    with sqlite3.connect(idx) as con:
+        con.execute("PRAGMA user_version = 0")
+    monkeypatch.chdir(tmp_path)
+    assert cli_main(["transcript-search", "zebra gateway", "--index", str(idx)]) == 0
+    assert "memorymaster transcript-index" in capsys.readouterr().out

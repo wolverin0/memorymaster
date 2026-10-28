@@ -243,7 +243,7 @@ def _hermetic_recall_hook_policy(tmp_path_factory, monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_CONFIG", str(tmp_path_factory.getbasetemp() / "no-recall-hook.json"))
     monkeypatch.setenv("MEMORYMASTER_RECALL_SEEN_DIR", str(tmp_path_factory.mktemp("recall-seen")))
-    # The hook appends raw past conversation when the operator's transcript sidecar exists (T-1862): point
+    # The hook appends raw past conversation when the operator opts in and the transcript sidecar exists (T-1862): point
     # it at a path that does not, so tests never read it (tests of the fallback set their own index).
     monkeypatch.delenv("MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK", raising=False)
     monkeypatch.setenv("MEMORYMASTER_TRANSCRIPT_INDEX", str(tmp_path_factory.getbasetemp() / "no-transcripts.db"))
