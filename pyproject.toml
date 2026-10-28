@@ -34,7 +34,7 @@ dependencies = [
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2"]
 security = ["cryptography>=50"]
-embeddings = ["sentence-transformers>=3.0"]
+embeddings = ["sentence-transformers>=5.6"]
 gemini = ["google-genai>=1.0"]
 qdrant = ["httpx>=0.27"]
 capture = ["pypdf>=6.21.2", "python-docx>=1.1"]
@@ -42,7 +42,7 @@ capture = ["pypdf>=6.21.2", "python-docx>=1.1"]
 # scripts/index_claims_to_qdrant.py indexer. Local-only (no network deps
 # beyond Qdrant itself); sentence-transformers gives deterministic
 # 384-dim embeddings on CPU.
-vector = ["sentence-transformers>=3.0", "qdrant-client>=1.9"]
+vector = ["sentence-transformers>=5.6", "qdrant-client>=1.9"]
 # `graph` enables the Kuzu-backed graph retrieval stream (roadmap 11.3,
 # memorymaster.recall.graph_store). Kuzu is an embedded, single-file graph
 # database (no server) — lightweight enough to keep MemoryMaster's
@@ -56,7 +56,7 @@ dev = ["pytest>=9.0.3", "pytest-cov>=6.0", "pytest-timeout>=2.3", "nox>=2026.8",
 # default transport. 1.30 is the first 1.x release with every known advisory
 # fixed (streamable HTTP / SSE / WebSocket transports, DNS rebinding).
 mcp = ["mcp>=1.30,<2"]
-ml = ["scikit-learn>=1.3", "joblib>=1.3"]
+ml = ["scikit-learn>=1.5", "joblib>=1.3"]
 
 [project.scripts]
 memorymaster = "memorymaster.surfaces.cli:main"
