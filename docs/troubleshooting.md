@@ -95,3 +95,28 @@ Required frontmatter fields:
 If the article body is longer than 300 characters, it must also include at least one `[[wikilink]]`.
 
 See `AGENTS.md` Boundaries before changing generated wiki content. Generated Obsidian Bases under `obsidian-vault/bases/*.base` are regenerated automatically by `wiki-absorb`; do not hand-edit them.
+
+## Migration 0013 stopped part-way (legacy entity graph upgrade)
+
+Applies only to a database created before schema version 13 that still holds a legacy `entities` / `entity_edges` / `claim_entity_links` graph. A database that never had one, or that already recorded version 13, is unaffected.
+
+Symptom: `init_db` raises `Entity migration refused orphaned legacy graph rows.` (or `...claim links.`), and every retry then fails with `there is another table with that name`.
+
+Cause: migration 0013 renames the legacy tables, creates the canonical ones and only then validates the legacy rows, using `executescript`, which commits as it goes, so a refusal leaves the renames and the new tables behind. The runner records version 13 only after success, so it runs again on the half-migrated file. The migration cannot be fixed in place: applied migrations are checksummed (`MigrationDriftError`), so editing 0013 would lock out every database that already applied it. This is a deliberate legacy-only limit.
+
+Recovery, safest first:
+
+1. Restore the copy of the database taken before the upgrade, delete the orphaned legacy rows named by the error (edges or links whose entity or claim no longer exists), and start again.
+2. In place, only when the failure was the orphan refusal (check `SELECT name FROM sqlite_master WHERE name LIKE '%_legacy_0013'` lists `entities_legacy_0013`). Copy the database file first, then run:
+
+```sql
+DROP TABLE IF EXISTS entity_edges;
+DROP TABLE IF EXISTS claim_entity_links;
+DROP TABLE IF EXISTS entity_aliases;
+DROP TABLE IF EXISTS entities;
+ALTER TABLE entities_legacy_0013 RENAME TO entities;
+ALTER TABLE entity_edges_legacy_0013 RENAME TO entity_edges;
+ALTER TABLE claim_entity_links_legacy_0013 RENAME TO claim_entity_links;
+```
+
+Omit the `entity_edges` / `claim_entity_links` rename when that `_legacy_0013` table is not listed. If the original database also had its own `entity_aliases` table, use option 1: the in-place steps cannot bring those rows back. Then delete the orphaned legacy rows and run `init_db` again. The `claims.entity_id` column the first attempt added is left in place; the retry skips it.
