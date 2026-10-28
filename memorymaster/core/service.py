@@ -45,6 +45,7 @@ from memorymaster.core.temporal_policy import claim_is_temporally_current
 from memorymaster.govern import ingest_governance, skill_review_phase
 from memorymaster.core.services.integration import IntegrationService
 from memorymaster.stores.claim_identity import (
+    find_duplicate_content,
     normalize_claim_identity,
     normalize_claim_visibility,
     normalize_source_agent,
@@ -695,24 +696,20 @@ class MemoryService(IntegrationService):
         _tenant = getattr(self, 'tenant_id', '') or ''
         hash_input = f"{text.strip().lower()}|{scope}|{_tenant}"
         content_hash = "hash-" + hashlib.sha256(hash_input.encode()).hexdigest()[:16]
-        if hasattr(self.store, "get_claim_by_idempotency_key"):
-            existing_by_hash = self.store.get_claim_by_idempotency_key(
-                content_hash,
-                tenant_id=self.tenant_id,
-                scope=scope,
-                visibility=visibility,
-                source_agent=source_agent,
-            )
-            if existing_by_hash is not None:
-                observability.bump_claim_ingested(source_agent)
-                revived = self._revive_archived_dedup_match(existing_by_hash, source_agent)
-                if revived.status != "archived":
-                    ingest_governance.queue_supersession_proposal(
-                        self.store, intake_governance.supersession_target, revived, confidence
-                    )
-                fill_outcome_receipt(outcome_receipt, revived, created=False,
-                                     persisted=self.store.ingest_creation_receipt(revived.id) if outcome_receipt is not None else None)
-                return revived
+        existing_by_hash = find_duplicate_content(
+            self.store, text, content_hash, by_fingerprint=normalized_idempotency_key is None,
+            tenant_id=self.tenant_id, scope=scope, visibility=visibility, source_agent=source_agent,
+        )
+        if existing_by_hash is not None:
+            observability.bump_claim_ingested(source_agent)
+            revived = self._revive_archived_dedup_match(existing_by_hash, source_agent)
+            if revived.status != "archived":
+                ingest_governance.queue_supersession_proposal(
+                    self.store, intake_governance.supersession_target, revived, confidence
+                )
+            fill_outcome_receipt(outcome_receipt, revived, created=False,
+                                 persisted=self.store.ingest_creation_receipt(revived.id) if outcome_receipt is not None else None)
+            return revived
         # Set content hash as idempotency key if none provided
         if normalized_idempotency_key is None:
             normalized_idempotency_key = content_hash

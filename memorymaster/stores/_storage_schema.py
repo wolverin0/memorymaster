@@ -1066,6 +1066,12 @@ class _SchemaMixin:
             if payload_json is not None
             else None
         )
+        # The chain head must be read under the write lock that covers the INSERT,
+        # or two writers extend the same predecessor (broken_prev_link). A caller
+        # that already owns a transaction keeps it (it holds the lock after its own
+        # write); otherwise open one here, never one the caller did not expect to end.
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
         tenant_id: str | None = None
         if claim_id is not None:
             try:

@@ -6,7 +6,8 @@ principal so hidden rows cannot become uniqueness oracles.
 """
 from __future__ import annotations
 
-from typing import Final, TypeVar
+import hashlib
+from typing import Any, Final, TypeVar
 
 
 CLAIM_VISIBILITIES: Final[frozenset[str]] = frozenset(
@@ -43,6 +44,36 @@ def normalize_claim_identity(
     if normalized_visibility != "public" and normalized_source is None:
         raise ValueError("Non-public claims require a non-blank source_agent principal.")
     return normalized_visibility, normalized_source
+
+
+def content_fingerprint(text: str) -> str:
+    """Stable digest of a claim's text, independent of any idempotency key.
+
+    Content dedup looks claims up by ``(tenant, scope, visibility, owner,
+    fingerprint)``. Case and edge whitespace are ignored; the text must already be
+    sanitized (the stored form), so the lookup and the stored value agree.
+    """
+    return hashlib.sha256(text.strip().lower().encode("utf-8")).hexdigest()
+
+
+def find_duplicate_content(
+    store: Any, text: str, content_hash: str, *, by_fingerprint: bool, **identity: Any,
+) -> Any | None:
+    """Existing claim holding the same content under ``identity``, or ``None``.
+
+    ``by_fingerprint`` is for callers that gave no idempotency key: their content
+    identifies the claim, whatever key its first copy used (T-1865 F14). A caller that
+    chose its own key keeps distinct claims for distinct keys (the rule miner records
+    one per window), so it only meets copies stored under the generated ``content_hash``
+    key, which also covers rows written before the fingerprint column existed.
+    """
+    if by_fingerprint and hasattr(store, "get_claim_by_content_fingerprint"):
+        found = store.get_claim_by_content_fingerprint(content_fingerprint(text), **identity)
+        if found is not None:
+            return found
+    if hasattr(store, "get_claim_by_idempotency_key"):
+        return store.get_claim_by_idempotency_key(content_hash, **identity)
+    return None
 
 
 def identity_namespace_key(

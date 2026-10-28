@@ -60,7 +60,9 @@ def test_latest_ordinary_archive_does_not_block_content_relearning(service, key)
     receipt = {"operation_id": "governed-later-intake"}
     result = _ingest(service, key=key, receipt=receipt)
     assert result.status == "candidate" and receipt["status"] != "blocked"
-    assert result.id == claim.id if key else receipt["created"]
+    # Identical content is matched whatever key the original used (T-1865 F14), so an
+    # ordinarily archived original is revived for both keyed and unkeyed re-ingest.
+    assert result.id == claim.id and not receipt["created"]
 
 
 @pytest.mark.parametrize("partition", ["tenant", "scope", "visibility", "private_source"])
@@ -96,6 +98,9 @@ def test_atomic_store_content_guard_catches_archive_after_facade_preflight(servi
         return result
 
     monkeypatch.setattr(service.store, "_check_idempotency", archive_after_optimistic_lookup)
+    # The optimistic content lookups must miss for this race to exist: the concurrent
+    # archive lands after them, which is exactly the window the atomic guard closes.
+    monkeypatch.setattr(service.store, "get_claim_by_content_fingerprint", lambda *_a, **_k: None)
     receipt = {"operation_id": "racing-intake"}
     result = _ingest(service, key=key, citation="replacement", receipt=receipt)
     assert result.id == original.id and result.status == "archived"
