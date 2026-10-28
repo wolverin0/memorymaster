@@ -241,8 +241,8 @@ class TestRunIntegration:
         assert len(archived) == 0
 
     def test_dedup_archives_duplicate(self, service):
-        c1 = self._ingest(service, "Python version is 3.12")
-        c2 = self._ingest(service, "Python version is 3.12")
+        self._ingest(service, "Python version is 3.12")
+        self._ingest(service, "Python version is 3.12")
         result = service.dedup(dry_run=False)
         assert result["duplicates_found"] >= 1
         assert result["claims_archived"] >= 1
