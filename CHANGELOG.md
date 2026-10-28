@@ -42,6 +42,17 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
   claims from one owner (fewer eligible clusters). A summary of non-public sources is no
   longer auto-confirmed by the job; it stays a candidate.
 
+### Operator `resolve-conflicts` no longer settles contradictions by confidence (T-1870)
+
+- Same rule the curation drain got in T-1863: a different-value contradiction is
+  settled only by an explicit supersession link or a pinned rival; identical
+  non-empty values still pick a winner (duplicates). Everything else stays
+  untouched and is reported as `held for review` (`pairs_held` in the result and
+  CLI JSON). A multi-claim group is settled only if ONE claim beats every other
+  by that rule; otherwise the whole group is held. `_verdict` now lives in
+  `govern/conflict_resolver.py` and the drain imports it.
+- Follow-up (not in this change): a separate evidence timestamp for decay.
+
 ### PreCompact residual (AO-1, T-1633)
 
 - New opt-in `MEMORYMASTER_PRECOMPACT_RESIDUAL=1`: when a compaction is allowed

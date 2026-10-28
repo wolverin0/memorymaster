@@ -1,14 +1,13 @@
 """Automatic conflict resolution for claims with the same (subject, predicate, scope) tuple.
 
 When two claims share the same subject and predicate but differ in object_value,
-this module picks a winner using a deterministic priority chain:
-  1. Higher confidence score wins
-  2. More recent (fresher updated_at) wins if confidence is equal
-  3. More citations wins if both are equal
-  4. Pinned claims always win over unpinned
-  5. Optional LLM tiebreaker (if llm_steward is available)
+that is a contradiction, and (T-1863 F5 / T-1870) it is settled ONLY by an
+explicit supersession link or an operator pin (``_verdict``). Confidence,
+recency and citation counts (``_pick_winner``) pick a winner solely between
+claims that assert the same non-empty value, i.e. duplicates. Any group that
+cannot be settled that way stays untouched and is reported as held for review.
 
-The loser is transitioned to 'superseded' with a full audit trail.
+The loser of a settled pair is transitioned to 'superseded' with a full audit trail.
 """
 
 from __future__ import annotations
@@ -35,6 +34,9 @@ class ConflictPair:
     loser: Claim
     reason: str
     key: tuple[str, str, str]  # (subject, predicate, scope)
+    # True when the group has no explicit-link/pin resolution: winner/loser are
+    # only a display anchor and nothing may be superseded.
+    held: bool = False
 
 
 @dataclass(slots=True)
@@ -44,6 +46,7 @@ class ResolutionResult:
     pairs_detected: int = 0
     pairs_resolved: int = 0
     pairs_skipped: int = 0
+    pairs_held: int = 0
     resolutions: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -228,6 +231,28 @@ def _pick_winner(a: Claim, b: Claim) -> ConflictPair:
     )
 
 
+def _verdict(claim: Any, rival: Any) -> tuple[str, str] | None:
+    """Who wins between a conflicted claim and its confirmed rival, or None.
+
+    T-1863 F5: different-value contradictions are settled ONLY by an explicit
+    supersession link (either direction) or by the operator's pin on the rival.
+    Confidence / freshness / citations (``_pick_winner``) are used solely when
+    both claims assert the same non-empty value, i.e. a duplicate rather than a
+    contradiction. Missing objects count as unknown, not as "same".
+    """
+    if claim.supersedes_claim_id == rival.id:
+        return "claim_wins", "supersedes_explicit"
+    if rival.supersedes_claim_id == claim.id:
+        return "claim_loses", "rival_supersedes_explicit"
+    if rival.pinned and not claim.pinned:
+        return "claim_loses", "pinned_wins"
+    claim_object = normalize_identity_part(claim.object_value)
+    if claim_object and claim_object == normalize_identity_part(rival.object_value):
+        pair = _pick_winner(claim, rival)
+        return ("claim_loses" if pair.loser.id == claim.id else "claim_wins"), pair.reason
+    return None
+
+
 def _normalize_value(value: str | None) -> str:
     if value is None:
         return ""
@@ -266,7 +291,8 @@ def detect_conflicts(
     """Detect conflicting claims from the store.
 
     Returns a list of ConflictPair objects, one per conflicting pair.
-    Only the highest-priority loser per group is returned (pairwise resolution).
+    One pair per non-champion claim in a group; pairs of an unsettled group carry
+    ``held=True`` (no explicit supersession link or pin) and must not be applied.
     """
     if statuses is None:
         statuses = ["confirmed", "candidate", "conflicted"]
@@ -281,30 +307,55 @@ def detect_conflicts(
     groups = _build_conflict_groups(claims)
     pairs: list[ConflictPair] = []
 
-    for _key, group in groups.items():
+    for key, group in groups.items():
         # Sort by confidence desc, then freshness desc, then id desc
         sorted_group = sorted(
             group,
             key=lambda c: (c.confidence, _parse_iso(c.updated_at) or datetime.min.replace(tzinfo=timezone.utc), c.id),
             reverse=True,
         )
-        # MED audit fix: determine the SINGLE group winner ONCE by reducing
-        # _pick_winner over the whole group (so pinned/priority logic settles on
-        # one champion), THEN emit (group_winner, loser) pairs for every other
-        # claim. The previous loop reassigned `best = pair.winner` on each
-        # iteration, so when _pick_winner's pinned/priority logic flipped the
-        # intermediate winner, earlier losers were left pointing (replaced_by) at
-        # a claim that was itself later superseded — a dead-link chain.
-        group_winner = sorted_group[0]
-        for candidate in sorted_group[1:]:
-            group_winner = _pick_winner(group_winner, candidate).winner
-
-        for loser in sorted_group:
-            if loser is group_winner:
-                continue
-            pairs.append(_pick_winner(group_winner, loser))
+        champion_pairs = _settle_group(sorted_group)
+        if champion_pairs is not None:
+            pairs.extend(champion_pairs)
+            continue
+        # shortcut: the whole group is held if any claim lacks an explicit
+        # link/pin against a single champion (a mixed group is never partially
+        # settled); upgrade only if a real chain case (A->B->C links) needs it.
+        anchor = sorted_group[0]
+        for other in sorted_group[1:]:
+            pair = _pick_winner(anchor, other)
+            pair.held = True
+            pairs.append(pair)
 
     return pairs
+
+
+def _settle_group(sorted_group: list[Claim]) -> list[ConflictPair] | None:
+    """Pairs (champion, loser) if ONE claim beats every other by ``_verdict``.
+
+    Returns None when no such champion exists. A single champion keeps every
+    ``replaced_by`` pointer on a claim that stays alive (no dead-link chains),
+    and holding the whole group otherwise is the safer choice for a mixed group.
+    """
+    for champion in sorted_group:
+        settled: list[ConflictPair] = []
+        for other in sorted_group:
+            if other is champion:
+                continue
+            decided = _verdict(other, champion)
+            if decided is None or decided[0] != "claim_loses":
+                break
+            settled.append(
+                ConflictPair(
+                    winner=champion,
+                    loser=other,
+                    reason=decided[1],
+                    key=(champion.subject or "", champion.predicate or "", champion.scope),
+                )
+            )
+        else:
+            return settled
+    return None
 
 
 def resolve_conflicts(
@@ -339,7 +390,16 @@ def resolve_conflicts(
             "winner_object_value": pair.winner.object_value,
             "loser_object_value": pair.loser.object_value,
             "applied": False,
+            "held": pair.held,
         }
+
+        if pair.held:
+            # No explicit supersession link or pin: leave both claims alone.
+            result.pairs_skipped += 1
+            result.pairs_held += 1
+            resolution_record["skip_reason"] = "held for review"
+            result.resolutions.append(resolution_record)
+            continue
 
         if dry_run:
             result.pairs_skipped += 1

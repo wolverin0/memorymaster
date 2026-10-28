@@ -18,7 +18,13 @@ def test_windows_dream_action_uses_pythonw(monkeypatch, tmp_path: Path) -> None:
         return subprocess.CompletedProcess(command, 0, "", "")
 
     # El entorno de desarrollo no puede decidir el resultado de este test.
-    for var in ("MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", "MEMORYMASTER_DREAM_EXTRACT_MODEL"):
+    for var in (
+        "MEMORYMASTER_DREAM_EXTRACT_PROVIDER",
+        "MEMORYMASTER_DREAM_EXTRACT_MODEL",
+        "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL",
+        "MEMORYMASTER_DREAM_EXTRACT_VARIANT",
+        "MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT",
+    ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(setup_hooks, "IS_WINDOWS", True)
     monkeypatch.setattr(setup_hooks, "PYTHON_EXE", str(python))

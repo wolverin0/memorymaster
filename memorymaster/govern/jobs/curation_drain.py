@@ -38,11 +38,10 @@ import logging
 import re
 from typing import Any
 
-from memorymaster.core.models import normalize_identity_part
 from memorymaster.core.promotion_policy import auto_promotion_blocked, structure_blocks_auto_promotion
 from memorymaster.govern.conflict_resolver import (
     SupersessionRaceLost,
-    _pick_winner,
+    _verdict,
     supersede_claim,
 )
 
@@ -97,28 +96,6 @@ def _find_rival(service: Any, claim: Any) -> Any | None:
             rival = store.get_claim(int(match.group(1)), include_citations=True)
             if rival is not None and rival.status == "confirmed":
                 return rival
-    return None
-
-
-def _verdict(claim: Any, rival: Any) -> tuple[str, str] | None:
-    """Who wins between a conflicted claim and its confirmed rival, or None.
-
-    T-1863 F5: different-value contradictions are settled ONLY by an explicit
-    supersession link (either direction) or by the operator's pin on the rival.
-    Confidence / freshness / citations (``_pick_winner``) are used solely when
-    both claims assert the same non-empty value, i.e. a duplicate rather than a
-    contradiction. Missing objects count as unknown, not as "same".
-    """
-    if claim.supersedes_claim_id == rival.id:
-        return "claim_wins", "supersedes_explicit"
-    if rival.supersedes_claim_id == claim.id:
-        return "claim_loses", "rival_supersedes_explicit"
-    if rival.pinned and not claim.pinned:
-        return "claim_loses", "pinned_wins"
-    claim_object = normalize_identity_part(claim.object_value)
-    if claim_object and claim_object == normalize_identity_part(rival.object_value):
-        pair = _pick_winner(claim, rival)
-        return ("claim_loses" if pair.loser.id == claim.id else "claim_wins"), pair.reason
     return None
 
 

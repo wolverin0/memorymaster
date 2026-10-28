@@ -156,6 +156,25 @@ def _fresh_service(tmp_path: Path) -> MemoryService:
     return svc
 
 
+def _link(svc: MemoryService, replacement_id: int, predecessor_id: int) -> None:
+    """Explicit supersession link: the only evidence (besides a pin) that settles
+    a different-value contradiction. Confidence alone never does (T-1863/T-1870)."""
+    with svc.store.connect() as conn:
+        conn.execute(
+            "UPDATE claims SET supersedes_claim_id = ? WHERE id = ?",
+            (predecessor_id, replacement_id),
+        )
+
+
+def _port(svc: MemoryService, value: str, confidence: float):
+    from memorymaster.core.models import CitationInput
+
+    return svc.ingest(
+        text=f"server port is {value}", citations=[CitationInput(source=f"doc{value}")],
+        subject="server", predicate="port", object_value=value, confidence=confidence,
+    )
+
+
 class TestDetectConflictsIntegration:
     def test_detects_conflict_from_store(self, tmp_path):
         svc = _fresh_service(tmp_path)
@@ -207,6 +226,65 @@ class TestDetectConflictsIntegration:
 
 
 class TestResolveConflictsIntegration:
+    def test_different_values_are_held_for_review(self, tmp_path):
+        svc = _fresh_service(tmp_path)
+        claims = [_port(svc, "8080", 0.4), _port(svc, "3000", 0.9)]
+
+        result = resolve_conflicts(svc, statuses=["candidate"])
+
+        assert result.pairs_resolved == 0
+        assert result.pairs_held == 1
+        assert result.resolutions[0]["skip_reason"] == "held for review"
+        assert all(svc.store.get_claim(claim.id).status != "superseded" for claim in claims)
+
+    def test_multi_claim_group_with_one_unlinked_claim_is_held_whole(self, tmp_path):
+        """c3 explicitly supersedes c2, but c1 has no link: no single champion beats
+        everyone, so NOTHING in the group is settled (no partial supersession)."""
+        svc = _fresh_service(tmp_path)
+        c1, c2, c3 = _port(svc, "8080", 0.5), _port(svc, "3000", 0.7), _port(svc, "443", 0.9)
+        _link(svc, c3.id, c2.id)
+
+        result = resolve_conflicts(svc, statuses=["candidate"])
+
+        assert result.pairs_detected == 2
+        assert result.pairs_resolved == 0
+        assert result.pairs_held == 2
+        assert all(svc.store.get_claim(c.id).status == "candidate" for c in (c1, c2, c3))
+
+    def test_multi_claim_group_settles_when_one_pinned_champion_beats_all(self, tmp_path):
+        svc = _fresh_service(tmp_path)
+        c1, c2, c3 = _port(svc, "8080", 0.9), _port(svc, "3000", 0.8), _port(svc, "443", 0.1)
+        svc.pin(c3.id, pin=True)  # low confidence, but the operator pinned it
+
+        result = resolve_conflicts(svc, statuses=["candidate"])
+
+        assert result.pairs_resolved == 2
+        assert result.pairs_held == 0
+        assert svc.store.get_claim(c3.id).status == "candidate"
+        for loser in (c1, c2):
+            fresh = svc.store.get_claim(loser.id)
+            assert fresh.status == "superseded"
+            assert fresh.replaced_by_claim_id == c3.id
+
+    def test_identical_values_still_settle_as_duplicates(self, tmp_path):
+        from memorymaster.core.models import CitationInput
+
+        svc = _fresh_service(tmp_path)
+        weak = _port(svc, "8080", 0.4)
+        strong = svc.ingest(  # same value, different wording (not an idempotent re-ingest)
+            text="the server listens on port 8080", citations=[CitationInput(source="doc-b")],
+            subject="server", predicate="port", object_value="8080", confidence=0.9,
+        )
+        other = _port(svc, "3000", 0.2)
+        _link(svc, strong.id, other.id)  # strong beats the contradiction explicitly
+
+        result = resolve_conflicts(svc, statuses=["candidate"])
+
+        assert result.pairs_resolved == 2
+        assert svc.store.get_claim(weak.id).status == "superseded"
+        assert svc.store.get_claim(other.id).status == "superseded"
+        assert svc.store.get_claim(strong.id).status == "candidate"
+
     def test_dry_run_no_transitions(self, tmp_path):
         svc = _fresh_service(tmp_path)
         from memorymaster.core.models import CitationInput
@@ -258,11 +336,12 @@ class TestResolveConflictsIntegration:
             object_value="3000",
             confidence=0.9,
         )
+        _link(svc, c2.id, c1.id)
         result = resolve_conflicts(svc, dry_run=False, statuses=["candidate"])
         assert result.pairs_detected >= 1
         assert result.pairs_resolved >= 1
 
-        # Higher confidence claim wins
+        # The explicitly linked successor wins
         winner = svc.store.get_claim(c2.id)
         loser = svc.store.get_claim(c1.id)
         assert winner.status == "candidate"  # winner stays unchanged
@@ -323,6 +402,7 @@ class TestResolveConflictsIntegration:
             object_value="3000",
             confidence=0.9,
         )
+        _link(svc, c2.id, c1.id)
         # First resolve
         resolve_conflicts(svc, dry_run=False, statuses=["candidate"])
         # Second resolve should skip the already-superseded claim
@@ -350,6 +430,7 @@ class TestResolveConflictsIntegration:
             object_value="3000",
             confidence=0.9,
         )
+        _link(svc, c2.id, c1.id)
         resolve_conflicts(svc, dry_run=False, statuses=["candidate"])
 
         # Check the loser has audit events
@@ -363,40 +444,15 @@ class TestResolveConflictsIntegration:
         assert payload["source"] == "conflict_resolver"
         assert payload["winner_id"] == c2.id
 
-    def test_three_way_conflict(self, tmp_path):
-        """Three claims with same tuple but different values - only one winner."""
+    def test_three_way_conflict_without_links_is_held(self, tmp_path):
+        """Three different values, no links or pins: confidence picks nothing."""
         svc = _fresh_service(tmp_path)
-        from memorymaster.core.models import CitationInput
-
-        c1 = svc.ingest(
-            text="server port is 8080",
-            citations=[CitationInput(source="doc1")],
-            subject="server",
-            predicate="port",
-            object_value="8080",
-            confidence=0.5,
-        )
-        c2 = svc.ingest(
-            text="server port is 3000",
-            citations=[CitationInput(source="doc2")],
-            subject="server",
-            predicate="port",
-            object_value="3000",
-            confidence=0.7,
-        )
-        c3 = svc.ingest(
-            text="server port is 443",
-            citations=[CitationInput(source="doc3")],
-            subject="server",
-            predicate="port",
-            object_value="443",
-            confidence=0.9,
-        )
+        c1, c2, c3 = _port(svc, "8080", 0.5), _port(svc, "3000", 0.7), _port(svc, "443", 0.9)
         result = resolve_conflicts(svc, dry_run=False, statuses=["candidate"])
-        assert result.pairs_detected == 2  # c3 vs c2, c3 vs c1
-        # c3 should win (highest confidence)
-        c3_fresh = svc.store.get_claim(c3.id)
-        assert c3_fresh.status == "candidate"
+        assert result.pairs_detected == 2
+        assert result.pairs_resolved == 0
+        assert result.pairs_held == 2
+        assert all(svc.store.get_claim(c.id).status == "candidate" for c in (c1, c2, c3))
 
 
 class TestCLIResolveConflicts:
@@ -454,4 +510,6 @@ class TestCLIResolveConflicts:
         data = json.loads(captured.out)
         assert data["ok"] is True
         assert data["data"]["pairs_detected"] >= 1
-        assert data["data"]["pairs_resolved"] >= 1
+        # Different values with no supersession link or pin: held, not settled.
+        assert data["data"]["pairs_resolved"] == 0
+        assert data["data"]["pairs_held"] >= 1
