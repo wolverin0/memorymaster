@@ -702,6 +702,27 @@ class TestCallGoogleDispatch:
             "thinkingLevel": "minimal"
         }
 
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("gemini-flash-latest", {"thinkingLevel": "minimal"}),
+            ("gemini-flash-lite-latest", {"thinkingLevel": "minimal"}),
+            # WHY: Pro cannot run at "minimal"; sending it would be rejected, so no config.
+            ("gemini-pro-latest", None),
+        ],
+    )
+    def test_latest_aliases_thinking_config(self, monkeypatch, model, expected):
+        monkeypatch.setenv("MEMORYMASTER_LLM_MODEL", model)
+        monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)
+        monkeypatch.setattr("memorymaster.core.key_rotator.get_rotator", lambda name: None)
+        monkeypatch.setenv("GEMINI_API_KEY", "g")
+        captured = {}
+        monkeypatch.setattr(
+            lp, "_http_post", lambda url, payload, *a, **k: captured.update(payload=payload) or "x"
+        )
+        lp._call_google("p", "t")
+        assert captured["payload"]["generationConfig"].get("thinkingConfig") == expected
+
     def test_gemini25_sets_thinking_budget_zero(self, monkeypatch):
         monkeypatch.setenv("MEMORYMASTER_LLM_MODEL", "gemini-2.5-flash-lite")
         monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)

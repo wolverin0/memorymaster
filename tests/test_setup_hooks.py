@@ -727,7 +727,7 @@ def test_dream_schedule_defaults_claude_provider_to_haiku(monkeypatch, capsys) -
 
 
 def test_dream_schedule_keeps_other_provider_defaults(monkeypatch, capsys) -> None:
-    assert "--extract-model gemini-3.5-flash " in _scheduled_command(monkeypatch, capsys, "gemini")
+    assert "--extract-model gemini-flash-latest " in _scheduled_command(monkeypatch, capsys, "gemini")
     assert "--extract-model openai/gpt-5.4-mini " in _scheduled_command(monkeypatch, capsys, "opencode")
 
 
