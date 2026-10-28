@@ -53,59 +53,78 @@ def text_keys(*texts: object) -> frozenset[str]:
     return frozenset(out)
 
 
+def exact_identifier_hits(identifiers: Iterable[str], *texts: object) -> frozenset[str]:
+    """Identifier tokens that occur VERBATIM (lower case, unstemmed) as whole tokens in ``texts``.
+
+    T-1877 (review F8): an identifier is matched exactly; only natural-language terms are stemmed, so
+    `rate` does not hit "rated".
+    """
+    wanted = {i.lower() for i in identifiers}
+    found: set[str] = set()
+    for text in texts:
+        if isinstance(text, str):
+            found.update(_candidate_tokens(text))
+    return frozenset(wanted & found)
+
+
 def matched_terms(keys: frozenset[str], *texts: object) -> frozenset[str]:
     """The query term keys that occur as whole tokens in ``texts``."""
     return keys & text_keys(*texts)
 
 
-def covers(matched: frozenset[str], total_terms: int, identifiers: frozenset[str]) -> bool:
+def covers(matched: frozenset[str], total_terms: int, exact_identifier_hits: frozenset[str]) -> bool:
     """The coverage rule: enough distinct terms matched, or one exact identifier matched.
 
-    ``total_terms`` is the number of distinct query terms, ``identifiers`` their identifier keys.
-    A question without terms gates nothing.
+    ``total_terms`` is the number of distinct query terms, ``exact_identifier_hits`` the identifiers found
+    verbatim in the row (see :func:`exact_identifier_hits`). A question without terms gates nothing.
     """
     if total_terms <= 0:
         return True
-    return len(matched) >= min(min_terms(), total_terms) or bool(matched & identifiers)
+    return len(matched) >= min(min_terms(), total_terms) or bool(exact_identifier_hits)
 
 
 # --- truth eligibility (F4) ---------------------------------------------------------------------
 
 
-def _disputed(pool: list[Any], svc: Any) -> tuple[set[int], set[int]]:
-    """``(disputed ids, ids whose correction is in the pool)`` among ``pool`` (rows of claims)."""
+def _disputed(pool: list[Any], svc: Any) -> set[int]:
+    """Ids among ``pool`` (rows of claims) whose replacement is pending or named by a claim/link of the pool.
+
+    Raises :class:`PendingSupersessionScanError` when the pending-proposal scan cannot be trusted.
+    """
     from memorymaster.recall.retrieval import pending_supersession_ids
 
     claims = [row.get("claim") for row in pool]
     ids = {int(c.id) for c in claims if isinstance(getattr(c, "id", None), int)}
-    superseded_by_pool: set[int] = set()
+    disputed: set[int] = set()
     for claim in claims:
         target = getattr(claim, "supersedes_claim_id", None)
         if isinstance(target, int):
-            superseded_by_pool.add(target)  # the correction itself is in the pool: it names its predecessor
-    for claim in claims:
+            disputed.add(target)  # the correction itself is in the pool: it names its predecessor
         replacement = getattr(claim, "replaced_by_claim_id", None)
         if isinstance(getattr(claim, "id", None), int) and isinstance(replacement, int) and replacement in ids:
-            superseded_by_pool.add(int(claim.id))
-    pending = pending_supersession_ids(svc)
-    return (set(pending) | superseded_by_pool) & ids, superseded_by_pool & ids
+            disputed.add(int(claim.id))
+    disputed |= set(pending_supersession_ids(svc, strict=True))
+    return disputed & ids
 
 
 def apply_truth_eligibility(rows: list[dict], svc: Any) -> list[dict]:
-    """Final-stage truth check: disputed claims never precede their correction.
+    """Final-stage truth check: a disputed claim is never injected, whether or not its correction was retrieved.
 
     A claim is disputed when its supersession is proposed and unresolved (``pending_supersession_ids``), when a
-    row of the pool names it in ``supersedes_claim_id`` or when its ``replaced_by_claim_id`` is in the pool.
-    A disputed claim whose correction is in the pool is dropped; one whose correction is not retrieved only
-    sinks below every undisputed row. Never raises: on any fault the order is returned unchanged.
+    row of the pool names it in ``supersedes_claim_id`` or when its ``replaced_by_claim_id`` is in the pool
+    (T-1877, review F4: a predecessor retrieved WITHOUT its correction used to be injected, merely last).
+    This one decision fails closed: if the pending-proposal scan faults, nothing is injected.
     """
+    from memorymaster.recall.retrieval import PendingSupersessionScanError
+
     try:
-        disputed, has_correction = _disputed(rows, svc)
-        if not disputed:
-            return rows
-        keep = [r for r in rows if getattr(r.get("claim"), "id", None) not in has_correction]
-        undisputed = [r for r in keep if getattr(r.get("claim"), "id", None) not in disputed]
-        return undisputed + [r for r in keep if getattr(r.get("claim"), "id", None) in disputed]
-    except Exception as exc:  # noqa: BLE001 - truth eligibility must never break recall
-        logger.debug("truth eligibility skipped: %s", type(exc).__name__)
+        disputed = _disputed(rows, svc)
+    except PendingSupersessionScanError as exc:
+        logger.warning("truth eligibility failed closed, no claim injected: %s", exc)
+        return []
+    except Exception as exc:  # noqa: BLE001 - an unverifiable truth decision admits nothing
+        logger.warning("truth eligibility failed closed, no claim injected: %s", type(exc).__name__)
+        return []
+    if not disputed:
         return rows
+    return [r for r in rows if getattr(r.get("claim"), "id", None) not in disputed]

@@ -365,3 +365,15 @@ def _cleanup_case_artifacts() -> None:
     # the files and scripts/bulk_check.py empties the root before the suite starts.
     if not os.environ.get("PYTEST_XDIST_WORKER"):
         _prune_case_root(_CASE_ROOT)
+
+
+@pytest.fixture()
+def readable_supersession_scan(monkeypatch):
+    """Opt-in for tests that drive ``recall()`` with a mocked service (T-1877, review F4).
+
+    Truth eligibility fails closed when the pending-supersession scan cannot be read, and a MagicMock
+    service cannot be read. Tests that want the fail-closed path itself must not use this fixture.
+    """
+    from memorymaster.recall import retrieval
+
+    monkeypatch.setattr(retrieval, "pending_supersession_ids", lambda _svc, **_kw: frozenset())

@@ -252,3 +252,6 @@ class TestRecallIntegration:
         # fused ordering when the scorer fails.
         assert deg_ids == base_ids
         assert degraded == baseline
+
+
+pytestmark = pytest.mark.usefixtures("readable_supersession_scan")  # mocked service (T-1877 F4)

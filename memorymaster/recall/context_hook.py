@@ -955,6 +955,7 @@ _WHOLE_QUERY_TERMS = 6
 _WHOLE_QUERY_ROWS = 5
 _PER_TERM_SEARCHES = 3
 _PER_TERM_ROWS = 3
+_TAIL_TERM_ROWS = 2  # rows each remaining selected term may add (T-1877, review F1: every selected term is searched)
 
 
 def _entity_fanout_claim_ids(
@@ -1580,6 +1581,10 @@ def _recall_impl(
                 svc, " ".join(query_terms[:_WHOLE_QUERY_TERMS]), limit=_WHOLE_QUERY_ROWS * _lr_overfetch))
             for tok in token_list:
                 _add_rows(_governed_prompt_rows(svc, tok, limit=_PER_TERM_ROWS * _lr_overfetch))
+            # Union retrieval: a selected term past the whole-question and per-term windows still reaches the
+            # pool (T-1877, review F1), bounded by _QUERY_TERMS searches of _TAIL_TERM_ROWS rows each.
+            for tok in query_terms[_PER_TERM_SEARCHES:]:
+                _add_rows(_governed_prompt_rows(svc, tok, limit=_TAIL_TERM_ROWS * _lr_overfetch))
 
         if not rows:
             # Fallback to raw prompt — preserves the old behaviour.
@@ -1867,7 +1872,8 @@ def _recall_impl(
     # post-ranker agrees with retrieval.
     query_words = set(query_terms) or set(re.findall(r"\w{3,}", query.lower()))
     term_keys = hook_lexical.term_keys(query_words)
-    identifier_keys = hook_lexical.term_keys(identifier_tokens(query)) & term_keys
+    # Identifiers are compared verbatim, never through the stemmer (T-1877, review F8).
+    identifier_exact = frozenset(identifier_tokens(query)) & frozenset(t.lower() for t in query_words)
     matched_by_id: dict[int, frozenset[str]] = {}
 
     def _matched(row) -> frozenset[str]:
@@ -2229,10 +2235,14 @@ def _recall_impl(
         def _passes_gate(row) -> bool:
             _relevance(row)  # fills _evidence_by_id
             evidence, has_stream = _evidence_by_id[getattr(row.get("claim"), "id", None)]
-            matched = _matched(row)
-            if matched & identifier_keys:  # an exact identifier is evidence by itself
+            claim = row.get("claim")
+            exact = hook_lexical.exact_identifier_hits(
+                identifier_exact, getattr(claim, "text", ""), getattr(claim, "subject", ""),
+                getattr(claim, "object_value", ""),
+            )
+            if exact:  # an exact identifier is evidence by itself
                 return True
-            return (has_stream or hook_lexical.covers(matched, len(term_keys), identifier_keys)) and evidence >= floor
+            return (has_stream or hook_lexical.covers(_matched(row), len(term_keys), exact)) and evidence >= floor
 
         ranked = [row for row in ranked if _passes_gate(row)]
 
