@@ -102,13 +102,35 @@ def _find_rival(service: Any, claim: Any) -> Any | None:
     return None
 
 
+_SCAN_PAGES = 20  # pages of ``limit`` conflicted claims one run may scan
+
+
+def _conflicted_claims(store: Any, limit: int):
+    """Every conflicted claim, in id order, a keyset page at a time (T-1877, review N6).
+
+    One confidence-ordered window of ``limit`` rows put the same held entries first on every run and the
+    resolvable ones behind them were never reached. ``limit`` now bounds the resolutions applied, not the
+    claims looked at; the scan itself is bounded by ``_SCAN_PAGES`` pages.
+    """
+    page = getattr(store, "find_by_status_after", None)
+    if page is None:  # a store without keyset paging keeps the single window
+        yield from store.find_by_status("conflicted", limit=limit, include_citations=True)
+        return
+    after_id = 0
+    for _ in range(_SCAN_PAGES):
+        batch = page("conflicted", after_id=after_id, limit=max(1, limit), include_citations=True)
+        if not batch:
+            return
+        yield from batch
+        after_id = int(batch[-1].id)
+
+
 def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> dict[str, Any]:
     from memorymaster.core.lifecycle import transition_claim
 
     store = service.store
-    conflicted = store.find_by_status("conflicted", limit=limit, include_citations=True)
     summary: dict[str, Any] = {
-        "scanned": len(conflicted),
+        "scanned": 0,
         "resolved_lost": 0,
         "resolved_won": 0,
         "resolved_orphan": 0,
@@ -120,7 +142,10 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
         "skipped_race": 0,
         "dry_run": not apply,
     }
-    for claim in conflicted:
+    for claim in _conflicted_claims(store, limit):
+        if summary["resolved_lost"] + summary["resolved_won"] >= limit:
+            break
+        summary["scanned"] += 1
         if _is_operator_owned(claim):
             summary["kept_for_operator"] += 1
             continue

@@ -706,6 +706,26 @@ class _ReadMixin:
         )
 
 
+    def find_by_status_after(
+        self, status: str, *, after_id: int = 0, limit: int = 100, include_citations: bool = False,
+    ) -> list[Claim]:
+        """Claims in ``status`` with ``id > after_id``, ascending: a keyset page (T-1877, review N6).
+
+        A confidence-ordered ``find_by_status`` window never reaches past its first ``limit`` rows;
+        a worker that must see every row of a status pages with this instead.
+        """
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM claims WHERE status = ? AND id > ? ORDER BY id ASC LIMIT ?",
+                (status, int(after_id), max(1, int(limit))),
+            ).fetchall()
+        claims = [self._row_to_claim(row) for row in rows]
+        if include_citations and claims:
+            cit_map = self.list_citations_batch([c.id for c in claims])
+            for claim in claims:
+                claim.citations = cit_map.get(claim.id, [])
+        return claims
+
     def find_archive_candidates(
         self, *, created_before: str, after_id: int = 0, limit: int = 500
     ) -> list[Claim]:

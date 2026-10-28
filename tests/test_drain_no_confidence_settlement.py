@@ -111,3 +111,33 @@ def test_dry_run_reports_held_for_review_without_mutating(svc):
 
     assert result["held_for_review"] == 1 and result["dry_run"] is True
     assert (_status(svc, old), _status(svc, new)) == ("confirmed", "conflicted")
+
+
+def test_held_conflicts_do_not_starve_a_resolvable_one_behind_them(svc):
+    """T-1877 (review N6): the bounded fetch used to be spent on the same top-ranked held entries every run."""
+    def held_pair(n):
+        rival = svc.ingest(
+            text=f"Service {n} runs on SQLite.", citations=[CitationInput(source="session://t", locator="x")],
+            subject=f"service-{n}", predicate="engine", object_value="SQLite", scope="project:x",
+            confidence=0.5, source_agent="claude-session",
+        ).id
+        transition_claim(svc.store, rival, "confirmed", reason="fixture")
+        other = svc.ingest(
+            text=f"Service {n} runs on PostgreSQL.", citations=[CitationInput(source="session://t", locator="y")],
+            subject=f"service-{n}", predicate="engine", object_value="PostgreSQL", scope="project:x",
+            confidence=0.95, source_agent="claude-session",
+        ).id
+        transition_claim(svc.store, other, "conflicted", reason="fixture")
+
+    for n in range(4):
+        held_pair(n)
+    old = _claim(svc, "The datastore uses SQLite.", "SQLite", 0.5)
+    transition_claim(svc.store, old, "confirmed", reason="fixture")
+    new = _claim(svc, "Correction: the datastore uses PostgreSQL.", "PostgreSQL", 0.1)
+    _link(svc, new, old)
+    transition_claim(svc.store, new, "conflicted", reason="fixture")
+
+    result = curation_drain.drain_conflicts(svc, limit=2, apply=True)
+
+    assert _status(svc, new) == "confirmed" and _status(svc, old) == "superseded"
+    assert result["resolved_won"] == 1 and result["held_for_review"] == 4

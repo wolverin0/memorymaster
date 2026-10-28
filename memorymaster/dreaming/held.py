@@ -80,6 +80,14 @@ def released_undecided(candidates: Iterable[Mapping[str, Any]] | None,
             if status(payload) == RELEASED and str(payload.get("candidate_id")) not in decided]
 
 
+def undecided(candidates: Iterable[Mapping[str, Any]] | None,
+              decisions: Iterable[Mapping[str, Any]] | None) -> list[dict[str, Any]]:
+    """Candidates a consolidation checkpoint has not decided yet, held ones excluded (T-1877, review N4)."""
+    decided = {str(decision.get("candidate_id")) for decision in decisions or []}
+    return [dict(payload) for payload in candidates or []
+            if not is_held(payload) and str(payload.get("candidate_id")) not in decided]
+
+
 def _parse_time(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None

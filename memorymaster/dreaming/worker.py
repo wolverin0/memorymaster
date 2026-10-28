@@ -622,8 +622,14 @@ class DreamWorker:
     @staticmethod
     def _reopened(row: dict[str, Any]) -> dict[str, Any]:
         """S3: consolidate released candidates of a decided capture, keeping its decisions."""
+        if row.get("decisions") is None:
+            return row
         released = held.released_undecided(row.get("extraction"), row.get("decisions"))
-        if row.get("decisions") is None or not released:
+        if not released and row.get("deferred_reason") == "consolidate_budget":
+            # A budget deferral that kept the decisions of its completed batches (T-1877, review N4):
+            # only the candidates without a decision still need a call.
+            released = held.undecided(row.get("extraction"), row.get("decisions"))
+        if not released:
             return row
         return {**row, "decisions": None, "base_decisions": list(row["decisions"]), "released": released}
 
@@ -931,6 +937,18 @@ class DreamWorker:
             self._hold_lease()
             self.ledger.defer_consolidation(capture_id, run_id)
         summary["deferred_consolidate_dependencies"] = len(dependent_deferred)
+        # Keep what a budget-deferred capture already decided (T-1877, review N4): without it a capture
+        # needing more calls than the daily allowance restarts from its first candidate every day. A capture
+        # whose decisions relied on another capture's withdrawn work keeps none (dependency rollback).
+        for row in rows:
+            capture_id = int(row["id"])
+            if (capture_id in deferred_captures and capture_id not in dependent_deferred
+                    and capture_id not in failed_captures and capture_id not in provider_deferred
+                    and decisions_by_capture[capture_id]
+                    and not reference_dependencies.get(capture_id, set()) & tainted):
+                self._hold_lease()
+                self.ledger.checkpoint_decisions(
+                    capture_id, [*row.get("base_decisions", []), *decisions_by_capture[capture_id]], run_id)
         deferred_captures.update(dependent_deferred)
         for row in rows:
             capture_id = int(row["id"])

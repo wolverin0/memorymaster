@@ -407,6 +407,21 @@ class DreamLedger:
                 (run_id, _iso(_utc_now()), capture_id),
             )
 
+    def checkpoint_decisions(self, capture_id: int, decisions: Iterable[dict[str, Any]], run_id: str) -> None:
+        """Keep the decisions of the batches that completed before a budget deferral (T-1877, review N4).
+
+        The capture stays ``extracted`` and deferred; the next run consolidates only the candidates that
+        still have no decision (``DreamWorker._reopened``) instead of repeating the whole capture.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE dream_captures
+                   SET state='extracted', run_id=?, updated_at=?, deferred_reason='consolidate_budget',
+                       decisions_json=?
+                   WHERE id=? AND extraction_json IS NOT NULL""",
+                (run_id, _iso(_utc_now()), json.dumps(list(decisions), ensure_ascii=False), capture_id),
+            )
+
     def held_capture_ids(self, capture_id: int | None = None) -> list[int]:
         """Captures that still hold at least one Jev-held candidate (S3 INGEST)."""
         where, params = ("held_count>0 AND id=?", (int(capture_id),)) if capture_id is not None else ("held_count>0", ())
