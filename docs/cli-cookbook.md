@@ -550,7 +550,7 @@ python -m memorymaster --db memorymaster.db unlink 1 2 --type relates_to
 ```
 
 ### resolve-conflicts
-**Purpose**: Detect and optionally auto-resolve conflicting claims.
+**Purpose**: Detect and optionally auto-resolve conflicting claims. Only pairs with an explicit supersession link or a pin (or identical values) are settled; the rest are reported as held for review.
 **Example**:
 ```
 python -m memorymaster --db memorymaster.db resolve-conflicts --dry-run --limit 100

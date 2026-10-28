@@ -1588,7 +1588,7 @@ def _handle_ready(args: argparse.Namespace, service, parser: argparse.ArgumentPa
             {"winner_id": p.winner.id, "loser_id": p.loser.id, "reason": p.reason,
              "key": list(p.key), "winner_text": p.winner.text[:120],
              "loser_text": p.loser.text[:120], "winner_confidence": p.winner.confidence,
-             "loser_confidence": p.loser.confidence}
+             "loser_confidence": p.loser.confidence, "held": p.held}
             for p in conflict_pairs[:limit]
         ]},
         "low_confidence": {"count": len(low_conf_candidates), "claims": [_claim_to_dict(c) for c in low_conf_candidates]},
@@ -1614,9 +1614,10 @@ def _handle_ready(args: argparse.Namespace, service, parser: argparse.ArgumentPa
         if conflict_pairs:
             print(f"--- Conflicted pairs ({len(conflict_pairs)}) ---\n  Same subject+predicate with different values. Need resolution.")
             for p in conflict_pairs[:limit]:
+                held = " HELD for review (no explicit supersession link or pin)" if p.held else ""
                 print(f"  winner=[{p.winner.id}] vs loser=[{p.loser.id}] "
-                      f"key=({p.key[0]}, {p.key[1]}) reason={p.reason}")
-            print('  -> Run `memorymaster resolve-conflicts` to auto-resolve\n')
+                      f"key=({p.key[0]}, {p.key[1]}) reason={p.reason}{held}")
+            print('  -> `memorymaster resolve-conflicts` settles only pairs with a supersession link or pin\n')
 
         if low_conf_candidates:
             print(f"--- Low-confidence candidates ({len(low_conf_candidates)}) ---\n  Candidates with confidence < {threshold}. Need more evidence or review.")
@@ -1686,7 +1687,7 @@ def _handle_resolve_conflicts(args: argparse.Namespace, service, parser: argpars
     else:
         if args.dry_run:
             print("[DRY RUN] No transitions applied.")
-        print(f"conflicts detected={result.pairs_detected} resolved={result.pairs_resolved} skipped={result.pairs_skipped}")
+        print(f"conflicts detected={result.pairs_detected} resolved={result.pairs_resolved} skipped={result.pairs_skipped} held_for_review={result.pairs_held}")
         for res in result.resolutions:
             status = "APPLIED" if res.get("applied") else "SKIPPED"
             skip = f" ({res['skip_reason']})" if res.get("skip_reason") else ""

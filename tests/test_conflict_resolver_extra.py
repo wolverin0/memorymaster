@@ -164,6 +164,12 @@ class TestSupersessionWiring:
             subject="server", predicate="port", object_value="3000",
             confidence=0.95,
         )
+        # T-1870: only an explicit supersession link settles a contradiction.
+        with svc.store.connect() as conn:
+            conn.execute(
+                "UPDATE claims SET supersedes_claim_id = ? WHERE id = ?",
+                (loser.id, winner.id),
+            )
         return loser, winner
 
     def test_both_sides_of_the_link_are_set(self, tmp_path):
@@ -188,9 +194,9 @@ class TestSupersessionWiring:
         assert winner_fresh.status == "candidate"
 
     def test_higher_confidence_claim_is_the_survivor(self, tmp_path):
-        """Contract: the survivor of an auto-resolution is the higher-confidence
-        claim, never the weaker one. Asserts on which *value* survived, not on
-        ids, so it stays valid if id assignment changes."""
+        """Contract: the survivor of an auto-resolution is the explicitly linked
+        successor. Asserts on which *value* survived, not on ids, so it stays
+        valid if id assignment changes."""
         svc = _fresh_service(tmp_path)
         loser, winner = self._two_conflicting(svc)
 
