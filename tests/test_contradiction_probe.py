@@ -97,6 +97,21 @@ def test_probe_finds_planted_contradiction(env):
     assert stats["rate_ci"][0] <= stats["rate"] <= stats["rate_ci"][1]
 
 
+def test_probe_skip_rule_uses_the_persisted_tuple_identity():
+    """T-1877 (review F6): the pair the probe leaves to the deterministic path is exactly the pair its lookup finds."""
+    from types import SimpleNamespace
+
+    from memorymaster.core.models import tuple_key
+
+    def claim(subject, obj):
+        return SimpleNamespace(subject=subject, predicate="serves", object_value=obj)
+
+    a, b = claim("API  Gateway", "v1"), claim("api gateway", "v2")
+    assert tuple_key(a.subject, a.predicate) == tuple_key(b.subject, b.predicate)
+    assert contradiction_probe._deterministic_relation(a, b)
+    assert not contradiction_probe._deterministic_relation(a, claim("api gateway 2", "v2"))
+
+
 def test_verdict_cache_hit_on_rerun(env):
     db, svc, holder, prov = env
     first = contradiction_probe.run_probe(db, svc, provider=prov)
