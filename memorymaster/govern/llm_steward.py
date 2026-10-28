@@ -26,6 +26,7 @@ from typing import Any
 
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.core import observability
+from memorymaster.core.models import tuple_key
 from memorymaster.core.promotion_policy import (
     auto_promotion_blocked,
     non_auto_promotable_sources,
@@ -518,11 +519,17 @@ def _confirm_candidate_cas(
     # one the candidate arrived with.
     if structure_blocks_auto_promotion(subject, predicate):
         return False
+    # The stored subject/predicate change, so the persisted tuple identity must follow (T-1877, review F6).
+    # A database that predates migration 31 has no such column.
+    has_key = any(col[1] == "tuple_key" for col in conn.execute("PRAGMA table_info(claims)"))
     cur = conn.execute(
         "UPDATE claims SET status = 'confirmed', subject = ?, predicate = ?, "
-        "object_value = ?, confidence = ?, tuple_key = NULL, version = version + 1 "
+        "object_value = ?, confidence = ?, "
+        + ("tuple_key = ?, " if has_key else "")
+        + "version = version + 1 "
         "WHERE id = ? AND version = ? AND status = 'candidate'",
-        (subject, predicate, object_value, confidence, claim_id, version),
+        (subject, predicate, object_value, confidence,
+         *((tuple_key(subject, predicate),) if has_key else ()), claim_id, version),
     )
     return cur.rowcount > 0
 
