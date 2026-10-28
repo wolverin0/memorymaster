@@ -38,6 +38,7 @@ import logging
 import re
 from typing import Any
 
+from memorymaster.core.models import tuple_key
 from memorymaster.core.promotion_policy import auto_promotion_blocked, structure_blocks_auto_promotion
 from memorymaster.govern.conflict_resolver import (
     SupersessionRaceLost,
@@ -75,14 +76,16 @@ def _find_rival(service: Any, claim: Any) -> Any | None:
             row = conn.execute(
                 """SELECT id FROM claims
                    WHERE COALESCE(tenant_id,'') = COALESCE(?, '')
-                     AND (subject = ? OR lower(trim(subject)) = ?)
-                     AND (predicate = ? OR lower(trim(predicate)) = ?)
+                     AND (tuple_key = ? OR (tuple_key IS NULL
+                          AND (subject = ? OR lower(trim(subject)) = ?)
+                          AND (predicate = ? OR lower(trim(predicate)) = ?)))
                      AND scope = ?
                      AND status = 'confirmed' AND visibility = 'public'
                      AND id != ?
                    LIMIT 1""",
                 (
                     claim.tenant_id,
+                    tuple_key(claim.subject, claim.predicate),
                     claim.subject, claim.subject.strip().lower(),
                     claim.predicate, claim.predicate.strip().lower(),
                     claim.scope, claim.id,

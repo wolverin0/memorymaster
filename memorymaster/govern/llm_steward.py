@@ -520,7 +520,7 @@ def _confirm_candidate_cas(
         return False
     cur = conn.execute(
         "UPDATE claims SET status = 'confirmed', subject = ?, predicate = ?, "
-        "object_value = ?, confidence = ?, version = version + 1 "
+        "object_value = ?, confidence = ?, tuple_key = NULL, version = version + 1 "
         "WHERE id = ? AND version = ? AND status = 'candidate'",
         (subject, predicate, object_value, confidence, claim_id, version),
     )

@@ -79,3 +79,28 @@ def test_second_duplicate_archives_without_overwriting_reciprocal_link(
     assert refreshed_confirmed.supersedes_claim_id == first.id
     assert refreshed_second.status == "archived"
     assert refreshed_second.replaced_by_claim_id == confirmed.id
+
+
+def test_higher_score_never_retires_a_confirmed_rival_with_another_value(tmp_path: Path) -> None:
+    """T-1877 (review F5): true .79 vs false .99 with four citations and no supersession link."""
+    service = MemoryService(str(tmp_path / "validator.db"))
+    service.init_db()
+    true_claim = service.ingest(
+        text="the router firmware is 7.18.2",
+        citations=[CitationInput(source="validator-rival-true")],
+        idempotency_key="rival-true", subject="router", predicate="firmware", object_value="7.18.2",
+    )
+    transition_claim(service.store, true_claim.id, "confirmed", reason="fixture", event_type="validator")
+    service.store.set_confidence(true_claim.id, 0.79, details="fixture")
+    false_claim = service.ingest(
+        text="the router firmware is 9.99.9, as documented in the structured release notes of the router",
+        citations=[CitationInput(source=f"validator-rival-false-{n}") for n in range(4)],
+        idempotency_key="rival-false", subject="router", predicate="firmware", object_value="9.99.9",
+        confidence=0.99,
+    )
+
+    result = run(service.store, min_citations=0, min_score=0.0)
+
+    assert service.store.get_claim(true_claim.id, include_citations=False).status == "confirmed"
+    assert service.store.get_claim(false_claim.id, include_citations=False).status == "conflicted"
+    assert result["conflicted"] >= 1 and result["superseded"] == 0

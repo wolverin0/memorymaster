@@ -351,19 +351,10 @@ def run(
             (x for x in related if not claim_object or normalize_identity_part(x.object_value) != claim_object),
             None,
         )
-        # Without both objects there is no value comparison to lean on: only an
-        # explicit supersession link (already split out as `predecessor`) or a
-        # human can settle it, never the validation score.
-        relation_unknown = conflict is not None and not (
-            claim_object and normalize_identity_part(conflict.object_value)
-        )
-
-        if conflict is not None and (
-            conflict.pinned
-            or relation_unknown
-            or score <= (conflict.confidence + cfg.conflict_margin)
-            or claim.supersedes_claim_id not in {None, conflict.id}
-        ):
+        # T-1877 (review F5): a score is never evidence of truth. A rival with another value stays untouched and
+        # the newcomer is conflicted; only an explicit supersession link (the `predecessor` above) retires a
+        # rival, the same rule `curation_drain._verdict` applies.
+        if conflict is not None:
             if claim.status != "conflicted":
                 transition_claim(
                     store,
@@ -385,7 +376,7 @@ def run(
             continue
 
         if claim.status != "confirmed":
-            retirement = conflict or predecessor
+            retirement = predecessor
             try:
                 transition_claim(
                     store,

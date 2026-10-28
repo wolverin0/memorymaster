@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from memorymaster.core.models import (
     CitationInput,
     Claim,
+    tuple_key,
     validate_event_payload,
 )
 from memorymaster.core.security import (
@@ -231,8 +232,8 @@ class _WriteClaimsMixin:
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
                         replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
                         tenant_id, event_time, valid_from, valid_until, source_agent, visibility, holder,
-                        content_fingerprint
-                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+                        content_fingerprint, tuple_key
+                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         text,
@@ -254,6 +255,7 @@ class _WriteClaimsMixin:
                         visibility,
                         holder or None,
                         content_fingerprint(text),
+                        tuple_key(subject, predicate),
                     ),
                 )
             except sqlite3.IntegrityError:

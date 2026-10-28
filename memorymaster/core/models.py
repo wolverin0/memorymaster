@@ -63,6 +63,16 @@ def normalize_identity_part(value: str | None) -> str:
     return " ".join((value or "").split()).lower()
 
 
+def tuple_key(subject: str | None, predicate: str | None) -> str | None:
+    """The persisted canonical (subject, predicate) identity (``claims.tuple_key``, migration 31).
+
+    T-1877 (review F6): computed once, in Python, through :func:`normalize_identity_part`; the store
+    lookups compare this value instead of re-deriving a different canonical form in SQL.
+    """
+    s, p = normalize_identity_part(subject), normalize_identity_part(predicate)
+    return f"{s}{p}" if s and p else None
+
+
 def validate_event_type(event_type: str) -> str:
     if not isinstance(event_type, str):
         raise ValueError("event_type must be a string.")
