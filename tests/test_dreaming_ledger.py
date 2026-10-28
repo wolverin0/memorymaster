@@ -83,6 +83,43 @@ def test_enqueue_coalesces_contiguous_unprocessed_session_increments(tmp_path: P
     assert ledger.status()["queue"] == {"captured": 1}
 
 
+def test_stale_producer_cannot_drop_a_newer_producers_message(tmp_path: Path, monkeypatch) -> None:
+    """T-1877 (review F12): A reads the capture, B coalesces through 300, stale A must not write back through 200."""
+    from memorymaster.dreaming import ledger as ledger_module
+
+    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
+    ledger = DreamLedger(tmp_path / "dream.db")
+    first = _envelope(now)
+
+    def _increment(ids: tuple[str, ...], end: int, hash_: str) -> CaptureEnvelope:
+        return CaptureEnvelope(
+            provider=first.provider, session_hash=first.session_hash, scope=first.scope,
+            captured_at=now.isoformat(), last_activity_at=now.isoformat(),
+            messages=tuple(DreamMessage(i, "user", f"fact {i}", now.isoformat()) for i in ids),
+            cursor_start=first.cursor_end, cursor_end=end, content_hash=hash_,
+        )
+
+    first_id = ledger.enqueue(first)
+    producer_a = _increment(("m1",), 200, "a")
+    producer_b = _increment(("m1", "m2"), 300, "b")
+    real_loads, fired = ledger_module.json.loads, []
+
+    def interleaving_loads(*args, **kwargs):
+        result = real_loads(*args, **kwargs)
+        if not fired:  # A has just read the captured row; B gets in before A writes
+            fired.append(True)
+            DreamLedger(tmp_path / "dream.db").enqueue(producer_b)
+        return result
+
+    monkeypatch.setattr(ledger_module.json, "loads", interleaving_loads)
+    assert ledger.enqueue(producer_a) == first_id
+    monkeypatch.undo()
+
+    captured = ledger.get_capture(first_id)
+    assert [m["message_id"] for m in captured["messages"]] == ["m1", "m2"]
+    assert captured["cursor_end"] == 300
+
+
 def test_retention_never_discards_unprocessed_capture(tmp_path: Path) -> None:
     now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
     ledger = DreamLedger(tmp_path / "dream.db")

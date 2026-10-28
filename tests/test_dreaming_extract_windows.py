@@ -144,3 +144,21 @@ def test_migration_adds_the_cursor_column_and_leaves_history_untouched(tmp_path:
         assert 5 in {row[0] for row in conn.execute("SELECT version FROM dream_schema_versions")}
     row = DreamLedger(path).get_capture(capture_id)
     assert row["extracted_through"] is None and row["state"] == "extracted"
+
+
+def test_input_cap_below_the_unit_size_is_clamped_and_logged(monkeypatch, caplog) -> None:
+    """T-1877 (review N11): a 100-char cap cannot yield 100-char windows from 16,000-char units; say so."""
+    import logging
+
+    from memorymaster.dreaming.extraction_window import PIECE_CHARS, next_window
+
+    monkeypatch.setenv("MEMORYMASTER_DREAM_MAX_INPUT_CHARS", "100")
+    with caplog.at_level(logging.WARNING, logger="memorymaster.dreaming.worker"):
+        config = DreamConfig.from_env()
+    assert config.max_input_chars == PIECE_CHARS
+    assert "MEMORYMASTER_DREAM_MAX_INPUT_CHARS" in caplog.text
+    window, cursor = next_window([{"text": "y" * 20_000}], 0, config.max_input_chars)
+    assert cursor == 1 and len(window[0]["text"]) <= config.max_input_chars  # the effective cap holds
+
+    monkeypatch.setenv("MEMORYMASTER_DREAM_MAX_INPUT_CHARS", "40000")
+    assert DreamConfig.from_env().max_input_chars == 40_000  # a sane value is left alone

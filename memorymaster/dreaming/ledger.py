@@ -155,6 +155,10 @@ CREATE TABLE IF NOT EXISTS backfill_reservations (
 """
 
 
+_COALESCE_ATTEMPTS = 4
+_RACE_LOST = object()  # a concurrent producer changed the captured row between our read and our write
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -185,12 +189,26 @@ class DreamLedger:
     def _connect(self) -> sqlite3.Connection:
         return open_conn(self.db_path, busy_ms=15_000)
 
-    @staticmethod
+    @classmethod
     def _coalesce_captured(
-        conn: sqlite3.Connection, envelope: CaptureEnvelope, now: str,
+        cls, conn: sqlite3.Connection, envelope: CaptureEnvelope, now: str,
     ) -> int | None:
+        # T-1877 (review F12): the read below happens outside a write transaction, so the write is a
+        # compare-and-swap on the cursor/hash that was read; a producer that lost the race re-reads the
+        # row the winner wrote and merges into THAT instead of overwriting it. Bounded; after the last
+        # attempt the increment is simply stored as its own capture (nothing is dropped).
+        for _attempt in range(_COALESCE_ATTEMPTS):
+            outcome = cls._coalesce_once(conn, envelope, now)
+            if outcome is not _RACE_LOST:
+                return outcome
+        return None
+
+    @staticmethod
+    def _coalesce_once(
+        conn: sqlite3.Connection, envelope: CaptureEnvelope, now: str,
+    ) -> Any:
         latest = conn.execute(
-            """SELECT id, cursor_start, cursor_end, messages_json
+            """SELECT id, cursor_start, cursor_end, content_hash, messages_json
                FROM dream_captures
                WHERE provider=? AND session_hash=? AND scope=? AND state='captured'
                ORDER BY cursor_end DESC, id DESC LIMIT 1""",
@@ -219,13 +237,20 @@ class DreamLedger:
         updated = conn.execute(
             """UPDATE dream_captures
                SET last_activity_at=?, messages_json=?, cursor_end=?, content_hash=?,
-                   byte_count=?, turn_count=?, updated_at=? WHERE id=? AND state='captured'""",
+                   byte_count=?, turn_count=?, updated_at=?
+               WHERE id=? AND state='captured' AND cursor_end=? AND content_hash=?""",
             (
                 envelope.last_activity_at, merged_json, envelope.cursor_end, merged_hash,
                 len(merged_json.encode("utf-8")), len(merged), now, int(latest["id"]),
+                int(latest["cursor_end"]), latest["content_hash"],
             ),
         )
-        return int(latest["id"]) if updated.rowcount else None
+        if updated.rowcount:
+            return int(latest["id"])
+        # Either the worker took the capture (state moved on: caller stores a new row) or another producer
+        # extended it since the read (cursor/hash moved: re-read and merge again).
+        state = conn.execute("SELECT state FROM dream_captures WHERE id=?", (int(latest["id"]),)).fetchone()
+        return _RACE_LOST if state is not None and state["state"] == "captured" else None
 
     def enqueue(self, envelope: CaptureEnvelope, *, coalesce: bool = True) -> int:
         messages_json = json.dumps([message.to_dict() for message in envelope.messages], ensure_ascii=False)
