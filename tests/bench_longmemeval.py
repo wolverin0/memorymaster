@@ -38,7 +38,7 @@ ANTHROPIC_JUDGE_MODEL = "claude-sonnet-4-5"
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 GEMINI_GENERATE_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 OPENAI_JUDGE_MODEL = "gpt-4o"
-GEMINI_FALLBACK_MODEL = "gemini-2.5-flash"
+GEMINI_FALLBACK_MODEL = "gemini-flash-latest"
 CLAUDE_CLI_JUDGE_MODEL = "claude-haiku-4-5-20251001"
 OPENCODE_JUDGE_MODEL = "openai/gpt-5.4-mini"
 OPENCODE_JUDGE_EFFORT = "medium"
@@ -174,7 +174,7 @@ class JudgeClient:
         if self.models_used == {OPENAI_JUDGE_MODEL}:
             return "gpt-4o"
         if self.models_used == {GEMINI_FALLBACK_MODEL}:
-            return "gemini-2.5-flash"
+            return "gemini-flash-latest"
         if self.models_used == {ANTHROPIC_JUDGE_MODEL}:
             return "sonnet"
         if self.models_used == {CLAUDE_CLI_JUDGE_MODEL}:
@@ -467,7 +467,7 @@ def run_retrieval(
         "metrics": aggregate,
         "llm_rerank": {
             "enabled": use_llm_rerank,
-            "model": "gemini-2.5-flash" if use_llm_rerank else "none",
+            "model": "gemini-flash-latest" if use_llm_rerank else "none",
             "approx_calls": int(rerank_stats.get("attempts") or 0),
             "successes": int(rerank_stats.get("successes") or 0),
             "failures": int(rerank_stats.get("failures") or 0),

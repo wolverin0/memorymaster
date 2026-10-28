@@ -29,7 +29,7 @@ CURATOR_PROMPT = """You are a memory curator. Extract max 3 non-obvious learning
 Return JSON array: [{"text": "one-line", "claim_type": "fact|decision|constraint", "subject": "entity", "predicate": "aspect"}]
 Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs, paths, code. Empty array if nothing worth remembering."""
 
-GEMINI_MODEL = "gemini-2.5-flash-lite"
+GEMINI_MODEL = "gemini-flash-lite-latest"
 OLLAMA_MODEL = "gemma4:e4b"
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 

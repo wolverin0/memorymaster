@@ -684,6 +684,24 @@ class TestCallGoogleDispatch:
             "thinkingLevel": "minimal"
         }
 
+    def test_flash_latest_alias_sets_thinking_level_and_is_default(self, monkeypatch):
+        # WHY: -latest aliases carry no version digit; without this the 500-token
+        # output cap would be eaten by default dynamic thinking.
+        monkeypatch.delenv("MEMORYMASTER_LLM_MODEL", raising=False)
+        monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)
+        monkeypatch.setattr("memorymaster.core.key_rotator.get_rotator", lambda name: None)
+        monkeypatch.setenv("GEMINI_API_KEY", "g")
+        captured = {}
+        monkeypatch.setattr(
+            lp, "_http_post",
+            lambda url, payload, *a, **k: captured.update(url=url, payload=payload) or "x",
+        )
+        lp._call_google("p", "t")
+        assert "gemini-flash-lite-latest:generateContent" in captured["url"]
+        assert captured["payload"]["generationConfig"]["thinkingConfig"] == {
+            "thinkingLevel": "minimal"
+        }
+
     def test_gemini25_sets_thinking_budget_zero(self, monkeypatch):
         monkeypatch.setenv("MEMORYMASTER_LLM_MODEL", "gemini-2.5-flash-lite")
         monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)

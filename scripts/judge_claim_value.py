@@ -54,7 +54,7 @@ Judge only the text given. When two verdicts fit, pick the one that is worse for
 
 # Flash id the repo already uses (govern.llm_steward, recall.llm_rerank). The 3.5 ids used by dreaming
 # timed out / returned 503 for this batch workload on 2026-10-13, so they are not the default.
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-flash-latest"
 MAX_TEXT_CHARS = 4500  # covers the longest claims seen; truncation would read as a fragment (junk)
 MAX_ATTEMPTS_PER_CLAIM = 2
 MIN_N_RANKED = 10
