@@ -38,8 +38,9 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
   only the undecided candidates. Decisions that relied on withdrawn peer work are still withdrawn.
 - Dreaming (N11): `MEMORYMASTER_DREAM_MAX_INPUT_CHARS` below the 16,000-character extraction unit is
   clamped to it with a warning.
-- Curation drain (N6): conflicted claims are paged by id (up to 20 pages of `limit` per run) and
-  `limit` bounds the resolutions applied, so held conflicts no longer starve resolvable ones.
+- Curation drain (N6): each run looks at `limit` conflicted claims (the old budget), taken by id after a
+  cursor persisted in the `miner_state` table (`curation_drain.conflicts_after_id`, moved only by `--apply`
+  runs) and wrapping at the end, so held conflicts no longer starve resolvable ones.
 
 ### Integrity fixes from the external review (T-1865, F13-F15)
 

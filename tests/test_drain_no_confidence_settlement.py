@@ -113,31 +113,54 @@ def test_dry_run_reports_held_for_review_without_mutating(svc):
     assert (_status(svc, old), _status(svc, new)) == ("confirmed", "conflicted")
 
 
+def _held_pair(svc, n):
+    rival = svc.ingest(
+        text=f"Service {n} runs on SQLite.", citations=[CitationInput(source="session://t", locator="x")],
+        subject=f"service-{n}", predicate="engine", object_value="SQLite", scope="project:x",
+        confidence=0.5, source_agent="claude-session",
+    ).id
+    transition_claim(svc.store, rival, "confirmed", reason="fixture")
+    other = svc.ingest(
+        text=f"Service {n} runs on PostgreSQL.", citations=[CitationInput(source="session://t", locator="y")],
+        subject=f"service-{n}", predicate="engine", object_value="PostgreSQL", scope="project:x",
+        confidence=0.95, source_agent="claude-session",
+    ).id
+    transition_claim(svc.store, other, "conflicted", reason="fixture")
+
+
 def test_held_conflicts_do_not_starve_a_resolvable_one_behind_them(svc):
     """T-1877 (review N6): the bounded fetch used to be spent on the same top-ranked held entries every run."""
-    def held_pair(n):
-        rival = svc.ingest(
-            text=f"Service {n} runs on SQLite.", citations=[CitationInput(source="session://t", locator="x")],
-            subject=f"service-{n}", predicate="engine", object_value="SQLite", scope="project:x",
-            confidence=0.5, source_agent="claude-session",
-        ).id
-        transition_claim(svc.store, rival, "confirmed", reason="fixture")
-        other = svc.ingest(
-            text=f"Service {n} runs on PostgreSQL.", citations=[CitationInput(source="session://t", locator="y")],
-            subject=f"service-{n}", predicate="engine", object_value="PostgreSQL", scope="project:x",
-            confidence=0.95, source_agent="claude-session",
-        ).id
-        transition_claim(svc.store, other, "conflicted", reason="fixture")
-
     for n in range(4):
-        held_pair(n)
+        _held_pair(svc, n)
     old = _claim(svc, "The datastore uses SQLite.", "SQLite", 0.5)
     transition_claim(svc.store, old, "confirmed", reason="fixture")
     new = _claim(svc, "Correction: the datastore uses PostgreSQL.", "PostgreSQL", 0.1)
     _link(svc, new, old)
     transition_claim(svc.store, new, "conflicted", reason="fixture")
 
-    result = curation_drain.drain_conflicts(svc, limit=2, apply=True)
+    # Each run looks at `limit` claims and resumes where the previous run stopped: 5 conflicts, 3 runs.
+    results = [curation_drain.drain_conflicts(svc, limit=2, apply=True) for _ in range(3)]
 
     assert _status(svc, new) == "confirmed" and _status(svc, old) == "superseded"
-    assert result["resolved_won"] == 1 and result["held_for_review"] == 4
+    assert sum(r["resolved_won"] for r in results) == 1 and sum(r["held_for_review"] for r in results) >= 4  # the third window wraps onto a held one
+    assert all(r["scanned"] <= 2 for r in results)
+
+
+def test_consecutive_runs_cover_different_pages_and_wrap(svc):
+    """T-1877 (N6): the persisted cursor moves the window; per-run work stays at `limit`; it wraps at the end."""
+    for n in range(5):
+        _held_pair(svc, n)  # different values, no link: held for review every time
+    seen = []
+    cursors = []
+    for _ in range(4):
+        before = curation_drain._cursor_get(svc.store)
+        result = curation_drain.drain_conflicts(svc, limit=2, apply=True)
+        seen.append(result["scanned"])
+        cursors.append((before, curation_drain._cursor_get(svc.store)))
+    assert seen == [2, 2, 2, 2]  # never more than the old budget, wrapping once the end is reached
+    assert cursors[0][0] == 0 and cursors[0][1] > 0
+    assert cursors[1][0] == cursors[0][1] and cursors[1][1] > cursors[1][0]  # run 2 starts where run 1 stopped
+    assert cursors[2][1] < cursors[2][0] or cursors[3][1] < cursors[3][0]  # a wrap happened
+    dry = curation_drain._cursor_get(svc.store)
+    curation_drain.drain_conflicts(svc, limit=2, apply=False)
+    assert curation_drain._cursor_get(svc.store) == dry  # a dry run does not move the cursor

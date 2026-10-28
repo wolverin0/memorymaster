@@ -102,27 +102,54 @@ def _find_rival(service: Any, claim: Any) -> Any | None:
     return None
 
 
-_SCAN_PAGES = 20  # pages of ``limit`` conflicted claims one run may scan
+_CURSOR_KEY = "curation_drain.conflicts_after_id"
 
 
-def _conflicted_claims(store: Any, limit: int):
-    """Every conflicted claim, in id order, a keyset page at a time (T-1877, review N6).
+def _cursor_get(store: Any) -> int:
+    """Where the previous run stopped (``miner_state`` KV row); 0 on any fault, i.e. start from the top."""
+    try:
+        with store.connect() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS miner_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)")
+            row = conn.execute("SELECT value FROM miner_state WHERE key = ?", (_CURSOR_KEY,)).fetchone()
+        return max(0, int(row[0])) if row and row[0] is not None else 0
+    except Exception as exc:  # noqa: BLE001 - a lost cursor only restarts the rotation
+        logger.warning("curation drain cursor unreadable, starting from the top: %s", type(exc).__name__)
+        return 0
 
-    One confidence-ordered window of ``limit`` rows put the same held entries first on every run and the
-    resolvable ones behind them were never reached. ``limit`` now bounds the resolutions applied, not the
-    claims looked at; the scan itself is bounded by ``_SCAN_PAGES`` pages.
+
+def _cursor_set(store: Any, after_id: int) -> None:
+    try:
+        with store.connect() as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS miner_state (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)")
+            conn.execute(
+                "INSERT INTO miner_state (key, value, updated_at) VALUES (?, ?, datetime('now')) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                (_CURSOR_KEY, str(int(after_id))),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001 - the drain still ran; the next run just repeats this window
+        logger.warning("curation drain cursor not saved: %s", type(exc).__name__)
+
+
+def _conflicted_window(store: Any, limit: int, after_id: int) -> tuple[list[Any], int]:
+    """The next ``limit`` conflicted claims after ``after_id`` (wrapping to the start), and the new cursor.
+
+    T-1877 (review N6): a confidence-ordered window of ``limit`` rows put the same held entries first on
+    every run and the resolvable ones behind them were never reached. The window rotates through the
+    conflicted set by id and the position is persisted, so per-run work stays at ``limit`` claims (the old
+    budget) while every conflict is reached within ceil(total / limit) runs.
     """
     page = getattr(store, "find_by_status_after", None)
     if page is None:  # a store without keyset paging keeps the single window
-        yield from store.find_by_status("conflicted", limit=limit, include_citations=True)
-        return
-    after_id = 0
-    for _ in range(_SCAN_PAGES):
-        batch = page("conflicted", after_id=after_id, limit=max(1, limit), include_citations=True)
-        if not batch:
-            return
-        yield from batch
-        after_id = int(batch[-1].id)
+        return list(store.find_by_status("conflicted", limit=limit, include_citations=True)), 0
+    size = max(1, limit)
+    batch = page("conflicted", after_id=after_id, limit=size, include_citations=True)
+    if len(batch) >= size:
+        return batch, int(batch[-1].id)
+    # Reached the end of the set: wrap and finish the window from the start, without revisiting claims.
+    wrapped = [c for c in page("conflicted", after_id=0, limit=size - len(batch), include_citations=True)
+               if int(c.id) <= after_id]
+    return [*batch, *wrapped], (int(wrapped[-1].id) if wrapped else 0)
 
 
 def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> dict[str, Any]:
@@ -142,7 +169,10 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
         "skipped_race": 0,
         "dry_run": not apply,
     }
-    for claim in _conflicted_claims(store, limit):
+    window, next_cursor = _conflicted_window(store, limit, _cursor_get(store))
+    if apply:
+        _cursor_set(store, next_cursor)
+    for claim in window:
         if summary["resolved_lost"] + summary["resolved_won"] >= limit:
             break
         summary["scanned"] += 1
