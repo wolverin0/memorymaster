@@ -10,7 +10,18 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from memorymaster.recall.context_hook import classify_observation, observe, recall
+
+
+@pytest.fixture(autouse=True)
+def _no_pending_supersessions(monkeypatch):
+    """These tests drive recall with a MagicMock service; truth eligibility fails closed on an unreadable scan
+    (T-1877, F4), so give it a readable, empty one. Tests that care patch it again."""
+    from memorymaster.recall import retrieval
+
+    monkeypatch.setattr(retrieval, "pending_supersession_ids", lambda _svc, **_kw: frozenset())
 
 
 def test_governed_prompt_rows_keep_exact_then_fill_without_recording_discarded(monkeypatch):
@@ -375,6 +386,8 @@ def test_whole_token_coverage_never_matches_a_substring():
     assert hook_lexical.matched_terms(keys, "the ports and deploys of redis") == keys
     assert not hook_lexical.covers(frozenset({"redis"}), 3, frozenset())  # one generic term of three
     assert hook_lexical.covers(frozenset({"redis"}), 3, frozenset({"redis"}))  # an exact identifier
+    assert hook_lexical.exact_identifier_hits({"rate"}, "The release was rated poorly") == frozenset()
+    assert hook_lexical.exact_identifier_hits({"rate"}, "rate limit is 30") == {"rate"}
     assert hook_lexical.covers(frozenset(), 0, frozenset())  # nothing to match: nothing gated
 
 
@@ -382,25 +395,25 @@ def test_truth_eligibility_drops_a_predecessor_whose_correction_is_in_the_pool(m
     """T-1862 (review F4): the correction stays, the claim it replaces does not precede it."""
     from memorymaster.recall import hook_lexical, retrieval
 
-    monkeypatch.setattr(retrieval, "pending_supersession_ids", lambda _svc: frozenset({1, 3}))
+    monkeypatch.setattr(retrieval, "pending_supersession_ids", lambda _svc, **_kw: frozenset({1, 3}))
     old = SimpleNamespace(id=1, supersedes_claim_id=None, replaced_by_claim_id=None)
     new = SimpleNamespace(id=2, supersedes_claim_id=1, replaced_by_claim_id=None)
     pending_only = SimpleNamespace(id=3, supersedes_claim_id=None, replaced_by_claim_id=None)
     other = SimpleNamespace(id=4, supersedes_claim_id=None, replaced_by_claim_id=None)
     rows = [{"claim": c} for c in (old, pending_only, new, other)]
     ids = [r["claim"].id for r in hook_lexical.apply_truth_eligibility(rows, MagicMock())]
-    assert ids == [2, 4, 3]  # old dropped (correction present); pending-only sinks below undisputed rows
+    assert ids == [2, 4]  # old dropped (correction present); pending-only dropped too (T-1877, F4)
 
 
-def test_truth_eligibility_fails_open(monkeypatch):
+def test_truth_eligibility_fails_closed(monkeypatch):
     from memorymaster.recall import hook_lexical, retrieval
 
-    def boom(_svc):
-        raise RuntimeError("scan failed")
+    def boom(_svc, **_kw):
+        raise retrieval.PendingSupersessionScanError("scan failed")
 
     monkeypatch.setattr(retrieval, "pending_supersession_ids", boom)
     rows = [{"claim": SimpleNamespace(id=1, supersedes_claim_id=None, replaced_by_claim_id=None)}]
-    assert hook_lexical.apply_truth_eligibility(rows, MagicMock()) == rows
+    assert hook_lexical.apply_truth_eligibility(rows, MagicMock()) == []
 
 
 def test_transcript_fallback_block_is_counted_in_the_callers_budget(monkeypatch):

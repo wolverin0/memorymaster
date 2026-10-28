@@ -83,6 +83,22 @@ def test_late_discriminating_term_is_not_crowded_out_by_early_generic_ones(world
     assert ids and ids[0] == answer
 
 
+def test_every_selected_term_is_searched_not_only_the_first_six(world, monkeypatch) -> None:
+    """T-1877 (review F1): 7 identifiers selected, the answer holds only the 7th; distractors hold 1-6."""
+    monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS", "10")
+    terms = [f"zatoken{n}" for n in range(1, 8)]
+    for i in range(5):
+        world.add(f"distractor {i} mentions {' '.join(terms[:6])}")
+    for i in range(4):  # corpus frequency of the 7th term equals the others', so no term outranks it by rarity
+        world.service.ingest(
+            f"unrelated project note {i} about {terms[6]}", [CitationInput(source=f"test://other-{i}", locator="f")],
+            scope="project:elsewhere", source_agent=f"other-{i}",
+        )
+    answer = world.add(f"the real answer lives behind {terms[6]} only")
+    ids = world.ask("what is " + " ".join(terms))
+    assert answer in ids
+
+
 def test_backticked_identifier_is_searched(world) -> None:
     world.add("The old linter was obsolete so we stopped using it")
     answer = world.add("fstrim was removed from the weekly cron because it stalled the NAS volume")
@@ -139,9 +155,24 @@ def test_dense_path_also_demotes_the_superseded_claim(world, monkeypatch) -> Non
     assert new in ids and (old not in ids or ids.index(new) < ids.index(old))
 
 
-def test_a_pending_predecessor_sinks_below_undisputed_rows_when_its_correction_is_not_retrieved(world) -> None:
+def test_a_pending_predecessor_without_its_correction_is_not_injected(world) -> None:
+    """T-1877 (review F4): the correction is not retrieved, the disputed predecessor must not be injected alone."""
     old = world.add("fstrim runs weekly on the NAS volume via cron", confidence=0.97)
     world.add("Trim schedule moved to monthly", supersedes_claim_id=old)  # shares no query term: not in the pool
-    other = world.add("fstrim also runs on the NAS volume via cron for the backup disk", confidence=0.5)
     ids = world.ask("fstrim NAS volume cron")
-    assert other in ids and old in ids and ids.index(other) < ids.index(old)
+    assert old not in ids
+
+
+# --- F8: an exact identifier is not a stemmed word --------------------------------------------
+
+
+def test_identifier_does_not_match_its_stemmed_variants(world) -> None:
+    """T-1877 (review F8): `rate` must not pass the identifier gate through "rated" (both stem to "rat")."""
+    noise = world.add("The release was rated poorly", confidence=1.0)
+    ids = world.ask("what is the `rate` limit")
+    assert noise not in ids
+
+
+def test_identifier_still_keeps_its_exact_row(world) -> None:
+    hit = world.add("rate limiter is capped at 30 requests", confidence=0.5)
+    assert hit in world.ask("what is the `rate` limit")
