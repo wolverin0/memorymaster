@@ -52,8 +52,9 @@ Judge only the text given. When two verdicts fit, pick the one that is worse for
 (junk > wrong > obvious > useful). Answer with a JSON array, one object per item:
 {{"n": <item number>, "verdict": "useful|obvious|wrong|junk", "reason": "<one short line>"}}"""
 
-# Flash id the repo already uses (govern.llm_steward, recall.llm_rerank). The 3.5 ids used by dreaming
-# timed out / returned 503 for this batch workload on 2026-10-13, so they are not the default.
+# Flash alias the repo already uses (govern.llm_steward, recall.llm_rerank); it tracks the current
+# Flash model. Pinned ids (then gemini-3.5-flash) timed out / returned 503 for this batch workload
+# on 2026-10-13, so a pinned id is not the default.
 DEFAULT_MODEL = "gemini-flash-latest"
 MAX_TEXT_CHARS = 4500  # covers the longest claims seen; truncation would read as a fragment (junk)
 MAX_ATTEMPTS_PER_CLAIM = 2
