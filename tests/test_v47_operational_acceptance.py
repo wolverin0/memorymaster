@@ -148,3 +148,21 @@ def test_retrieval_condition_fails_when_target_missing(tmp_path: Path) -> None:
 
     assert failed.verdict is module.Verdict.FAIL
     assert "hits=0/1" in failed.detail
+
+
+def test_session_context_check_matches_post_d3_hook_output() -> None:
+    module = _module()
+    ok = (
+        "[MemoryMaster session context \u2014 scope: project:x]\n"
+        "WARNING: 2 candidate claim(s) older than 24h awaiting steward review\n"
+        "\nRecent claims in this scope:\n  - #1 [fact/confirmed] A whole claim.\n"
+        "Use query_memory for more."
+    )
+    assert module._session_context_ok(ok)
+    # the removed profile block must no longer be required, and must not leak back
+    assert not module._session_context_ok(ok + "\nMemoryMaster compiled user profile")
+    assert not module._session_context_ok(ok + "\nLast 24h activity: 3 events")
+    assert not module._session_context_ok(ok.replace("A whole claim.", "A cut claim\u2026"))
+    assert not module._session_context_ok(ok.replace("A whole claim.", "A cut claim..."))
+    assert not module._session_context_ok(ok + "x" * 1500)
+    assert not module._session_context_ok("no header")
