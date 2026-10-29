@@ -128,7 +128,7 @@ YOU SEND A MESSAGE
 | **Recall hook** | Injects relevant claims into every prompt | Every message you send |
 | **Classify hook** | Regex signal matcher (Spanish + English) for DECISION/BUG/GOTCHA/CONSTRAINT/ARCHITECTURE/ENVIRONMENT/REFERENCE; injects routing hints. Zero LLM calls, ~5 ms runtime. | Every message you send |
 | **Validate-wiki hook** | PostToolUse warning on `obsidian-vault/wiki/**/*.md` if frontmatter (`title`, `description`, `type`, `scope`, `tags`, `date`) is incomplete or the article has no `[[wikilinks]]` and body > 300 chars. Returns warnings via `hookSpecificOutput.additionalContext` so the agent fixes them in-place. | On Edit/Write of wiki files |
-| **SessionStart hook** | Queries the DB for recent claims, last cycle summary (ingest/validate/decay/supersession counts), pending candidates, and most-recently-updated wiki articles. Scope auto-derived from cwd. | Session startup / resume |
+| **SessionStart hook** | Queries the DB for recent confirmed claims (shown whole or dropped, never cut; total capped at 1.5k chars) and the pending-candidate warning. Scope auto-derived from cwd. | Session startup / resume |
 | **Auto-ingest hook** | LLM extracts learnings from transcript | Every time Claude stops |
 | **PreCompact hook** | Forces save to MemoryMaster before Claude Code compacts context (permanent context loss prevention) | Before context compaction |
 | **MCP server** (global) | Generated query/ingest/steward tool set | Always available |

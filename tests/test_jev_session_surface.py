@@ -71,8 +71,6 @@ def _hook(tmp_path, monkeypatch, db):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     monkeypatch.setattr(module, "DB_PATH", db)
-    monkeypatch.setattr(module, "PROFILE_PATH", tmp_path / "no-profile.md")
-    monkeypatch.setattr(module, "WIKI_ROOT", tmp_path / "no-wiki")
     monkeypatch.setattr(module, "_log", lambda *_a, **_k: None)
     return module
 

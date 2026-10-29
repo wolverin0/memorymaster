@@ -53,9 +53,9 @@ def test_session_start_template_sanitizes_log_and_context(tmp_path, monkeypatch)
     sqlite3.connect(db).close()
     main_globals.update(DB_PATH=db, _derive_scope=lambda: "project:test",
                         _query_recent_claims=lambda *a: [{"text": "claim\udc8f"}],
-                        _jev_session_active=lambda: False, _query_last_cycle_summary=lambda *a: {},
-                        _query_candidate_claims=lambda *a: [], _load_recent_wiki_articles=lambda *a: [],
-                        _load_compiled_profile=lambda: "", _jev_session_claims=lambda *a: a[2],
+                        _jev_session_active=lambda: False,
+                        _query_candidate_claims=lambda *a: [],
+                        _jev_session_claims=lambda *a: a[2],
                         _format_context=lambda *a: a[1][0]["text"])
     monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
     output = io.StringIO()

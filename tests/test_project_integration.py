@@ -59,7 +59,6 @@ def test_m2_three_repo_probe(project_config, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(project_runtime, "load_project_configs", lambda: configs)
     start = _hook("memorymaster-session-start.py")
     end = _hook("memorymaster-session-end.py")
-    monkeypatch.setattr(start, "_load_compiled_profile", lambda: "")
     monkeypatch.setattr(start, "_log", lambda *args, **kwargs: None)
     # The enabled branch has no independent claim/wiki SQL or recall/model fallback.
     monkeypatch.setattr(start, "_query_recent_claims", lambda *args: pytest.fail("legacy SQL used"))
