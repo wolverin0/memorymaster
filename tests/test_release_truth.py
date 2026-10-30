@@ -97,6 +97,24 @@ def test_release_truth_test_inventory_is_platform_independent(tmp_path: Path) ->
     assert _source_test_function_count(tmp_path) == 3
 
 
+def test_adding_a_test_does_not_change_committed_release_truth(monkeypatch) -> None:
+    """Parallel PRs that each add tests must not conflict on the generated files (T-1889).
+
+    Until 2026-10-30 the committed truth carried the source test-function count, so every PR
+    that added a test rewrote the same line of both files and every second PR conflicted.
+    The public surfaces (MCP tools, CLI commands, entrypoints, profiles) stay committed and
+    gated; the volatile count is computed when the script runs.
+    """
+    from scripts import generate_release_truth as truth
+
+    monkeypatch.setattr(truth, "_source_test_function_count", lambda *_a, **_k: 1)
+    before = truth._release_truth()
+    monkeypatch.setattr(truth, "_source_test_function_count", lambda *_a, **_k: 2)
+    after = truth._release_truth()
+    assert before == after
+    assert truth._markdown(before) == truth._markdown(after)
+
+
 def test_release_truth_console_entrypoints_come_from_source_checkout() -> None:
     entrypoints = _source_console_entrypoints()
     assert "memorymaster-workflow-hook" in entrypoints

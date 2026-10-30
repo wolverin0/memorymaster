@@ -90,7 +90,6 @@ def _release_truth() -> dict[str, Any]:
             "cli_commands": len(_command_names(build_parser())),
             "ops_cli_commands": len(_command_names(build_ops_parser())),
             "console_entrypoints": len(entrypoints),
-            "pytest_test_functions": _source_test_function_count(),
         },
         "mcp_tools": sorted(tool.name for tool in mcp_server.mcp._tool_manager.list_tools()),
         "cli_commands": _command_names(build_parser()),
@@ -122,7 +121,6 @@ def _markdown(data: dict[str, Any]) -> str:
         f"- Main CLI commands: **{counts['cli_commands']}**",
         f"- Operations CLI commands: **{counts['ops_cli_commands']}**",
         f"- Console entrypoints: **{counts['console_entrypoints']}**",
-        f"- Pytest source test functions: **{counts['pytest_test_functions']}**",
         "",
         "## MCP tools",
         "",
@@ -160,6 +158,9 @@ def main() -> int:
     if drifted:
         print("Generated release truth is stale: " + ", ".join(drifted), file=sys.stderr)
         return 1
+    # Not committed: nearly every PR changes it, so a committed count made parallel PRs conflict
+    # on these files (T-1889). It is reported from the checkout at generate/check time instead.
+    print(f"Pytest source test functions: {_source_test_function_count()}")
     print("Release truth verified." if args.check else "Release truth generated.")
     return 0
 

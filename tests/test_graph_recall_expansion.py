@@ -9,7 +9,6 @@ current recall on no seeds / no valid supports / error / timeout.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 
@@ -41,10 +40,13 @@ def _hermetic_graph_env(monkeypatch, tmp_path_factory):
         "MEMORYMASTER_LLM_RERANK",
     ):
         monkeypatch.delenv(name, raising=False)
-    if os.environ.get("MEMORYMASTER_SKIP_PERF"):
-        # Shared CI runners: a 250 ms expansion fell back to "timeout" before its stats were
-        # measured (Windows 2026-09-24). Deadline tests pass their own ExpansionCaps.
-        monkeypatch.setenv("MEMORYMASTER_RECALL_GRAPH_EXPAND_DEADLINE_MS", "900")
+    # Only deadline tests may run out the expansion deadline: a loaded machine fell back to
+    # "timeout" before the stats were measured even at the 900 ms cap (Windows CI 2026-09-24,
+    # a local -n 8 run 2026-10-30, T-1889). The expansion clock is frozen here; every deadline
+    # test installs its own clock.
+    from memorymaster.recall import graph_expansion
+
+    monkeypatch.setattr(graph_expansion, "_clock", lambda: 0.0)
     monkeypatch.setenv("MEMORYMASTER_EMBEDDING_PROVIDER", "hash")
     monkeypatch.setenv(
         "MEMORYMASTER_DECISIONS_DB",
@@ -264,8 +266,6 @@ def test_retired_or_inactive_candidate_is_never_expanded(tmp_path, monkeypatch, 
 
 @pytest.mark.parametrize("status", ["archived", "superseded", "stale"])
 def test_retired_support_invalidates_the_path(tmp_path, monkeypatch, status):
-    from memorymaster.recall import graph_expansion
-
     g, w = _qdrant_world(tmp_path)
     # Re-point the only relation support to a retired claim.
     retired = g.claim("Qdrant was on the Atlas NAS until the migration", status=status)
@@ -273,9 +273,6 @@ def test_retired_support_invalidates_the_path(tmp_path, monkeypatch, status):
     g.relation(w["qdrant"], w["atlas"], "located_in", retired.id)
     g.sql("DELETE FROM claim_entity_links WHERE claim_id = ?", (w["support"].id,))
     monkeypatch.setenv("MEMORYMASTER_RECALL_GRAPH_MODE", "vector_first")
-    # Not a deadline test: Windows CI (2026-09-24) twice ran out the expansion deadline before
-    # the rejections were measured, even at the 900 ms cap. The clock is frozen here.
-    monkeypatch.setattr(graph_expansion, "_clock", lambda: 0.0)
     rows = g.rows("qdrant recall vectors", include_stale=True)
     assert w["target"].id not in _ids(rows)
     assert all(row.get("source") != "graph_expansion" for row in rows)
