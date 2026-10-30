@@ -71,7 +71,7 @@ format.
   denominators.
 - **Hook isolation.** The `claude -p` calls ran with `--setting-sources project`
   from an empty scratch directory, so the operator's installed hooks did not run.
-  The recall hook's start count did not change across the 160 calls. A first pass
+  The recall hook's start count did not change across the rerun. A first pass
   without that flag let the UserPromptSubmit recall hook fire on every
   reader/judge call. That hook put live claims into the reader's context for free,
   so the reader read less (88 bodies, against 118 here). It also wrote hook state.
