@@ -17,7 +17,8 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 - Decay aged confirmed claims from `updated_at`, which every confidence write moves. Deterministic and the
   validator run before decay, so a real value change from either (no new evidence) restarted the decay clock.
   Decay now ages from the later of two new columns: `last_evidence_at` (set at ingest and on every
-  confirmation) and `last_decayed_at` (set by a decay step only). `find_for_decay` orders by the same clock.
+  confirmation) and `last_decayed_at` (set by a decay step, and on unpin so decay resumes from there instead of
+  charging the pinned period). `find_for_decay` orders by the same clock.
 - Migration 32 (SQLite) adds both nullable columns and fills only NULL cells: `last_evidence_at` = latest of
   `created_at`, newest citation, and (confirmed claims) `last_validated_at`; `last_decayed_at` = `updated_at`
   for confirmed claims, so the first run after the upgrade charges exactly what it would have before (nothing
