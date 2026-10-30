@@ -282,7 +282,22 @@ def check_graph_observations(config: GateConfig) -> CheckResult:
     return CheckResult("condition_2_graph_observations", Verdict.PASS if ok else Verdict.FAIL, detail)
 
 
-def _profile_marker_emitted(hook: Path, db: Path) -> bool:
+SESSION_CONTEXT_CAP = 1500  # mirrors MAX_CONTEXT_CHARS in the SessionStart hook (T-1944)
+
+
+def _session_context_ok(context: str) -> bool:
+    """SessionStart (T-1944/D3) emits scope header, whole claims under the cap, no activity/profile blocks."""
+    if not context.startswith("[MemoryMaster session context"):
+        return False
+    if len(context) > SESSION_CONTEXT_CAP:
+        return False
+    if any(gone in context for gone in ("Last 24h activity", "compiled user profile", "wiki articles")):
+        return False
+    claim_lines = [line for line in context.splitlines() if line.lstrip().startswith("- #")]
+    return not any(line.rstrip().endswith(("...", "…")) for line in claim_lines)
+
+
+def _session_hook_ok(hook: Path, db: Path) -> bool:
     if not hook.is_file():
         return False
     env = dict(os.environ)
@@ -303,7 +318,7 @@ def _profile_marker_emitted(hook: Path, db: Path) -> bool:
         context = payload.get("hookSpecificOutput", {}).get("additionalContext", "")
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
         return False
-    return run.returncode == 0 and "MemoryMaster compiled user profile" in str(context)
+    return run.returncode == 0 and _session_context_ok(str(context))
 
 
 def check_compiled_profile(config: GateConfig) -> CheckResult:
@@ -327,14 +342,14 @@ def check_compiled_profile(config: GateConfig) -> CheckResult:
                     OR f.independent_sessions<>COALESCE(s.sessions,0)
                 )
             """).fetchone()[0])
-        marker = _profile_marker_emitted(config.session_hook, config.db)
+        marker = _session_hook_ok(config.session_hook, config.db)
     except (OSError, sqlite3.Error) as exc:
         return CheckResult("condition_3_compiled_profile", Verdict.FAIL, f"probe_error={type(exc).__name__}")
     count, min_sessions, min_supports = map(lambda value: int(value or 0), facts)
     ok = active_run == 1 and count > 0 and min_sessions >= 2 and min_supports >= 2 and mismatch == 0 and marker
     detail = (
         f"active_run={active_run} active_facts={count} min_sessions={min_sessions} "
-        f"min_supports={min_supports} support_mismatches={mismatch} session_marker={str(marker).lower()}"
+        f"min_supports={min_supports} support_mismatches={mismatch} session_hook={str(marker).lower()}"
     )
     return CheckResult("condition_3_compiled_profile", Verdict.PASS if ok else Verdict.FAIL, detail)
 
