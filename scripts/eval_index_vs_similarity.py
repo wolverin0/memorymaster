@@ -9,10 +9,10 @@ authorized dense candidate pool:
   ``--index-k`` pool claims; a reader model sees only the prompt and the index and picks
   the bodies it would read. Its cost is the index plus every body it asked for.
 
-Relevance comes from two judges of different model families (Gemini through OpenCode and
-Claude through ``claude -p``). Each judge sees the prompt and every pool body, shuffled and
-labelled C1..Cn: it never learns which strategy surfaced a claim. Both strategies are
-scored against the same labels.
+Relevance comes from two judges of different model families (Gemini 4 Argon through the
+Antigravity CLI and Claude through ``claude -p``). Each judge sees the prompt and every pool
+body, shuffled and labelled C1..Cn: it never learns which strategy surfaced a claim. Both
+strategies are scored against the same labels.
 
 Safety contract:
   * The claims DB is only the snapshot passed with ``--snapshot`` (make it with the sqlite3
@@ -40,7 +40,6 @@ import json
 import os
 import random
 import re
-import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -61,7 +60,7 @@ INDEX_HEADER = "[Memory index; read a claim body by id only when needed]"
 POOL_K = 12  # dense_recall.FETCH_K: everything the service returns above threshold
 MAX_READS = 3
 LABELS = ("R", "I", "U")
-GEMINI_JUDGE = "google/gemini-3.5-flash"
+GEMINI_JUDGE = "gemini-4-argon-medium"
 CLAUDE_JUDGE = "sonnet"
 CLAUDE_READER = "haiku"
 
@@ -213,30 +212,11 @@ def pool_for(prompt: dict, svc) -> dict:
 # ------------------------------------------------------------------------- models
 
 
-def call_opencode(model: str, prompt: str, work_dir: Path, timeout: int = 240) -> str:
-    """One tool-less OpenCode v2 call (``--standalone``); the session is deleted afterwards."""
-    from memorymaster.dreaming.providers import _default_command_runner, _opencode_environment, opencode_response_text
+def call_agy(model: str, prompt: str, work_dir: Path, timeout: int = 240) -> str:
+    """One Gemini call through the repo's headless Antigravity client (OAuth, isolated batch profile)."""
+    from memorymaster.core.antigravity_client import AntigravityClient
 
-    exe = shutil.which("opencode.cmd") or shutil.which("opencode")
-    if not exe:
-        raise RuntimeError("opencode CLI not on PATH")
-    work_dir.mkdir(parents=True, exist_ok=True)
-    provider = model.split("/", 1)[0]
-    env = _opencode_environment(provider)
-    # OpenCode reaches Google only with the API key, which oauth mode strips ("Model unavailable").
-    if provider == "google" and os.environ.get("GEMINI_API_KEY"):
-        env["GEMINI_API_KEY"] = os.environ["GEMINI_API_KEY"]
-    done = _default_command_runner([exe, "run", "--standalone", "-m", model, "--format", "json"], prompt, timeout,
-                                   work_dir, env)
-    text, _, _, session = opencode_response_text(done.stdout)
-    if session:
-        try:
-            _default_command_runner([exe, "session", "delete", session], "", 60, work_dir, env)
-        except Exception:  # noqa: BLE001 - cleanup is best effort
-            pass
-    if done.returncode != 0:
-        raise RuntimeError(f"opencode {model} exited {done.returncode}")
-    return text
+    return AntigravityClient(model=model, timeout=timeout, work_dir=work_dir).complete(prompt).text
 
 
 def call_claude(model: str, prompt: str, work_dir: Path, timeout: int = 240) -> str:
@@ -476,7 +456,8 @@ def cmd_read(args) -> None:
 
 def cmd_judge(args) -> None:
     out = Path(args.out_dir)
-    judges = {"judge_gemini": (call_opencode, GEMINI_JUDGE), "judge_claude": (call_claude, CLAUDE_JUDGE)}
+    judges = {"judge_gemini": (call_agy, GEMINI_JUDGE), "judge_claude": (call_claude, CLAUDE_JUDGE)}
+    judges = {name: judge for name, judge in judges.items() if args.judge in ("both", name.split("_")[1])}
 
     for name, (caller, model) in judges.items():
         path = _paths(out)[name]
@@ -580,6 +561,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.choices["collect"].add_argument("--n", type=int, default=80)
     sub.choices["collect"].add_argument("--seed", default="20261030")
     sub.choices["pool"].add_argument("--snapshot", required=True)
+    sub.choices["judge"].add_argument("--judge", choices=("both", "gemini", "claude"), default="both")
     return parser
 
 
