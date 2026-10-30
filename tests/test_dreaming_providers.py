@@ -62,7 +62,7 @@ def test_extract_provider_consolidation_reuses_configured_transport(tmp_path, pr
             seen.append(payload)
             return 200, {"candidates": [{"content": {"parts": [{"text": raw}]}}]}, {}
 
-        provider = GeminiExtractor(api_key="fixture", model="operator-extract", transport=transport)
+        provider = GeminiExtractor(api_key="fixture", model="gemini-flash-lite-latest", transport=transport)
     else:
         def runner(command, prompt, timeout, cwd, env):
             if command[1:3] == ["session", "delete"]:
@@ -423,6 +423,50 @@ def test_gemini_extractor_requests_json_and_retries_429_without_fallback() -> No
     assert calls[0]["payload"]["generationConfig"]["responseMimeType"] == "application/json"
     assert result.candidates[0].scope_class == "personal"
     assert result.usage.http_status == 200
+
+
+def test_gemini_extractor_default_model_is_flash_lite_latest(monkeypatch) -> None:
+    # WHY: gemini-flash-latest rejects thinkingLevel minimal (HTTP 400) and times out
+    # without it; the lite alias is the one that serves this extraction shape (T-1902).
+    monkeypatch.delenv("MEMORYMASTER_DREAM_EXTRACT_MODEL", raising=False)
+    assert GeminiExtractor(api_key="k").model == "gemini-flash-lite-latest"
+
+
+def _thinking_sent(model: str, route: str):
+    """Real request payload each Gemini route sends for ``model`` (no network)."""
+    from memorymaster.dreaming.providers import GeminiBoundedClient, _ExtractConsolidator
+
+    seen: list[dict] = []
+    ok = '{"candidates":[],"decisions":[]}'
+
+    def transport(url, payload, headers, timeout):
+        seen.append(payload)
+        return 200, {"candidates": [{"content": {"parts": [{"text": ok}]}}],
+                     "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 1}}, {}
+
+    extractor = GeminiExtractor(api_key="k", model=model, transport=transport, sleep=lambda _: None,
+                                min_interval_s=0)
+    if route == "extract":
+        extractor.extract([{"id": "m1", "role": "user", "text": "hi"}], scope="project:t", capture_hash="c")
+    elif route == "bounded":
+        GeminiBoundedClient(model=f"gemini-api/{model}", api_key="k", transport=transport,
+                            sleep=lambda _: None).complete_bounded("p", max_output_tokens=100)
+    else:
+        try:
+            _ExtractConsolidator(extractor).consolidate([], [], scope="project:t")
+        except Exception:  # only the request shape matters here
+            pass
+    return seen[0]["generationConfig"].get("thinkingConfig")
+
+
+@pytest.mark.parametrize("route", ["extract", "bounded", "consolidate"])
+@pytest.mark.parametrize(("model", "expected"), [
+    ("gemini-flash-latest", None),
+    ("gemini-flash-lite-latest", {"thinkingLevel": "minimal"}),
+    ("gemini-3.5-flash-lite", {"thinkingLevel": "minimal"}),
+])
+def test_gemini_routes_send_minimal_thinking_only_where_supported(route, model, expected) -> None:
+    assert _thinking_sent(model, route) == expected
 
 
 def test_gemini_extractor_requires_complete_candidate_objects_in_response_schema() -> None:

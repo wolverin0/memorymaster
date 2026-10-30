@@ -725,7 +725,7 @@ def _configure_receipt_client(
 def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
     """Create the hourly Windows task; other platforms get a manual command."""
     provider = os.environ.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini").strip()
-    default_model = {"gemini": "gemini-flash-latest", "google": "gemini-flash-latest", "claude": "haiku"}.get(
+    default_model = {"gemini": "gemini-flash-lite-latest", "google": "gemini-flash-lite-latest", "claude": "haiku"}.get(
         provider, "openai/gpt-5.4-mini",
     )
     parts = [

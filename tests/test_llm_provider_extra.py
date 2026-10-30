@@ -684,8 +684,8 @@ class TestCallGoogleDispatch:
             "thinkingLevel": "minimal"
         }
 
-    def test_flash_latest_alias_sets_thinking_level_and_is_default(self, monkeypatch):
-        # WHY: -latest aliases carry no version digit; without this the 500-token
+    def test_flash_lite_latest_alias_sets_thinking_level_and_is_default(self, monkeypatch):
+        # WHY: the lite alias carries no version digit; without this the 500-token
         # output cap would be eaten by default dynamic thinking.
         monkeypatch.delenv("MEMORYMASTER_LLM_MODEL", raising=False)
         monkeypatch.setattr(lp, "_call_google_with_env_rotation", lambda *a, **k: None)
@@ -705,8 +705,12 @@ class TestCallGoogleDispatch:
     @pytest.mark.parametrize(
         ("model", "expected"),
         [
-            ("gemini-flash-latest", {"thinkingLevel": "minimal"}),
+            # WHY: live 2026-10-30, gemini-flash-latest + minimal -> HTTP 400
+            # "Thinking level MINIMAL is not supported for this model"; omit the config.
+            ("gemini-flash-latest", None),
             ("gemini-flash-lite-latest", {"thinkingLevel": "minimal"}),
+            ("gemini-3.5-flash", {"thinkingLevel": "minimal"}),
+            ("gemini-3.5-flash-lite", {"thinkingLevel": "minimal"}),
             # WHY: Pro cannot run at "minimal"; sending it would be rejected, so no config.
             ("gemini-pro-latest", None),
         ],

@@ -162,6 +162,21 @@ def _call_google_with_env_rotation(model: str, payload: dict[str, Any]) -> str |
 # ---------------------------------------------------------------------------
 
 
+def gemini_thinking_fields(model: str) -> dict[str, Any]:
+    """``generationConfig`` fields that keep Gemini thinking from eating the output cap.
+
+    Minimal thinking is sent only to flash-lite (alias or versioned) and versioned 3.x
+    flash. The non-lite ``gemini-flash-latest`` alias answers HTTP 400 "Thinking level
+    MINIMAL is not supported" (2026-10-30), so it, Pro and unknown models get no config.
+    """
+    name = model.rsplit("/", 1)[-1]
+    if "gemini-2.5" in name:
+        return {"thinkingConfig": {"thinkingBudget": 0}}
+    if name.startswith("gemini-flash-lite") or ("gemini-3" in name and "flash" in name):
+        return {"thinkingConfig": {"thinkingLevel": "minimal"}}
+    return {}
+
+
 def _call_google(prompt: str, text: str) -> str:
     """Google Gemini API.
 
@@ -191,11 +206,7 @@ def _call_google(prompt: str, text: str) -> str:
         },
     }
 
-    # Gemini 3.x models support thinkingLevel
-    if "gemini-3" in model or model.startswith("gemini-flash"):  # -latest aliases resolve to 3.x
-        payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "minimal"}
-    elif "gemini-2.5" in model:
-        payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+    payload["generationConfig"].update(gemini_thinking_fields(model))
 
     env_rotated_result = _call_google_with_env_rotation(model, payload)
     if env_rotated_result is not None:

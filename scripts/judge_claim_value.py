@@ -52,10 +52,10 @@ Judge only the text given. When two verdicts fit, pick the one that is worse for
 (junk > wrong > obvious > useful). Answer with a JSON array, one object per item:
 {{"n": <item number>, "verdict": "useful|obvious|wrong|junk", "reason": "<one short line>"}}"""
 
-# Flash alias the repo already uses (govern.llm_steward, recall.llm_rerank); it tracks the current
-# Flash model. Pinned ids (then gemini-3.5-flash) timed out / returned 503 for this batch workload
-# on 2026-10-13, so a pinned id is not the default.
-DEFAULT_MODEL = "gemini-flash-latest"
+# Flash-lite alias; it tracks the current flash-lite model. Pinned ids (then gemini-3.5-flash) timed
+# out / returned 503 for this batch workload on 2026-10-13, so a pinned id is not the default.
+# gemini-flash-latest is not an option: it rejects thinkingLevel minimal with HTTP 400 (2026-10-30).
+DEFAULT_MODEL = "gemini-flash-lite-latest"
 MAX_TEXT_CHARS = 4500  # covers the longest claims seen; truncation would read as a fragment (junk)
 MAX_ATTEMPTS_PER_CLAIM = 2
 MIN_N_RANKED = 10
@@ -193,12 +193,9 @@ def build_prompt(batch: list[dict[str, Any]]) -> str:
     return f"{RUBRIC}\n\nItems:\n{json.dumps(items, ensure_ascii=False)}"
 
 
-def thinking_config(model: str) -> dict[str, Any]:
-    """Keep judging cheap: no thinking budget on 2.5, minimal level on 3.x."""
-    return {"thinkingBudget": 0} if "2.5" in model else {"thinkingLevel": "minimal"}
-
-
 def build_payload(batch: list[dict[str, Any]], model: str = DEFAULT_MODEL) -> dict[str, Any]:
+    from memorymaster.core.llm_provider import gemini_thinking_fields
+
     schema = {
         "type": "ARRAY",
         "items": {
@@ -216,7 +213,7 @@ def build_payload(batch: list[dict[str, Any]], model: str = DEFAULT_MODEL) -> di
         "generationConfig": {
             "temperature": 0,
             "maxOutputTokens": 8000,
-            "thinkingConfig": thinking_config(model),
+            **gemini_thinking_fields(model),
             "responseMimeType": "application/json",
             "responseSchema": schema,
         },
