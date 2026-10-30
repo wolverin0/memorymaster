@@ -9,19 +9,19 @@ Measured 2026-10-30 at source `73e71c1` with `scripts/eval_index_vs_similarity.p
 It replaces the AC3 comparison in `AC3-comparison.md` (PR #273, merged), which used
 one GPT judge and held the candidate pool to the two injected claims.
 
-**Result.** Over 79 real prompts, index + on-demand reading (B) cost **1,470
-characters per prompt against 2,154** for similarity injection (A, −32%). It put
-**0.52 irrelevant bodies per prompt into context against 1.30** (−60%, consensus
-labels). Relevant recall was **54% against 33%** under consensus and Gemini labels,
-and **tied at 33%** under Claude labels. All three cost and noise intervals exclude
-zero. The recall gain excludes zero under consensus and Gemini labels, but not
-under Claude labels.
+**Result.** Over 79 real prompts, index + on-demand reading (B) cost **1,547
+characters per prompt against 2,154** for similarity injection (A, −28%). It put
+**0.59 irrelevant bodies per prompt into context against 1.20** (−51%, consensus
+labels). Relevant recall was **57% against 34%** under consensus and Gemini labels,
+and **41% against 35%** under Claude labels. The cost and noise intervals exclude
+zero under all three label sets. The recall gain excludes zero under consensus and
+Gemini labels, but not under Claude labels.
 
 **Recommendation: build B as an opt-in pilot and keep A as the default.** The pilot
 injects a top-8 index and exposes a read-by-id tool. Change the default only after a
 live pilot shows that real agents call the read tool about as often as the
-instructed reader here (45 of 79 prompts), and that the read round-trip's latency
-is acceptable. The larger problem is upstream: only 46 of 864 pool candidates (5.3%)
+instructed reader here (56 of 79 prompts), and that the read round-trip's latency
+is acceptable. The larger problem is upstream: only 44 of 864 pool candidates (5.1%)
 are consensus-relevant, and 93% of index titles are irrelevant. Retrieval
 precision, through the threshold and claim titles, matters more than the delivery
 format.
@@ -30,9 +30,9 @@ format.
 
 - **Snapshot.** The claims DB was copied with the sqlite3 backup API from a
   `mode=ro` connection, about 22:20 UTC on 2026-10-30. Everything was read from the
-  copy, opened `read_only=True`. `_finish_recall` was never called, so no access
-  record was spooled, no session state was written and no telemetry line was
-  appended. Candidate IDs came from the running dense service (EmbeddingGemma 2,
+  copy, opened `read_only=True`. The evaluator never calls `_finish_recall`, so it
+  spools no access record, writes no session state and appends no telemetry line.
+  Candidate IDs came from the running dense service (EmbeddingGemma 2,
   `indexed=7472` for every prompt), which was only queried.
 - **Prompts.** Real top-level prompts were taken from the Claude Code transcripts
   for 2026-10-23 00:00 to 2026-10-30 00:00 UTC, through the parsers in
@@ -69,6 +69,14 @@ format.
   strategies are scored against the same labels. Consensus counts a label only
   when both judges agree. U and disagreements stay out of the relevance
   denominators.
+- **Hook isolation.** The `claude -p` calls ran with `--setting-sources project`
+  from an empty scratch directory, so the operator's installed hooks did not run.
+  The recall hook's start count did not change across the 160 calls. A first pass
+  without that flag let the UserPromptSubmit recall hook fire on every
+  reader/judge call. That hook put live claims into the reader's context for free,
+  so the reader read less (88 bodies, against 118 here). It also wrote hook state.
+  That pass was discarded and rerun. The Gemini judge runs in the Antigravity
+  batch profile, which is already hook-isolated.
 - **Privacy.** Home paths and private IPv4 addresses were masked in everything sent
   to a model. Prompt and claim text stayed in the session scratchpad. This file
   publishes only ordinals, positions, labels and counts.
@@ -80,34 +88,35 @@ format.
 
 | Measure | Consensus | Gemini 4 Argon | Claude Sonnet |
 |---|---:|---:|---:|
-| Pool candidates R / I / other | 46 / 695 / 123 | 47 / 775 / 42 | 129 / 723 / 12 |
+| Pool candidates R / I / other | 44 / 678 / 142 | 47 / 775 / 42 | 142 / 705 / 17 |
 | A chars per prompt | 2,154.47 | same | same |
-| B chars per prompt (index + reads) | 1,469.77 (704.03 + 765.75) | same | same |
-| A irrelevant bodies / judged bodies | 103/118 = **87.3%** | 130/146 = 89.0% | 113/156 = 72.4% |
-| B irrelevant reads / judged reads | 41/66 = **62.1%** | 57/83 = 68.7% | 43/86 = 50.0% |
-| B irrelevant index titles / judged titles | 465/502 = 92.6% | 531/569 = 93.3% | 488/593 = 82.3% |
-| Irrelevant bodies per prompt, A to B | **1.304 to 0.519** | 1.646 to 0.722 | 1.430 to 0.544 |
-| Relevant recall vs pool, A | 15/46 = **32.6%** | 16/47 = 34.0% | 43/129 = 33.3% |
-| Relevant recall vs pool, B | 25/46 = **54.3%** | 26/47 = 55.3% | 43/129 = 33.3% |
-| Relevant claims reachable in B's index | 37/46 | 38/47 | 105/129 |
-| Prompts with a relevant body / prompts with one in pool, A | 13/22 = 59.1% | 14/23 = 60.9% | 33/48 = 68.8% |
-| Same, B | 17/22 = 77.3% | 18/23 = 78.3% | 27/48 = 56.3% |
+| B chars per prompt (index + reads) | 1,547.06 (704.03 + 843.04) | same | same |
+| A irrelevant bodies / judged bodies | 95/110 = **86.4%** | 130/146 = 89.0% | 102/152 = 67.1% |
+| B irrelevant reads / judged reads | 47/72 = **65.3%** | 80/107 = 74.8% | 54/112 = 48.2% |
+| B irrelevant index titles / judged titles | 452/487 = 92.8% | 531/569 = 93.3% | 474/588 = 80.6% |
+| Irrelevant bodies per prompt, A to B | **1.203 to 0.595** | 1.646 to 1.013 | 1.291 to 0.684 |
+| Relevant recall vs pool, A | 15/44 = **34.1%** | 16/47 = 34.0% | 50/142 = 35.2% |
+| Relevant recall vs pool, B | 25/44 = **56.8%** | 27/47 = 57.4% | 58/142 = 40.8% |
+| Relevant claims reachable in B's index | 35/44 | 38/47 | 114/142 |
+| Prompts with a relevant body / prompts with one in pool, A | 13/22 = 59.1% | 14/23 = 60.9% | 37/53 = 69.8% |
+| Same, B | 18/22 = 81.8% | 19/23 = 82.6% | 38/53 = 71.7% |
 
-Totals: A 170,203 characters with 158 bodies. B used 55,618 index plus 60,494 read
-characters, with 88 bodies read on 45 of 79 prompts.
+Totals: A 170,203 characters with 158 bodies. B used 55,618 index plus 66,600 read
+characters, with 118 bodies read on 56 of 79 prompts.
 
 Paired bootstrap of B − A (2,000 resamples of prompts, seeded, 95% percentile):
 
 | Label set | Chars per prompt | Irrelevant bodies per prompt | Relevant recall |
 |---|---|---|---|
-| Consensus | [−1,099.5, −285.9] | [−0.987, −0.582] | [+0.037, +0.367] |
-| Gemini | [−1,103.0, −264.6] | [−1.139, −0.709] | [+0.035, +0.359] |
-| Claude | [−1,096.0, −280.2] | [−1.089, −0.684] | [−0.109, +0.107] |
+| Consensus | [−1,046.3, −201.3] | [−0.823, −0.392] | [+0.061, +0.405] |
+| Gemini | [−1,048.0, −193.0] | [−0.873, −0.392] | [+0.054, +0.400] |
+| Claude | [−1,004.2, −211.2] | [−0.810, −0.392] | [−0.050, +0.154] |
 
-Judge agreement on R versus not-R over 864 candidates: raw 90.3%, Cohen's kappa
-**0.48** (moderate). Claude Sonnet marks about 2.7 times as many candidates R, and
-most disagreements are Claude-R / Gemini-I. Recall therefore depends on the judge,
-while cost and noise favour B under every label set.
+Judge agreement on R versus not-R over 864 candidates: raw 88.3%, Cohen's kappa
+**0.42** (moderate). Claude Sonnet marks about three times as many candidates R,
+and most disagreements are Claude-R / Gemini-I. The size of the recall gain
+therefore depends on the judge, while cost and noise favour B under every label
+set.
 
 ## Limits
 
@@ -121,16 +130,15 @@ while cost and noise favour B under every label set.
 - **Reader.** The reader was an instructed Claude Haiku, and production agents may
   read more or less often. Read-tool latency and tool-call overhead are not counted.
 - **Family overlap.** The reader and one judge are both Claude, and the Claude judge
-  is the one under which B shows no recall gain. Gemini labels give the
-  family-independent view.
+  shows the smallest recall gain. Gemini labels give the family-independent view.
 - **Pool-relative recall.** "Relevant recall" counts only the authorized pool of up
   to 12 candidates. Relevant claims below the threshold or outside the dense index
   are not counted.
 - **Short-ID collisions.** Short IDs are not unique across scopes. Five pools held
-  two to four claims with the same short ID: one ID was shared by six claims in
-  four scopes, admitted through the outside-scope path. The evaluator renames them
-  `<id>~<claim id>` so that reads resolve. A production read-by-id tool must
-  resolve the same ambiguity.
+  two to four claims with the same short ID. That ID is shared by six claims
+  DB-wide; four of them, from four scopes, met in one pool through the
+  outside-scope path. The evaluator renames them `<id>~<claim id>` so that reads
+  resolve. A production read-by-id tool must resolve the same ambiguity.
 
 ## Reproduce
 
@@ -154,82 +162,82 @@ order.
 
 | Sample | Pool | A | Read | Gemini labels | Claude labels | A chars | Index chars | Read chars |
 |---|---:|---|---|---|---|---:|---:|---:|
-| S01 | 12 | 1,2 | 2,3 | IIIIIIIIIIII | IIIIIIIIIIII | 3832 | 736 | 311 |
-| S02 | 12 | 1,2 | 4,6 | IIIIIIIIIIII | IIIIIIIIIIII | 3843 | 740 | 2134 |
-| S03 | 12 | 1,2 | 1,3 | IIIIIIIIIIII | IIIRRRRRIIRI | 412 | 736 | 250 |
-| S04 | 12 | 1,2 | 1,6 | RIIIIIIIIIII | RIIIIIIIIIRI | 457 | 752 | 397 |
-| S05 | 12 | 1,2 | 1 | IIIIIIIIIIII | IIIIIIIIIIII | 3372 | 746 | 3129 |
+| S01 | 12 | 1,2 | 3,2,4 | IIIIIIIIIIII | IIIIIIIIIIII | 3832 | 736 | 510 |
+| S02 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 3843 | 740 | 0 |
+| S03 | 12 | 1,2 | 1,5 | IIIIIIIIIIII | IIIIRRRRIIRI | 412 | 736 | 334 |
+| S04 | 12 | 1,2 | 1,5,7 | RIIIIIIIIIII | RIIIIIIIIIRI | 457 | 752 | 934 |
+| S05 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 3372 | 746 | 0 |
 | S06 | 12 | 1,2 | 1,2 | IIIIIIIIIIII | RIIIIIIIIRIR | 390 | 736 | 311 |
-| S07 | 12 | 1,2 | 2,1 | IRIIIIIIIIII | IRIIIIRRIIII | 458 | 759 | 379 |
+| S07 | 12 | 1,2 | 2,1 | IRIIIIIIIIII | IRIIRIIIIIII | 458 | 759 | 379 |
 | S08 | 11 | 1,2 | - | IIIIIIIIIII | IIIIIIIIIII | 4946 | 740 | 0 |
-| S09 | 12 | 1,2 | 1,8 | IIIIIIIIIIII | RIIIIIIIIIII | 1495 | 738 | 820 |
-| S10 | 7 | 1,2 | 1,2 | RIIIIII | IRIIIII | 4771 | 653 | 4692 |
-| S11 | 12 | 1,2 | 3,4,6 | IIRRRRIIIIRI | IIRRRRIIIIRI | 1687 | 740 | 5847 |
+| S09 | 12 | 1,2 | 2,1,8 | IIIIIIIIIIII | RIIIIIIIIIII | 1495 | 738 | 2113 |
+| S10 | 7 | 1,2 | 2,1 | RIIIIII | IRIIIII | 4771 | 653 | 4692 |
+| S11 | 12 | 1,2 | 3,6 | IIRRRRIIIIRI | IIIRRRIIIIRI | 1687 | 740 | 3796 |
 | S12 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 6467 | 738 | 0 |
-| S13 | 12 | 1,2 | 1 | RIIIIIIIIIIR | RIIIIIIIIIIR | 1977 | 736 | 159 |
-| S14 | 12 | 1,2 | 4,5,7 | IIIIIIRRRIII | IIIIIIRRRIII | 441 | 738 | 810 |
-| S15 | 5 | 1,2 | 2,4 | IIIRI | IRIRI | 3816 | 486 | 594 |
+| S13 | 12 | 1,2 | 1,7 | RIIIIIIIIIIR | RIIIIIIIIIIR | 1977 | 736 | 2329 |
+| S14 | 12 | 1,2 | 7,8,5 | IIIIIIRRRIII | IIIRRIRRRRII | 441 | 738 | 1409 |
+| S15 | 5 | 1,2 | 2,4,3 | IIIRI | IRIRI | 3816 | 486 | 781 |
 | S16 | 2 | 1,2 | - | II | II | 4657 | 226 | 0 |
 | S17 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 5100 | 736 | 0 |
-| S18 | 12 | 1,2 | 1 | IIIIIIIIIIII | IIIIIIIIIIII | 1748 | 742 | 145 |
-| S19 | 12 | 1,2 | 3,5 | IIIIIIIIIIII | IIIIIIIIIIII | 322 | 736 | 348 |
+| S18 | 12 | 1,2 | 2,1 | IIIIIIIIIIII | IIIIIIIIIIII | 1748 | 742 | 1669 |
+| S19 | 12 | 1,2 | 3,5,2 | IIIIIIIIIIII | IIRIIIIIIIII | 322 | 736 | 479 |
 | S20 | 12 | 1,2 | - | IIIIIIIIIIII | RIIIIIIIIIII | 369 | 738 | 0 |
-| S21 | 12 | 1,2 | 2,8 | IIIIIIIIIIII | IIIIIIIIIIII | 4509 | 736 | 1609 |
-| S22 | 12 | 1,2 | 4,3 | UUUUUUUUUUUU | UUUUUUUUUUUU | 249 | 685 | 294 |
-| S23 | 12 | 1,2 | - | IIIIIIIIIIII | RRRRRRIRIIII | 1316 | 736 | 0 |
-| S24 | 10 | 1,2 | 2,5 | IRIRIIIIRI | IRIRRIIIRR | 3900 | 736 | 1864 |
+| S21 | 12 | 1,2 | 8,7 | IIIIIIIIIIII | IIIIIIIIIIII | 4509 | 736 | 947 |
+| S22 | 12 | 1,2 | 2,3 | UUUUUUUUUUUU | UUUUUUUUUUUU | 249 | 685 | 234 |
+| S23 | 12 | 1,2 | 2 | IIIIIIIIIIII | RRRRRRIRIIII | 1316 | 736 | 221 |
+| S24 | 10 | 1,2 | - | IRIRIIIIRI | IRIRRIIIRR | 3900 | 736 | 0 |
 | S25 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 3786 | 740 | 0 |
-| S26 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 3420 | 740 | 0 |
-| S27 | 12 | 1,2 | 1,2 | RIIIIIIIRIII | RIRIIRIIRIII | 458 | 750 | 379 |
-| S28 | 9 | 1,2 | - | IIIIIIIII | IIIIIIIII | 515 | 736 | 0 |
-| S29 | 12 | 1,2 | 1,6,2 | RRIIIRIRIIIR | RRIIIRRRIIIR | 448 | 736 | 1393 |
-| S30 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIRIIII | 2300 | 738 | 0 |
-| S31 | 3 | 1,2 | 1 | UUU | III | 1124 | 313 | 931 |
-| S32 | 12 | 1,2 | 7 | IIIIIIRIIIII | IIIIIIRIIIII | 5540 | 736 | 1838 |
-| S33 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIRII | 2500 | 736 | 0 |
-| S34 | 4 | 1,2 | - | IIII | RIRI | 439 | 396 | 0 |
-| S35 | 12 | 1,2 | 4,5 | IIIRIIIIIIII | IIIRIIIIIIII | 5036 | 736 | 1747 |
-| S36 | 12 | 1,2 | 5,2 | UUUUUUUUUUUU | IRIIRIIIIIIR | 400 | 736 | 325 |
-| S37 | 12 | 1,2 | - | IIIIIIIIIIII | RIIIIIIIIIII | 1545 | 736 | 0 |
-| S38 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 2924 | 736 | 0 |
-| S39 | 12 | 1,2 | 1,2,4 | RRRRIIIIIIRI | RRRRIIIIIIRI | 2043 | 738 | 2603 |
+| S26 | 12 | 1,2 | 2,3 | IIIIIIIIIIII | IIIIIIIIIIII | 3420 | 740 | 3786 |
+| S27 | 12 | 1,2 | 1,2,6 | RIIIIIIIRIII | RIRIIRIIRIII | 458 | 750 | 576 |
+| S28 | 9 | 1,2 | 2,1 | IIIIIIIII | RRIIIIIII | 515 | 736 | 436 |
+| S29 | 12 | 1,2 | 1,2,7 | RRIIIRIRIIIR | RRIIIRRRIIIR | 448 | 736 | 461 |
+| S30 | 12 | 1,2 | 1 | IIIIIIIIIIII | IIIIIIIIIIII | 2300 | 738 | 1670 |
+| S31 | 3 | 1,2 | 1,2 | UUU | UUU | 1124 | 313 | 1045 |
+| S32 | 12 | 1,2 | 7 | IIIIIIRIIIII | IIIRRIRIIIRI | 5540 | 736 | 1838 |
+| S33 | 12 | 1,2 | 6 | IIIIIIIIIIII | IIIIIIIIIRII | 2500 | 736 | 1426 |
+| S34 | 4 | 1,2 | 1 | IIII | RIRI | 439 | 396 | 159 |
+| S35 | 12 | 1,2 | 5,4 | IIIRIIIIIIII | IRIRIIIIRIRI | 5036 | 736 | 1747 |
+| S36 | 12 | 1,2 | 2,5 | UUUUUUUUUUUU | IIIIIIIIIIIR | 400 | 736 | 325 |
+| S37 | 12 | 1,2 | - | IIIIIIIIIIII | RRIIIIIIIIII | 1545 | 736 | 0 |
+| S38 | 12 | 1,2 | 8,6 | IIIIIIIIIIII | IIIIIIIIIIII | 2924 | 736 | 548 |
+| S39 | 12 | 1,2 | 1,2,4 | RRRRIIIIIIRI | RRIRIIIIIIRI | 2043 | 738 | 2603 |
 | S40 | 8 | 1,2 | - | IIIIIIII | IIIIIIII | 447 | 713 | 0 |
-| S41 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 3153 | 736 | 0 |
-| S42 | 9 | 1,2 | - | RIIIIIIII | RIIIIIIII | 2280 | 736 | 0 |
-| S43 | 12 | 1,2 | 7,5 | IIIIIIIIIIII | RRIIIIRIIIII | 424 | 736 | 341 |
-| S44 | 9 | 1,2 | 3 | IIIIIIIII | RRIIIRRII | 4041 | 736 | 1093 |
-| S45 | 12 | 1,2 | 1,8,4 | RIIRRIIRRIII | RIIRRIIRRIII | 366 | 736 | 507 |
-| S46 | 12 | 1,2 | 7 | IIIIIIIIIIII | IIIIIIIIIIII | 3847 | 736 | 753 |
-| S47 | 12 | 1,2 | - | IIIIIIRIIIII | RRRIRIRRRRII | 393 | 736 | 0 |
-| S48 | 12 | 1,2 | - | IIIIIIIIIIII | RIIIIIIIIIII | 2628 | 748 | 0 |
-| S49 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 427 | 738 | 0 |
-| S50 | 12 | 1,2 | 4,6 | IIIIIIIIIIII | IIRRIIRIIIII | 4946 | 736 | 667 |
-| S51 | 12 | 1,2 | 3,4,1 | IIRIIIIIIIII | RRRIIRIRIIII | 2039 | 736 | 2491 |
-| S52 | 12 | 1,2 | 8,7 | IIIIIIIIIIIR | IIIIIIIIIIIR | 4436 | 738 | 3397 |
-| S53 | 12 | 1,2 | 3,8 | RIRIIIIIIIII | RIRIIIIIIIII | 1446 | 729 | 876 |
-| S54 | 12 | 1,2 | 2,4 | IIIRIIRIIIII | IIIRIIRIIIII | 451 | 736 | 593 |
-| S55 | 11 | 1,2 | - | IIIIIIIIIII | IIRRIIIIIII | 4320 | 740 | 0 |
+| S41 | 12 | 1,2 | 8 | IIIIIIIIIIII | IIIIIIIIIIII | 3153 | 736 | 1076 |
+| S42 | 9 | 1,2 | 1,7 | RIIIIIIII | RRIIIIIRI | 2280 | 736 | 1836 |
+| S43 | 12 | 1,2 | 7,5 | IIIIIIIIIIII | RIIIIIRIIIII | 424 | 736 | 341 |
+| S44 | 9 | 1,2 | - | IIIIIIIII | RRIRRRIII | 4041 | 736 | 0 |
+| S45 | 12 | 1,2 | 1,4,8 | RIIRRIIRRIII | RIIRRIIRRIII | 366 | 736 | 507 |
+| S46 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 3847 | 736 | 0 |
+| S47 | 12 | 1,2 | 1,2,5 | IIIIIIRIIIII | RRRIRIRRRRII | 393 | 736 | 457 |
+| S48 | 12 | 1,2 | 1 | IIIIIIIIIIII | RIIIIIIIIIII | 2628 | 748 | 193 |
+| S49 | 12 | 1,2 | 4,3,1 | IIIIIIIIIIII | RRRRIIIRIIII | 427 | 738 | 601 |
+| S50 | 12 | 1,2 | 3,4 | IIIIIIIIIIII | IIIIIIRIIIII | 4946 | 736 | 359 |
+| S51 | 12 | 1,2 | 3,2 | IIRIIIIIIIII | RRRIIRIIIIII | 2039 | 736 | 1927 |
+| S52 | 12 | 1,2 | 6,5,7 | IIIIIIIIIIIR | IIIIIIIIIIIR | 4436 | 738 | 2545 |
+| S53 | 12 | 1,2 | 3,2 | RIRIIIIIIIII | RIRIIIIIIIRI | 1446 | 729 | 777 |
+| S54 | 12 | 1,2 | 4,7 | IIIRIIRIIIII | IIIRIIRIIIII | 451 | 736 | 1028 |
+| S55 | 11 | 1,2 | 3,4 | IIIIIIIIIII | IIRRIIIIIII | 4320 | 740 | 326 |
 | S56 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 295 | 740 | 0 |
-| S57 | 10 | 1,2 | - | UUUUUUUUUU | IIIIIIIIII | 274 | 744 | 0 |
-| S58 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIRIII | 1647 | 742 | 0 |
-| S59 | 12 | 1,2 | 1,2 | IRIIIIIIIIII | RRIIIIIIIIII | 4870 | 736 | 4791 |
-| S60 | 12 | 1,2 | 5,8 | IIIIIIIIIIII | IIIIIIIIIIII | 5363 | 736 | 495 |
+| S57 | 10 | 1,2 | 6,7 | UUUUUUUUUU | IIIIIIIIII | 274 | 744 | 218 |
+| S58 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 1647 | 742 | 0 |
+| S59 | 12 | 1,2 | 1,8 | IRIIIIIIIIII | RRIIIIIIIIII | 4870 | 736 | 4683 |
+| S60 | 12 | 1,2 | 8,5 | IIIIIIIIIIII | IIIIRIIIIIII | 5363 | 736 | 495 |
 | S61 | 12 | 1,2 | - | IIIIIIIIIIII | RRIIIIIIIIII | 409 | 750 | 0 |
-| S62 | 12 | 1,2 | 2 | IIIIIIIIIIII | IRIIIIIIIIII | 1084 | 736 | 757 |
-| S63 | 12 | 1,2 | - | IIIIIIIIIIII | RIRIRIIIIIII | 1039 | 736 | 0 |
-| S64 | 11 | 1,2 | - | IIIIIIIIIII | IIIIIIIIIII | 5120 | 736 | 0 |
+| S62 | 12 | 1,2 | 1,6 | IIIIIIIIIIII | IRIIIRIIIIII | 1084 | 736 | 414 |
+| S63 | 12 | 1,2 | - | IIIIIIIIIIII | IIRIIIIIIIII | 1039 | 736 | 0 |
+| S64 | 11 | 1,2 | - | IIIIIIIIIII | RIIIIIIIIRI | 5120 | 736 | 0 |
 | S65 | 12 | 1,2 | - | IIIIIIIIIIII | RIIIIIIIIIII | 829 | 736 | 0 |
 | S66 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 5084 | 738 | 0 |
-| S67 | 12 | 1,2 | 6,7 | IIIIIIIIIIII | IIIIIIIIIIII | 1537 | 736 | 2782 |
-| S68 | 12 | 1,2 | 1,6 | IIIIIIIIIIII | RIIIIIIIIIII | 387 | 736 | 1765 |
-| S69 | 12 | 1,2 | 5 | IIIIIIIIIIII | IIIIIIIIIIII | 4585 | 738 | 1801 |
-| S70 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIIII | 2255 | 736 | 0 |
-| S71 | 2 | 1,2 | - | UU | II | 406 | 226 | 0 |
-| S72 | 12 | 1,2 | 6,1 | IRIIIIIIIIII | RRIIRRIIIIRI | 1778 | 736 | 1618 |
-| S73 | 12 | 1,2 | 2,4,5 | IIIIIIIIIIII | IIIIIIIIRIII | 548 | 736 | 519 |
+| S67 | 12 | 1,2 | 6,1 | IIIIIIIIIIII | IIIIIIIIIIII | 1537 | 736 | 2833 |
+| S68 | 12 | 1,2 | 1 | IIIIIIIIIIII | RIIIIIIIIIII | 387 | 736 | 223 |
+| S69 | 12 | 1,2 | 5,3 | IIIIIIIIIIII | IIIIIIIIIIII | 4585 | 738 | 3505 |
+| S70 | 12 | 1,2 | - | IIIIIIIIIIII | IRIIIIIIIIII | 2255 | 736 | 0 |
+| S71 | 2 | 1,2 | 1,2 | UU | UU | 406 | 226 | 327 |
+| S72 | 12 | 1,2 | 2 | IRIIIIIIIIII | RRIIRIIIIIII | 1778 | 736 | 793 |
+| S73 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIRIII | 548 | 736 | 0 |
 | S74 | 12 | 1,2 | - | IIIIIIIIIIII | IIIIIIIIIRII | 1257 | 736 | 0 |
-| S75 | 12 | 1,2 | - | RIIIIIIIIIII | RIIIIIIIRIIR | 457 | 752 | 0 |
-| S76 | 3 | 1,2 | - | UUU | III | 454 | 311 | 0 |
-| S77 | 7 | 1,2 | 4,7 | IIIIIII | IIIIIII | 431 | 653 | 353 |
-| S78 | 12 | 1,2 | 5,7,1 | IIIIIIIIIIII | RIIRRIRIIIII | 807 | 740 | 874 |
-| S79 | 11 | 1,2 | 3 | IIIIIIIIIII | IIIIIRIIIII | 631 | 738 | 712 |
+| S75 | 12 | 1,2 | 1,6,7 | RIIIIIIIIIII | RIIIIIIIRIIR | 457 | 752 | 948 |
+| S76 | 3 | 1,2 | 1 | UUU | III | 454 | 311 | 184 |
+| S77 | 7 | 1,2 | 4,6,7 | IIIIIII | IIIRIRI | 431 | 653 | 533 |
+| S78 | 12 | 1,2 | 1,3,8 | IIIIIIIIIIII | RIIIRIRIIIII | 807 | 740 | 884 |
+| S79 | 11 | 1,2 | 6,1 | IIIIIIIIIII | RIIIIRIIIII | 631 | 738 | 829 |

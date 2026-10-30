@@ -234,8 +234,11 @@ def call_claude(model: str, prompt: str, work_dir: Path, timeout: int = 240) -> 
         raise RuntimeError("claude CLI not on PATH")
     work_dir.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "MEMORYMASTER_INTERNAL_RUN": "1", "MEMORYMASTER_DREAM_ENABLED": "0", "NO_COLOR": "1"}
+    # --setting-sources project (from a scratch cwd with no project settings) keeps the user's installed
+    # hooks out: otherwise the recall hook runs on the judge prompt, prepends live claims to the
+    # reader/judge context and writes hook state. MEMORYMASTER_INTERNAL_RUN alone does not stop it.
     command = [exe, "-p", "--model", model, "--output-format", "json", "--no-session-persistence",
-               "--tools", ""]
+               "--tools", "", "--setting-sources", "project"]
     done = _default_command_runner(command, prompt, timeout, work_dir, env)
     text, _, _, is_error = ClaudeCliExtractor._response(done.stdout or "")
     if done.returncode != 0 or is_error:
