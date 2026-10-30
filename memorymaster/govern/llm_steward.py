@@ -26,6 +26,7 @@ from typing import Any
 
 from memorymaster.stores._storage_shared import open_conn
 from memorymaster.core import observability
+from memorymaster.core.llm_provider import gemini_thinking_fields
 from memorymaster.core.models import tuple_key
 from memorymaster.core.promotion_policy import (
     auto_promotion_blocked,
@@ -86,7 +87,7 @@ def _parse_api_keys(
 PROVIDERS = {
     "gemini": {
         "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
-        "default_model": "gemini-flash-latest",
+        "default_model": "gemini-flash-lite-latest",
         "format": "gemini",
     },
     "openai": {
@@ -147,10 +148,10 @@ class ExtractionResult:
     raw_response: str
 
 
-def _build_gemini_payload(prompt: str) -> bytes:
+def _build_gemini_payload(prompt: str, model: str) -> bytes:
     return json.dumps({
         "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024},
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024, **gemini_thinking_fields(model)},
     }).encode("utf-8")
 
 
@@ -216,7 +217,7 @@ def _build_request_for_key(
     headers: dict[str, str] = {"Content-Type": "application/json"}
 
     if fmt == "gemini":
-        payload = _build_gemini_payload(prompt)
+        payload = _build_gemini_payload(prompt, model)
     elif fmt == "anthropic":
         payload = _build_anthropic_payload(prompt, model)
         headers["x-api-key"] = api_key
