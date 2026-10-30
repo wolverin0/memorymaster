@@ -122,7 +122,9 @@ def _probe(cli: str, event: str, command: str, timeout) -> dict:
             return result
         if parts[1] != "-m":
             parts[1] = str(Path(parts[1]).resolve())
-        with tempfile.TemporaryDirectory(prefix="memorymaster-hooks-doctor-") as scratch:
+        # A just-killed or scanned probe can briefly hold a handle inside the scratch dir on
+        # Windows (WinError 32); a failed cleanup must not replace the probe's own verdict.
+        with tempfile.TemporaryDirectory(prefix="memorymaster-hooks-doctor-", ignore_cleanup_errors=True) as scratch:
             root = Path(scratch) / "fixture"
             root.mkdir()
             scratch = str(root)
