@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from memorymaster.core.llm_provider import gemini_thinking_fields
 from memorymaster.dreaming.models import (
     ConsolidationResult,
     DreamCandidate,
@@ -544,7 +545,7 @@ class GeminiExtractor:
 
     def __init__(self, *, api_key: str | None = None, model: str | None = None, transport: Transport = _default_transport, sleep: Callable[[float], None] = time.sleep, min_interval_s: float | None = None, clock: Callable[[], float] = time.monotonic, tokens_per_minute: int | None = None) -> None:
         self.api_key = api_key if api_key is not None else os.environ.get("GEMINI_API_KEY", "")
-        self.model = model or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "gemini-flash-latest")
+        self.model = model or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "gemini-flash-lite-latest")
         self.transport = transport
         self.sleep = sleep
         if min_interval_s is None:
@@ -591,7 +592,7 @@ class GeminiExtractor:
             "If no stable candidate has a verbatim quote, return an empty candidates array. "
             "Use scope_class personal only for stable user preference/profile/constraint knowledge."
         )
-        payload = self._payload(prompt, messages, scope)
+        payload = self._payload(prompt, messages, scope, self.model)
         self._pace(_estimated_input_tokens(payload))
         started = time.monotonic()
         status, body = _post_with_retry(self.transport, self._url(), payload, {"Content-Type": "application/json"}, 90, self.sleep)
@@ -629,7 +630,7 @@ class GeminiExtractor:
         return status != 404
 
     @staticmethod
-    def _payload(prompt: str, messages: list[dict[str, Any]], scope: str) -> dict[str, Any]:
+    def _payload(prompt: str, messages: list[dict[str, Any]], scope: str, model: str = "") -> dict[str, Any]:
         schema = {
             "type": "OBJECT",
             "required": ["candidates"],
@@ -642,7 +643,7 @@ class GeminiExtractor:
             },
         }
         text = json.dumps({"scope": scope, "messages": messages}, ensure_ascii=False)
-        return {"contents": [{"parts": [{"text": f"{prompt}\n\n{text}"}]}], "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2000, "thinkingConfig": {"thinkingLevel": "minimal"}, "responseMimeType": "application/json", "responseSchema": schema}}
+        return {"contents": [{"parts": [{"text": f"{prompt}\n\n{text}"}]}], "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2000, **gemini_thinking_fields(model), "responseMimeType": "application/json", "responseSchema": schema}}
 
     @staticmethod
     def _response_text(body: dict[str, Any]) -> str:
@@ -688,7 +689,7 @@ class GeminiBoundedClient:
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.1, "maxOutputTokens": max_output_tokens,
-                "thinkingConfig": {"thinkingLevel": "minimal"},
+                **gemini_thinking_fields(gemini.model),
                 "responseMimeType": "application/json",
             },
         }
@@ -1168,7 +1169,7 @@ class _ExtractConsolidator:
         if isinstance(extractor, GeminiExtractor):
             payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {
                 "temperature": 0.1, "maxOutputTokens": 2000,
-                "thinkingConfig": {"thinkingLevel": "minimal"}, "responseMimeType": "application/json",
+                **gemini_thinking_fields(extractor.model), "responseMimeType": "application/json",
             }}
             extractor._pace(_estimated_input_tokens(payload))
             _, body = _post_with_retry(extractor.transport, extractor._url(), payload,

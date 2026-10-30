@@ -37,7 +37,7 @@ def test_windows_dream_action_uses_pythonw(monkeypatch, tmp_path: Path) -> None:
     assert "memorymaster.surfaces.scheduled_task dream" in action
     assert "--apply-candidates" in action
     assert "--extract-provider gemini" in action
-    assert "--extract-model gemini-flash-latest" in action
+    assert "--extract-model gemini-flash-lite-latest" in action
     # El default migro de zai-coding-plan/glm-5.2 a Gemini el 2026-08-20 al darse
     # de baja el plan de GLM.
     #

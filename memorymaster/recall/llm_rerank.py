@@ -156,7 +156,7 @@ def rerank_with_llm(
     query: str,
     candidates: list[Any],
     top_k: int = 5,
-    judge_model: str = "gemini-flash-latest",
+    judge_model: str = "gemini-flash-lite-latest",
 ) -> list[Any]:
     """Rerank candidates with a batched Gemini relevance judge.
 

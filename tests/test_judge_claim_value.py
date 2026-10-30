@@ -389,4 +389,10 @@ def test_thinking_config_matches_model_family() -> None:
     assert jcv.build_payload(_claims(1), "gemini-3.5-flash")["generationConfig"]["thinkingConfig"] == {
         "thinkingLevel": "minimal"
     }
+    assert jcv.build_payload(_claims(1), "gemini-flash-lite-latest")["generationConfig"]["thinkingConfig"] == {
+        "thinkingLevel": "minimal"
+    }
+    # WHY: gemini-flash-latest rejects thinkingLevel minimal with HTTP 400 (T-1902).
+    assert "thinkingConfig" not in jcv.build_payload(_claims(1), "gemini-flash-latest")["generationConfig"]
+    assert jcv.DEFAULT_MODEL == "gemini-flash-lite-latest"
     assert jcv.build_payload(_claims(1))["generationConfig"]["temperature"] == 0
