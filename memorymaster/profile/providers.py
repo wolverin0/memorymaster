@@ -51,8 +51,16 @@ def _complete_nonempty(client: Any, prompt: str) -> str:
 def _json_object(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if text.startswith("```"):
-        lines = text.splitlines()
-        text = "\n".join(lines[1:-1]).strip()
+        # T-1420: cut at the closing fence, not at the last line. agy can append
+        # text after it (`<!-- GOAL_COMPLETE -->`, run 10 on a 2026-10-30
+        # snapshot, 2 of 2 tries); dropping only the last line left the closing
+        # fence inside the JSON and the whole batch failed as malformed.
+        body = text.splitlines()[1:]
+        closing_fence = next(
+            (index for index, line in enumerate(body) if line.strip().startswith("```")),
+            len(body),
+        )
+        text = "\n".join(body[:closing_fence]).strip()
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
