@@ -88,6 +88,7 @@
     "ready",
     "recall",
     "recall-analysis",
+    "recall-selfcheck",
     "recompute-confidence-priors",
     "recompute-tiers",
     "record-media-retry-outcome",
@@ -143,7 +144,7 @@
     "memorymaster-workflow-hook"
   ],
   "counts": {
-    "cli_commands": 130,
+    "cli_commands": 131,
     "console_entrypoints": 9,
     "mcp_tools": 51,
     "ops_cli_commands": 5

@@ -41,6 +41,11 @@ from memorymaster.surfaces.cli_handlers_transcripts import (
     TRANSCRIPT_COMMANDS,
     register_transcript_parsers,
 )
+from memorymaster.surfaces.cli_handlers_selfcheck import (
+    SELFCHECK_COMMAND_HANDLERS,
+    SELFCHECK_COMMANDS,
+    register_selfcheck_parser,
+)
 from memorymaster.surfaces.cli_handlers_workflow import (
     WORKFLOW_COMMAND_HANDLERS,
     register_workflow_parser,
@@ -87,6 +92,7 @@ COMMAND_HANDLERS["hooks"] = _handle_hooks
 COMMAND_HANDLERS.update(SKILL_COMMAND_HANDLERS)
 COMMAND_HANDLERS.update(TRANSCRIPT_COMMAND_HANDLERS)
 COMMAND_HANDLERS.update(WORKFLOW_COMMAND_HANDLERS)
+COMMAND_HANDLERS.update(SELFCHECK_COMMAND_HANDLERS)
 COMMAND_HANDLERS.update(JEV_COMMAND_HANDLERS)
 
 
@@ -848,6 +854,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     register_skill_parsers(sub)
     register_workflow_parser(sub)
+    register_selfcheck_parser(sub)
     register_jev_parsers(sub)
     register_transcript_parsers(sub)
 
@@ -872,6 +879,7 @@ def main(argv: list[str] | None = None) -> int:
         "dream-status",
         "dream-backfill",
         "workflow",
+        *SELFCHECK_COMMANDS,  # read-only on the claims DB; builds its own read-only service
         *TRANSCRIPT_COMMANDS,  # sidecar transcript index only: never open the memory DB
         *LEDGER_COMMANDS,  # decisions ledger / Dreaming ledger only: never open the memory DB
     }
