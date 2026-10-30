@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HOME_LAB = re.compile(r"\b192\.168\.100\.\d{1,3}\b")
 # Pre-existing defaults that predate this guard; each still needs its own fix.
-KNOWN_DEBT = {"scripts/atlas_autoloop.py", "scripts/atlas_weekly_digest.py"}
+KNOWN_DEBT = {"scripts/atlas_autoloop.py"}
 
 
 def _tracked_text_files() -> list[str]:

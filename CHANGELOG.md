@@ -8,6 +8,10 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### Removed
+
+- `scripts/atlas_weekly_digest.py` (Atlas weekly digest): no longer used; no other script or doc referenced it.
+
 ### Dependency floors raised past known advisories (2026-10-28)
 
 - `pyproject.toml` declares floors only, so an install could resolve to a vulnerable minimum. pip-audit on the
