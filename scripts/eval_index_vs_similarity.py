@@ -197,16 +197,21 @@ def pool_for(prompt: dict, svc) -> dict:
     finally:
         context_hook._REQUEST_SCOPE.reset(scope_token)
         context_hook._REQUEST_SHARED_SCOPES.reset(shared_token)
-    pool = []
-    for row in ranked:
-        claim = row["claim"]
-        human_id = getattr(claim, "human_id", None) or f"mm-{claim.id}"
-        pool.append({"cid": human_id, "id": claim.id, "body": claim.text, "score": round(row.get("dense_score", 0.0), 4)})
-    injected = [getattr(r["claim"], "id", None) for r in rendered]
+    pool = [{"cid": getattr(row["claim"], "human_id", None) or f"mm-{row['claim'].id}", "id": row["claim"].id,
+             "body": row["claim"].text, "score": round(row.get("dense_score", 0.0), 4)} for row in ranked]
     return {
-        "uuid": prompt["uuid"], "status": "ok", "pool": pool, "a_ids": injected, "a_chars": len(block),
+        "uuid": prompt["uuid"], "status": "ok", "pool": disambiguate(pool),
+        "a_ids": [getattr(r["claim"], "id", None) for r in rendered], "a_chars": len(block),
         "indexed": metrics.get("indexed"), "above_threshold": metrics.get("above_threshold"),
     }
+
+
+def disambiguate(pool: list[dict]) -> list[dict]:
+    """Distinct claims can share a short id; inside one pool each gets ``<short>~<claim id>`` so reads resolve."""
+    counts: dict[str, int] = {}
+    for cand in pool:
+        counts[cand["cid"]] = counts.get(cand["cid"], 0) + 1
+    return [{**c, "cid": f"{c['cid']}~{c['id']}"} if counts[c["cid"]] > 1 else c for c in pool]
 
 
 # ------------------------------------------------------------------------- models
@@ -384,6 +389,25 @@ def strategy_metrics(events: list[dict], label_key: str) -> dict[str, Any]:
     }
 
 
+def bootstrap_diff(events: list[dict], label_key: str, rounds: int = 2000) -> dict[str, list[float | None]]:
+    """95% percentile interval of B minus A, resampling prompts (the unit that repeats) with a fixed seed."""
+    rng = random.Random(f"{SEED_PREFIX}:bootstrap:{label_key}")
+    fields = ("chars_per_prompt", "irrelevant_bodies_per_prompt", "relevant_recall")
+    draws: dict[str, list[float]] = {f: [] for f in fields}
+    for _ in range(rounds):
+        m = strategy_metrics([rng.choice(events) for _ in events], label_key)
+        for f in fields:
+            a, b = m[f"a_{f}"], m[f"b_{f}"]
+            if a is not None and b is not None:
+                draws[f].append(b - a)
+    out: dict[str, list[float | None]] = {}
+    for f, values in draws.items():
+        values.sort()
+        out[f] = [round(values[int(0.025 * len(values))], 4), round(values[int(0.975 * len(values)) - 1], 4)] \
+            if values else [None, None]
+    return out
+
+
 # ---------------------------------------------------------------------- pipeline
 
 
@@ -531,6 +555,7 @@ def cmd_report(args) -> None:
         "manifest_sha256": _sha(json.dumps(manifest, sort_keys=True, separators=(",", ":"))),
         "kappa_relevant": kappa(pairs), "raw_agreement": _ratio(sum(a == b for a, b in pairs), len(pairs)),
         "per_label_key": {key: strategy_metrics(events, key) for key in ("consensus", "gemini", "claude")},
+        "bootstrap_b_minus_a": {key: bootstrap_diff(events, key) for key in ("consensus", "gemini", "claude")},
     }
     (out / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))

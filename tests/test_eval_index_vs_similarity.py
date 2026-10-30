@@ -23,6 +23,11 @@ def test_index_titles_are_72_collapsed_chars_and_reads_cost_full_bodies():
     assert ev.read_text(cands, []) == ""
 
 
+def test_colliding_short_ids_get_a_claim_suffix_so_each_read_resolves_to_one_body():
+    pool = [{"cid": "mm-955b", "id": 1}, {"cid": "mm-aa", "id": 2}, {"cid": "mm-955b", "id": 3}]
+    assert [c["cid"] for c in ev.disambiguate(pool)] == ["mm-955b~1", "mm-aa", "mm-955b~3"]
+
+
 def test_reader_choices_are_restricted_to_the_index_and_capped():
     cands = [_cand(f"mm-{i:x}", "b") for i in range(1, 6)]
     raw = '```json\n{"read": ["mm-1", "mm-1", "mm-99", "mm-2", "mm-3", "mm-4"]}\n```'
@@ -73,3 +78,16 @@ def test_strategy_metrics_score_both_strategies_against_the_same_labels():
     assert m["b_read_irrelevant_rate"] == 0.0  # B read one body, relevant
     assert m["a_relevant_recall"] == 0.5 and m["b_relevant_recall"] == 0.5  # each delivered 1 of 2
     assert m["events_with_rel"] == 1 and m["a_prompt_hit_rate"] == 1.0 and m["b_prompt_hit_rate"] == 1.0
+
+
+def test_bootstrap_interval_is_reproducible_and_brackets_a_constant_difference():
+    event = {
+        "pool": [{"cid": "r"}, {"cid": "i"}], "a_ids": ["i"], "a_chars": 900,
+        "index_cids": ["r", "i"], "index_chars": 100, "read_ids": ["r"], "read_chars": 300,
+        "labels": {"k": {"r": "R", "i": "I"}},
+    }
+    first = ev.bootstrap_diff([event] * 5, "k", rounds=50)
+    assert first == ev.bootstrap_diff([event] * 5, "k", rounds=50)
+    assert first["chars_per_prompt"] == [-500.0, -500.0]
+    assert first["relevant_recall"] == [1.0, 1.0]
+    assert first["irrelevant_bodies_per_prompt"] == [-1.0, -1.0]
