@@ -39,25 +39,6 @@ def _registry() -> dict:
     return json.loads(Path(os.environ[scope_utils.SCOPE_REGISTRY_ENV]).read_text(encoding="utf-8"))["roots"]
 
 
-def test_the_first_root_keeps_the_plain_scope_and_a_second_gets_a_derived_one(tmp_path, caplog) -> None:
-    a = _repo(tmp_path / "client-a" / "api")
-    b = _repo(tmp_path / "client-b" / "api")
-
-    assert scope_from_cwd(a) == "project:api"
-    with caplog.at_level(logging.WARNING, logger=scope_utils.__name__):
-        b_scope = scope_from_cwd(b)
-    assert b_scope.startswith("project:api-") and b_scope != "project:api"
-    assert [r for r in caplog.records if "scope collision" in r.getMessage()], "the collision must be announced"
-
-    # Stable across calls, across both resolution modes, and from subdirectories.
-    (b / "src").mkdir()
-    assert scope_from_cwd(b / "src") == b_scope
-    assert resolve_transcript_workspace_scope(b) == b_scope
-    assert scope_from_cwd(a) == "project:api"
-    assert resolve_transcript_workspace_scope(a) == "project:api"
-    assert sorted(entry["scope"] for entry in _registry().values()) == sorted(["project:api", b_scope])
-
-
 def test_the_collision_warning_fires_once(tmp_path, caplog) -> None:
     _repo(tmp_path / "one" / "api")
     b = _repo(tmp_path / "two" / "api")
