@@ -726,7 +726,12 @@ def _effective_scope_allowlist(raw: str, workspace: str) -> list[str] | None:
             resolved = _resolve_workspace(workspace)
             # Both spellings of this workspace's own scope: the canonical one
             # and the pre-channel-fold literal that explicit ingests wrote.
-            scopes.extend(project_scope_variants(Path(resolved).name))
+            variants = project_scope_variants(Path(resolved).name)
+            # T-1874: a repo whose folder name another root already owns got
+            # "<plain>-<digest>"; reading the plain spellings would hand it the
+            # other repo's claims, so it skips them.
+            if not re.fullmatch(re.escape(variants[0]) + r"-[0-9a-f]{8}", scopes[0]):
+                scopes.extend(variants)
             scopes.extend(ancestor_project_scopes(resolved))
             scopes.append("user")
         if _ENV_QUERY_INCLUDE_LEGACY_PROJECT:

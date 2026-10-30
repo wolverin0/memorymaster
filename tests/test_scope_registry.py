@@ -112,3 +112,19 @@ def test_existing_claims_are_not_rewritten(tmp_path, monkeypatch) -> None:
     scope_from_cwd(_repo(tmp_path / "client-a" / "api"))
     assert scope_from_cwd(_repo(tmp_path / "client-b" / "api")) != "project:api"
     assert rows() == before
+
+
+def test_the_collided_repo_does_not_read_the_plain_scope_it_lost(tmp_path, monkeypatch) -> None:
+    from memorymaster.surfaces import mcp_server as m
+
+    monkeypatch.delenv("MEMORYMASTER_MCP_AUTH_MODE", raising=False)
+    monkeypatch.delenv("MEMORYMASTER_SCOPE_DISAMBIGUATE", raising=False)
+    monkeypatch.setattr(m, "_ENV_DEFAULT_PROJECT_SCOPE", "")
+    monkeypatch.setattr(m, "_ENV_RECALL_ANCESTOR_SCOPES", True)
+    a = _repo(tmp_path / "client-a" / "api")
+    b = _repo(tmp_path / "client-b" / "api")
+
+    assert "project:api" in m._effective_scope_allowlist("", str(a))
+    b_allow = m._effective_scope_allowlist("", str(b))
+    assert b_allow[0] == scope_from_cwd(b) != "project:api"
+    assert "project:api" not in b_allow, "client-b would read client-a's claims"
