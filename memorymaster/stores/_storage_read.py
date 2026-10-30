@@ -758,7 +758,8 @@ class _ReadMixin:
                 SELECT * FROM claims
                 WHERE status = 'confirmed'
                   AND pinned = 0
-                ORDER BY updated_at ASC, id ASC
+                ORDER BY COALESCE(MAX(last_evidence_at, last_decayed_at), last_evidence_at,
+                                  last_decayed_at, updated_at) ASC, id ASC
                 LIMIT ?
                 """,
                 (limit,),
@@ -890,6 +891,8 @@ class _ReadMixin:
             version=version,
             wiki_article=wiki_article,
             holder=row["holder"] if "holder" in keys else None,
+            last_evidence_at=row["last_evidence_at"] if "last_evidence_at" in keys else None,
+            last_decayed_at=row["last_decayed_at"] if "last_decayed_at" in keys else None,
         )
 
 

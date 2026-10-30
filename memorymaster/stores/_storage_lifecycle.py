@@ -159,6 +159,8 @@ class _LifecycleMixin:
         validated_event_type = validate_transition_event_type(event_type)
         now = utc_now()
         last_validated_at = now if to_status in {"confirmed", "stale", "conflicted"} else claim.last_validated_at
+        # A confirmation is evidence: it restarts the decay clock (T-1870 AC3).
+        evidence_at = now if to_status == "confirmed" else None
         archived_at = now if to_status == "archived" else None
         next_replaced_by = replaced_by_claim_id if replaced_by_claim_id is not None else claim.replaced_by_claim_id
         payload = {
@@ -235,10 +237,12 @@ class _LifecycleMixin:
                 UPDATE claims
                 SET status = ?, updated_at = ?, last_validated_at = ?, archived_at = ?,
                     replaced_by_claim_id = ?, version = version + 1,
-                    valid_until = COALESCE(?, valid_until)
+                    valid_until = COALESCE(?, valid_until),
+                    last_evidence_at = COALESCE(?, last_evidence_at)
                 WHERE id = ? AND version = ?
                 """,
-                (to_status, now, last_validated_at, archived_at, next_replaced_by, valid_until_update, claim.id, claim.version),
+                (to_status, now, last_validated_at, archived_at, next_replaced_by, valid_until_update, evidence_at,
+                 claim.id, claim.version),
             )
             if cur.rowcount == 0:
                 raise ConcurrentModificationError(

@@ -578,9 +578,9 @@ def _approve_in_transaction(store: Any, conn: Any, claim: Any, skill: Mapping[st
     if parent_id is not None:
         _supersede_parent(conn, parent_id, skill["expected_parent_version"], claim.id, now)
     cur = conn.execute(
-        "UPDATE claims SET status='confirmed', updated_at=?, last_validated_at=?, "
+        "UPDATE claims SET status='confirmed', updated_at=?, last_validated_at=?, last_evidence_at=?, "
         "supersedes_claim_id=?, version=version+1 WHERE id=? AND version=? AND status='candidate'",
-        (now, now, parent_id, claim.id, claim.version),
+        (now, now, now, parent_id, claim.id, claim.version),
     )
     if cur.rowcount != 1:
         raise ConcurrentModificationError(f"skill candidate {claim.id} changed before approval")

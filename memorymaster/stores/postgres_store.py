@@ -1852,10 +1852,11 @@ class PostgresStore(SQLiteStore):
                         text, idempotency_key, normalized_text, claim_type, subject, predicate, object_value,
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
                         replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
-                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility, holder
+                        tenant_id, event_time, valid_from, valid_until, source_agent, visibility, holder,
+                        last_evidence_at
                     ) VALUES (
                         %s, %s, NULL, %s, %s, %s, %s, %s, %s, 'candidate', %s, FALSE, NULL, NULL, %s, %s, NULL, NULL,
-                        %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s
                     )
                     ON CONFLICT DO NOTHING
                     RETURNING id
@@ -1879,6 +1880,7 @@ class PostgresStore(SQLiteStore):
                     source_agent,
                     visibility,
                     holder,
+                    now,  # the ingest is the claim's first evidence (decay clock)
                 ),
             )
             claim_row = cur.fetchone()
@@ -2583,7 +2585,9 @@ class PostgresStore(SQLiteStore):
         # Rescope (govern/rescope.py) is SQLite-only for now: fail closed.
         raise NotImplementedError("adopt_claim_history is SQLite-only")
 
-    def set_confidence(self, claim_id: int, confidence: float, details: str | None = None) -> None:
+    def set_confidence(
+        self, claim_id: int, confidence: float, details: str | None = None, *, decay_step: bool = False
+    ) -> None:
         bounded = max(0.0, min(1.0, confidence))
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
@@ -2601,8 +2605,10 @@ class PostgresStore(SQLiteStore):
                     bump_counter("claim_confidence_noop_total", writer=details_writer(details))
                 return
             cur.execute(
-                "UPDATE claims SET confidence = %s, updated_at = %s WHERE id = %s",
-                (bounded, now, claim_id),
+                "UPDATE claims SET confidence = %s, updated_at = %s"
+                + (", last_decayed_at = %s" if decay_step else "")
+                + " WHERE id = %s",
+                (bounded, now, *((now,) if decay_step else ()), claim_id),
             )
             if details:
                 self._insert_event_row(
@@ -2676,6 +2682,8 @@ class PostgresStore(SQLiteStore):
         validated_event_type = validate_transition_event_type(event_type)
         now = utc_now()
         last_validated_at = now if to_status in {"confirmed", "stale", "conflicted"} else claim.last_validated_at
+        # A confirmation is evidence: it restarts the decay clock (T-1870 AC3).
+        evidence_at = now if to_status == "confirmed" else None
         archived_at = now if to_status == "archived" else None
         next_replaced_by = replaced_by_claim_id if replaced_by_claim_id is not None else claim.replaced_by_claim_id
 
@@ -2687,10 +2695,11 @@ class PostgresStore(SQLiteStore):
             cur.execute(
                 """
                 UPDATE claims
-                SET status = %s, updated_at = %s, last_validated_at = %s, archived_at = %s, replaced_by_claim_id = %s
+                SET status = %s, updated_at = %s, last_validated_at = %s, archived_at = %s, replaced_by_claim_id = %s,
+                    last_evidence_at = COALESCE(%s, last_evidence_at)
                 WHERE id = %s
                 """,
-                (to_status, now, last_validated_at, archived_at, next_replaced_by, claim.id),
+                (to_status, now, last_validated_at, archived_at, next_replaced_by, evidence_at, claim.id),
             )
             self._insert_event_row(
                 conn,
@@ -2967,7 +2976,7 @@ class PostgresStore(SQLiteStore):
                     SELECT * FROM claims
                     WHERE status = 'confirmed'
                       AND pinned = FALSE
-                    ORDER BY updated_at ASC, id ASC
+                    ORDER BY COALESCE(GREATEST(last_evidence_at, last_decayed_at), updated_at) ASC, id ASC
                     LIMIT %s
                     """,
                 (limit,),
@@ -3862,6 +3871,8 @@ class PostgresStore(SQLiteStore):
             visibility=cls._as_text(row.get("visibility")) or "public",
             wiki_article=cls._as_text(row.get("wiki_article")),
             holder=cls._as_text(row.get("holder")),
+            last_evidence_at=cls._as_iso(row.get("last_evidence_at")),
+            last_decayed_at=cls._as_iso(row.get("last_decayed_at")),
         )
 
     @classmethod

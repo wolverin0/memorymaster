@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS claims (
     wiki_article TEXT,
     holder TEXT,
     tenant_id TEXT,
+    last_evidence_at TEXT,
+    last_decayed_at TEXT,
     FOREIGN KEY (supersedes_claim_id) REFERENCES claims(id) ON DELETE SET NULL,
     FOREIGN KEY (replaced_by_claim_id) REFERENCES claims(id) ON DELETE SET NULL
 );

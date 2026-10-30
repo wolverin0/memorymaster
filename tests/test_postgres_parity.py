@@ -251,6 +251,20 @@ class TestPostgresParityQueries:
         found = svc.store.find_for_decay()
         assert len(found) >= 1
 
+    def test_decay_clock_columns(self):
+        # T-1870 AC3: ingest and confirmation stamp evidence; only a decay step stamps last_decayed_at.
+        svc = _make_pg_service()
+        cid = _ingest(svc, "Decay clock parity")
+        claim = svc.store.get_claim(cid)
+        assert claim.last_evidence_at is not None and claim.last_decayed_at is None
+        confirmed = svc.store.apply_status_transition(
+            claim, to_status="confirmed", reason="confirmed", event_type="validator"
+        )
+        svc.store.set_confidence(cid, max(0.0, confirmed.confidence - 0.1), details="validator_score=x")
+        assert svc.store.get_claim(cid).last_evidence_at == confirmed.last_evidence_at
+        svc.store.set_confidence(cid, 0.0, details="decay_rate=1", decay_step=True)
+        assert svc.store.get_claim(cid).last_decayed_at is not None
+
     def test_find_confirmed_by_tuple(self):
         svc = _make_pg_service()
         _ingest(

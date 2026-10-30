@@ -12,6 +12,20 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 - `scripts/atlas_weekly_digest.py` (Atlas weekly digest): no longer used; no other script or doc referenced it.
 
+### Decay clock separate from `updated_at` (T-1870 AC3, migration 32)
+
+- Decay aged confirmed claims from `updated_at`, which every confidence write moves. Deterministic and the
+  validator run before decay, so a real value change from either (no new evidence) restarted the decay clock.
+  Decay now ages from the later of two new columns: `last_evidence_at` (set at ingest and on every
+  confirmation) and `last_decayed_at` (set by a decay step only). `find_for_decay` orders by the same clock.
+- Migration 32 (SQLite) adds both nullable columns and fills only NULL cells: `last_evidence_at` = latest of
+  `created_at`, newest citation, and (confirmed claims) `last_validated_at`; `last_decayed_at` = `updated_at`
+  for confirmed claims, so the first run after the upgrade charges exactly what it would have before (nothing
+  is charged twice, nothing goes stale in a burst; time lost earlier is not reclaimed). The backfill touches
+  every claim row once, so the project-source change cursor marks them all changed. PostgreSQL: both columns
+  are in `schema_postgres.sql` (`ADD COLUMN IF NOT EXISTS`); the migration stays fail-closed like 19+, and rows
+  without the clock keep the legacy `updated_at` anchor. Rollback: the columns are additive; older code ignores them.
+
 ### Dependency floors raised past known advisories (2026-10-28)
 
 - `pyproject.toml` declares floors only, so an install could resolve to a vulnerable minimum. pip-audit on the
