@@ -2625,9 +2625,12 @@ class PostgresStore(SQLiteStore):
     def set_pinned(self, claim_id: int, pinned: bool, reason: str) -> None:
         now = utc_now()
         with self.connect() as conn, conn.cursor() as cur:
+            # Decay resumes from the unpin, not from before the pin (T-1870 AC3).
             cur.execute(
-                "UPDATE claims SET pinned = %s, updated_at = %s WHERE id = %s",
-                (pinned, now, claim_id),
+                "UPDATE claims SET pinned = %s, updated_at = %s"
+                + ("" if pinned else ", last_decayed_at = %s")
+                + " WHERE id = %s",
+                (pinned, now, *(() if pinned else (now,)), claim_id),
             )
             self._insert_event_row(
                 conn,

@@ -8,6 +8,7 @@ confirmation) and ``last_decayed_at`` (decay step); decay ages from the later of
 from __future__ import annotations
 
 import importlib
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from memorymaster.core.config import get_config
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
+from memorymaster.govern import llm_steward
 from memorymaster.govern.jobs import decay, deterministic
 
 migration = importlib.import_module("memorymaster.stores.migrations.0032_claim_decay_clock")
@@ -169,6 +171,34 @@ def test_migration_backfills_from_citations_and_validation(svc: MemoryService) -
     assert rows[confirmed.id] == (validated, updated)  # latest of created/cited/validated; decayed = updated_at
     assert rows[uncited.id] == (created, updated)  # NULL citation and NULL validation do not null the max
     assert rows[candidate.id] == (cited, None)  # candidates do not decay; stale-time validation ignored
+
+
+def test_llm_steward_confirmation_restarts_the_decay_clock(svc: MemoryService) -> None:
+    claim = svc.ingest(text="steward candidate", citations=[CitationInput(source="decay-clock-steward")],
+                       source_agent="claude-session")
+    old = _days_ago(40)
+    _set(svc, claim.id, last_evidence_at=old)
+    conn = sqlite3.connect(svc.store.db_path)
+    try:
+        assert llm_steward._confirm_candidate_cas(
+            conn, claim_id=claim.id, version=svc.store.get_claim(claim.id).version,
+            subject="s", predicate="p", object_value=None, confidence=0.9,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    assert _parse(svc.store.get_claim(claim.id).last_evidence_at) > _parse(old)
+
+
+def test_unpin_resumes_decay_instead_of_charging_the_pinned_period(svc: MemoryService) -> None:
+    claim = _confirmed(svc, "pinned", evidence_days_ago=200)
+    svc.store.set_pinned(claim.id, True, reason="fixture")
+    assert claim.id not in [c.id for c in svc.store.find_for_decay()]
+
+    svc.store.set_pinned(claim.id, False, reason="fixture")
+    decay.run(svc.store)
+
+    assert svc.store.get_claim(claim.id).confidence == pytest.approx(0.9, abs=1e-3)
 
 
 def test_postgres_migration_fails_closed() -> None:

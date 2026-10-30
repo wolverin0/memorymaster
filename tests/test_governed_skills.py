@@ -340,6 +340,20 @@ def test_repeated_rule_evidence_creates_one_candidate_and_requires_approval(
     assert [item["claim_id"] for item in hits] == [first["claim_id"]]
 
 
+def test_skill_approval_restarts_the_decay_clock(service: MemoryService) -> None:
+    # T-1870 AC3: an approval is a confirmation, so it is evidence for decay.
+    rule = _rule(service, correction_count=2)
+    proposed = propose_skill(
+        service, payload=_payload(), supporting_claim_ids=[rule.id], scope="project:memorymaster",
+    )
+    old = "2020-01-01T00:00:00+00:00"
+    with sqlite3.connect(service.store.db_path) as conn:
+        conn.execute("UPDATE claims SET last_evidence_at = ? WHERE id = ?", (old, proposed["claim_id"]))
+
+    assert approve_skill_candidate(service, proposed["claim_id"], actor="operator")["approved"] is True
+    assert service.store.get_claim(proposed["claim_id"]).last_evidence_at > old
+
+
 def test_rule_evidence_requires_three_independent_root_sessions(service: MemoryService) -> None:
     rule = _rule(service, correction_count=3, root_sessions=2)
     with pytest.raises(SkillValidationError, match="three independent human root sessions"):

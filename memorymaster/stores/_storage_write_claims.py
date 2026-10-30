@@ -598,9 +598,13 @@ class _WriteClaimsMixin:
     def set_pinned(self, claim_id: int, pinned: bool, reason: str) -> None:
         now = utc_now()
         with self.connect() as conn:
+            # Decay skips pinned claims; on unpin it resumes from now instead of charging
+            # the whole pinned period at once (T-1870 AC3).
             conn.execute(
-                "UPDATE claims SET pinned = ?, updated_at = ? WHERE id = ?",
-                (1 if pinned else 0, now, claim_id),
+                "UPDATE claims SET pinned = ?, updated_at = ?"
+                + ("" if pinned else ", last_decayed_at = ?")
+                + " WHERE id = ?",
+                (1 if pinned else 0, now, *(() if pinned else (now,)), claim_id),
             )
             self._insert_event_row(
                 conn,
