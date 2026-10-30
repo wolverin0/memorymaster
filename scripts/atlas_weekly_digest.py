@@ -5,7 +5,7 @@ Queries the recent life-claims, LLM-synthesizes a concise Spanish weekly digest
 via Jarvis (/api/telegram/test-send), and saves a local copy. Intended to run as
 a weekly Windows Scheduled Task (Monday morning).
 
-Env: MM_MODEL (default gemini-2.5-flash-lite), DIGEST_DAYS (default 8), ATLAS_VM.
+Env: MM_MODEL (default gemini-flash-lite-latest), DIGEST_DAYS (default 8), ATLAS_VM.
 """
 import json
 import os
@@ -27,7 +27,7 @@ REPO = "G:/_OneDrive/OneDrive/Desktop/Py Apps/memorymaster"
 BRAIN = os.path.join(REPO, "memorymaster.db")
 KEYFILE = os.environ.get("ATLAS_KEYFILE", "G:/_OneDrive/OneDrive/Desktop/new fiber.txt")
 BASH = "C:/Program Files/Git/bin/bash.exe"
-MODEL = os.environ.get("MM_MODEL", "gemini-2.5-flash-lite")
+MODEL = os.environ.get("MM_MODEL", "gemini-flash-lite-latest")
 DAYS = int(os.environ.get("DIGEST_DAYS", "8"))
 OUTDIR = "C:/Users/pauol"
 
@@ -96,6 +96,8 @@ def synthesize(rows):
     gen = {"temperature": 0.4, "maxOutputTokens": 1400}
     if "gemini-2.5" in MODEL:
         gen["thinkingConfig"] = {"thinkingBudget": 0}
+    elif MODEL.startswith("gemini-flash"):  # -latest aliases resolve to 3.x
+        gen["thinkingConfig"] = {"thinkingLevel": "minimal"}
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen}).encode()
     last = None
     for attempt in range(5):

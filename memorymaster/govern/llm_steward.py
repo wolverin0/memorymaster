@@ -86,7 +86,7 @@ def _parse_api_keys(
 PROVIDERS = {
     "gemini": {
         "url": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}",
-        "default_model": "gemini-2.5-flash",
+        "default_model": "gemini-flash-latest",
         "format": "gemini",
     },
     "openai": {

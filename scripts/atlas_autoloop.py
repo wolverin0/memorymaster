@@ -13,7 +13,7 @@ history) unless --reprocess-all is passed.
 Note: this is the EXTRACTION half of the loop. It only sees new evidence if the
 VM's Atlas harvesters (Gmail/Outlook/WhatsApp imports) are actually running.
 
-Env: MM_MODEL (default gemini-2.5-flash-lite), VM (ssh target), MEMORYMASTER_LLM key file.
+Env: MM_MODEL (default gemini-flash-lite-latest), VM (ssh target), MEMORYMASTER_LLM key file.
 """
 import json
 import os
@@ -37,7 +37,7 @@ BASH = "C:/Program Files/Git/bin/bash.exe"
 # 3.1-flash-lite-preview: ~500 req/day free per key; 2.5-flash-lite was 429 on
 # ALL rotator keys (verified 2026-07-02) and silently zeroed a whole night's
 # extraction (2026-07-03 run: 7 batches, 0 claims).
-MODEL = os.environ.get("MM_MODEL", "gemini-3.1-flash-lite-preview")
+MODEL = os.environ.get("MM_MODEL", "gemini-flash-lite-latest")
 BATCH = int(os.environ.get("BATCH", "20"))
 WORKERS = int(os.environ.get("WORKERS", "4"))
 MAX_PER_RUN = int(os.environ.get("MAX_EVIDENCE_PER_RUN", "8000"))  # safety cap
@@ -142,7 +142,7 @@ def _call(prompt):
     gen = {"temperature": 0.1, "maxOutputTokens": 8192, "responseMimeType": "application/json"}
     if "gemini-2.5" in MODEL:
         gen["thinkingConfig"] = {"thinkingBudget": 0}
-    elif "gemini-3" in MODEL:
+    elif "gemini-3" in MODEL or MODEL.startswith("gemini-flash"):  # -latest aliases resolve to 3.x
         gen["thinkingConfig"] = {"thinkingLevel": "minimal"}
     req = urllib.request.Request(
         url, data=json.dumps({"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen}).encode(),

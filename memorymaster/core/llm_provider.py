@@ -165,7 +165,7 @@ def _call_google_with_env_rotation(model: str, payload: dict[str, Any]) -> str |
 def _call_google(prompt: str, text: str) -> str:
     """Google Gemini API.
 
-    Default model is ``gemini-3.1-flash-lite-preview``: observed free-tier
+    Default model is ``gemini-flash-lite-latest``: observed free-tier
     RPM is ~500 per key versus ~20 for gemini-2.5-flash-lite, and output
     quality is materially better on the tasks this repo feeds it
     (extraction, wiki-absorb, classification). Override via
@@ -181,7 +181,7 @@ def _call_google(prompt: str, text: str) -> str:
     """
     from memorymaster.core.key_rotator import get_rotator
 
-    model = _env("MEMORYMASTER_LLM_MODEL", "gemini-3.1-flash-lite-preview")
+    model = _env("MEMORYMASTER_LLM_MODEL", "gemini-flash-lite-latest")
 
     payload: dict[str, Any] = {
         "contents": [{"parts": [{"text": f"{prompt}\n\n{text}"}]}],
@@ -192,7 +192,7 @@ def _call_google(prompt: str, text: str) -> str:
     }
 
     # Gemini 3.x models support thinkingLevel
-    if "gemini-3" in model:
+    if "gemini-3" in model or model.startswith("gemini-flash"):  # -latest aliases resolve to 3.x
         payload["generationConfig"]["thinkingConfig"] = {"thinkingLevel": "minimal"}
     elif "gemini-2.5" in model:
         payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}

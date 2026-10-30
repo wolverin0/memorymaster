@@ -274,7 +274,7 @@ def setup_llm_provider():
 
     if provider in ("google", "gemini"):
         api_key = ask("GEMINI_API_KEY")
-        model = ask("Model", "gemini-3.1-flash-lite-preview")
+        model = ask("Model", "gemini-flash-lite-latest")
     elif provider == "openai":
         api_key = ask("OPENAI_API_KEY")
         model = ask("Model", "gpt-4o-mini")
@@ -725,7 +725,7 @@ def _configure_receipt_client(
 def setup_dream_schedule(db_path: str | Path, *, apply_candidates: bool) -> str:
     """Create the hourly Windows task; other platforms get a manual command."""
     provider = os.environ.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "gemini").strip()
-    default_model = {"gemini": "gemini-3.5-flash", "google": "gemini-3.5-flash", "claude": "haiku"}.get(
+    default_model = {"gemini": "gemini-flash-latest", "google": "gemini-flash-latest", "claude": "haiku"}.get(
         provider, "openai/gpt-5.4-mini",
     )
     parts = [
@@ -1556,7 +1556,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def _resolve_provider_config(args: argparse.Namespace) -> dict[str, str]:
     """Build the llm_config from flags, falling back to interactive prompts."""
     defaults = {
-        "google": ("GEMINI_API_KEY", "gemini-3.1-flash-lite-preview"),
+        "google": ("GEMINI_API_KEY", "gemini-flash-lite-latest"),
         "openai": ("OPENAI_API_KEY", "gpt-4o-mini"),
         "anthropic": ("ANTHROPIC_API_KEY", "claude-haiku-4-5-20251001"),
         "ollama": ("", "llama3.2:3b"),

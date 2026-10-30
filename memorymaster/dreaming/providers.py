@@ -544,7 +544,7 @@ class GeminiExtractor:
 
     def __init__(self, *, api_key: str | None = None, model: str | None = None, transport: Transport = _default_transport, sleep: Callable[[float], None] = time.sleep, min_interval_s: float | None = None, clock: Callable[[], float] = time.monotonic, tokens_per_minute: int | None = None) -> None:
         self.api_key = api_key if api_key is not None else os.environ.get("GEMINI_API_KEY", "")
-        self.model = model or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "gemini-3.5-flash")
+        self.model = model or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "gemini-flash-latest")
         self.transport = transport
         self.sleep = sleep
         if min_interval_s is None:
