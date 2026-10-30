@@ -16,9 +16,15 @@ share this resolution rather than deriving disposable checkout scopes.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import os
 import re
+import tempfile
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 __all__ = [
@@ -310,8 +316,120 @@ def resolve_workspace_scope(
     if strict:
         if _EPHEMERAL_WORKSPACE.fullmatch(name) and folder_slug not in aliases:
             return None
-        return aliases.get(folder_slug, f"project:{slug}")
-    return aliases.get(folder_slug, aliases.get(slug, f"project:{slug}"))
+        if folder_slug in aliases:
+            return aliases[folder_slug]
+    elif folder_slug in aliases or slug in aliases:
+        return aliases.get(folder_slug, aliases.get(slug))
+    plain = f"project:{slug}"
+    return _registered_scope(roots[1], plain) if roots is not None else plain
+
+
+SCOPE_REGISTRY_ENV = "MEMORYMASTER_SCOPE_REGISTRY"
+_LOG = logging.getLogger(__name__)
+_REGISTRY_LOCK_TRIES = 20  # x 10 ms; a hook must never block for long
+
+
+def _read_registry(path: Path) -> dict[str, dict] | None:
+    """Repository root -> {"scope", "name"}; None when the file is unreadable or corrupt."""
+    try:
+        roots = json.loads(path.read_text(encoding="utf-8")).get("roots", {})
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    return roots if isinstance(roots, dict) else None
+
+
+@contextmanager
+def _registry_lock(path: Path) -> Iterator[None]:
+    lock = path.with_name(path.name + ".lock")
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a+b") as handle:
+        for _ in range(_REGISTRY_LOCK_TRIES):
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                time.sleep(0.01)
+        else:
+            raise OSError("scope registry is locked")
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _registered_scope(root: Path, plain: str) -> str:
+    """The scope a Git owner root holds in the persistent root registry (T-1874).
+
+    The scope used to be the folder name alone, so ``client-a/api`` and
+    ``client-b/api`` wrote into one ``project:api``. The registry
+    (``~/.memorymaster/scope-registry.json``, outside the claims DB) records
+    which root owns each name: the first root keeps the plain scope, a later
+    root with the same folder name gets ``<plain>-<digest>`` and one warning,
+    at the moment it is registered. Names that only fold together
+    (``whatsappbot-final``) still share the plain scope on purpose. Nothing
+    here touches stored claims; a broken or locked registry yields today's
+    plain scope rather than failing a read path.
+    """
+    key = os.path.normcase(str(root))
+    name = _alias_slug(root.name)
+    path = Path(os.environ.get(SCOPE_REGISTRY_ENV) or Path.home() / ".memorymaster" / "scope-registry.json")
+
+    def owned(roots: dict[str, dict]) -> str | None:
+        entry = roots.get(key)
+        scope = entry.get("scope") if isinstance(entry, dict) else None
+        return scope if isinstance(scope, str) and scope.startswith("project:") else None
+
+    try:
+        roots = _read_registry(path)
+        if roots is None:
+            return plain
+        if (scope := owned(roots)) is not None:
+            return scope
+        with _registry_lock(path):
+            roots = _read_registry(path)
+            if roots is None:
+                return plain
+            if (scope := owned(roots)) is not None:
+                return scope
+            taken = any(
+                other != key and isinstance(entry, dict) and entry.get("name") == name
+                for other, entry in roots.items()
+            )
+            digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+            scope = f"{plain}-{digest}" if taken else plain
+            roots[key] = {"scope": scope, "name": name}
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, temporary = tempfile.mkstemp(prefix="." + path.name + ".", dir=path.parent)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    json.dump({"roots": roots}, stream, indent=2, sort_keys=True)
+                os.replace(temporary, path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+    except OSError:
+        return plain
+    if taken:
+        _LOG.warning(
+            "scope collision: another repository already owns %s; this one now resolves to %s "
+            "(pin it in scope-aliases.json to choose otherwise)",
+            plain, scope,
+        )
+    return scope
 
 
 def project_root_from_cwd(cwd: str | os.PathLike[str] | None) -> Path:
