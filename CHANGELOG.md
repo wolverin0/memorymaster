@@ -8,6 +8,14 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### Dependency floors raised past known advisories (2026-10-28)
+
+- `pyproject.toml` declares floors only, so an install could resolve to a vulnerable minimum. pip-audit on the
+  lowest-direct resolution of all extras reported 89 advisories in 9 packages; with the new floors it reports none.
+  New floors: `requests>=2.33`, `mcp>=1.30,<2` (also in `integrations/hermes-memorymaster`), `cryptography>=50`,
+  `pypdf>=6.21.2`, `sentence-transformers>=5.6`, `scikit-learn>=1.5`, and in `dev` `pytest>=9.0.3`, `uv>=0.13.4`,
+  `PyYAML>=6.0.1` (6.0 does not build on Python 3.12). The latest resolution is unchanged.
+
 ### Partial-fix follow-ups from the external review (T-1877, prompt recall hook)
 
 - Retrieval (F1): every selected question term is now searched (the first six together, three on their own as
