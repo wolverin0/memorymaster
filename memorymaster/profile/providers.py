@@ -20,6 +20,7 @@ from memorymaster.profile.models import (
     ProfileValidationError,
     ProfileVocabularyError,
     ProfileVocabularyRejections,
+    validate_profile_value,
 )
 
 
@@ -43,9 +44,10 @@ _EMPTY_RETRIES = 2  # extra attempts after the first empty answer
 # snapshot: 2 fresh compiles failed all 10 of their ticks with
 # ProfileValidationError; with these shapes `volatilities` and the scalar
 # `candidate_id` stopped appearing. The model still drops the `predicate` key
-# in about 1 map reply in 20; telling it so in words (and regrouping CONTRACT)
-# made that worse, about 1 in 5, so the prompt does not try. The parsers below
-# read exactly these keys and limits.
+# in about 1 map reply in 28 (5 of 138); telling it so in words (and regrouping
+# CONTRACT) made that worse, 10 of 90, so the prompt does not try:
+# `_reject_incomplete_row` takes the rows that parse. The parsers below read
+# exactly these keys and limits.
 MAP_ROW_SHAPE = {
     "category": "<one of categories>",
     "predicate": "<a predicates key that maps to this category>",
@@ -154,6 +156,7 @@ def _candidate_from_row(row: dict[str, Any]) -> ProfileCandidate:
     support_ids = row.get("support_ids")
     if not isinstance(support_ids, list) or not all(isinstance(item, int) for item in support_ids):
         raise ProfileValidationError("profile candidate supports are invalid")
+    _reject_incomplete_row(row)
     category = _string(row, "category", max_length=40)
     predicate = _string(row, "predicate", max_length=80)
     value = _string(row, "value", max_length=240)
@@ -170,6 +173,36 @@ def _candidate_from_row(row: dict[str, Any]) -> ProfileCandidate:
         value=value,
         volatility=volatility,
         support_ids=tuple(support_ids),
+    )
+
+
+def _reject_incomplete_row(row: dict[str, Any]) -> None:
+    """Reject alone a row that lacks a fact key; the rest of its batch survives.
+
+    T-1420: gemini-3.8-flash-low writes the predicate name as a key
+    (`{"workflow_preference": "...", ...}`) instead of `"predicate": "..."` in
+    about 1 map reply in 20, so a full compile (about 45 map calls) lost one or
+    two ticks to it. A missing key is a vocabulary miss, like an unknown
+    predicate (T-1741): only that row is rejected. Every value the row carries
+    still passes the value boundary, so unsafe content keeps failing closed,
+    and the recorded token is a fixed key name, never provider text.
+    """
+    missing = [key for key in MAP_ROW_SHAPE if key not in row]
+    if not missing:
+        return
+    for key, value in row.items():
+        if key == "support_ids":
+            continue
+        if isinstance(value, (dict, list)):
+            # Nested content is not scanned field by field: fail closed.
+            raise ProfileValidationError("profile candidate has a malformed field")
+        if isinstance(value, str):
+            validate_profile_value(value)
+    material = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    raise ProfileVocabularyError(
+        "profile candidate lacks required keys",
+        ",".join(missing),
+        ("pm-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24],),
     )
 
 
