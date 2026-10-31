@@ -91,3 +91,13 @@ on. A skipped prompt shows `via=off` in the hook path and injects nothing.
 Measure the effect with `scripts/eval_prompt_recall.py` (fixed 200-prompt set,
 dense and lexical) and, after a week, with `scripts/review_recall_citations.py`
 (citation rate and injected characters per prompt, lanes on vs off).
+
+## Recall self-check (T-1875)
+
+`memorymaster recall-selfcheck run` takes recent confirmed, public claims, asks the configured LLM
+provider for 2-3 questions per claim, runs the real governed recall (no access recording) and stores
+hit@k per claim in a sidecar (`<db>.recall-selfcheck.sqlite`). The claims DB is opened read-only and
+no claim is written. Claims whose text trips the sensitivity filter are skipped before any egress;
+calls, tokens and claims per run are capped, and a provider that returns nothing aborts the run
+(exit 3). `memorymaster recall-selfcheck report` prints the hit rate per scope and the claims recall
+could not find. It is opt-in and not scheduled; hits are measured inside the claim's own scope.
