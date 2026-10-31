@@ -2,6 +2,10 @@
 
 Runs in its own runtime (sentence-transformers >= 6.1, CUDA torch, torchvision,
 pillow), never in the hook process: loading the model costs ~5.5 s and ~1.3 GB.
+This process holds only the index and the HTTP server; the model lives in a child
+process (``dense_worker``) started by the first query and ended after
+``--idle-unload-s`` seconds without one, because torch's committed memory
+(1.6 GB for the import, 3.7-4.6 GB with the model) is never returned in-process.
 The index is a derived view. It reads the authoritative SQLite read-only, keeps
 one vector per confirmed claim, and answers ``POST /search`` with candidate ids.
 Callers rehydrate and authorize those ids through the governed store, so a
@@ -33,9 +37,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+# numpy's OpenBLAS commits ~750 MB of per-thread buffers at import (measured 2026-10-30: 757 MB
+# with the default threads, 18 MB with one). The only BLAS work here is one 7k x 768 matvec.
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+
+import numpy as np  # noqa: E402
 
 from memorymaster.core import stall_probe
+from memorymaster.recall.dense_worker import EncoderUnloaded, WorkerEncoder
 from memorymaster.stores._storage_shared import connect_ro
 
 LOGGER = logging.getLogger("memorymaster.dense_server")
@@ -108,8 +117,12 @@ class DenseIndex:
                  vectors=self.vectors, model=np.array(self._model_tag))
         os.replace(tmp, self._cache_path)
 
-    def sync(self, claims: Sequence[tuple[int, str, str]]) -> int:
-        """Make the index match ``claims``; returns how many texts were embedded."""
+    def sync(self, claims: Sequence[tuple[int, str, str]], *, embed: bool = True) -> int:
+        """Make the index match ``claims``; returns how many texts were embedded.
+
+        With ``embed=False`` (the model is unloaded) new claims are left out and changed ones keep
+        their old vector and hash, so the next sync with the model loaded picks both up.
+        """
         known = {int(cid): (h, row) for row, (cid, h) in enumerate(zip(self.ids.tolist(), self.hashes))}
         keep_rows: list[int] = []
         new_ids: list[int] = []
@@ -122,12 +135,12 @@ class DenseIndex:
         for cid, scope, text in claims:
             digest = _text_hash(text)
             previous = known.get(cid)
-            if previous is not None and previous[0] == digest:
+            if previous is not None and (previous[0] == digest or not embed):
                 keep_rows.append(previous[1])
                 ids.append(cid)
                 scopes.append(scope)
-                hashes.append(digest)
-            else:
+                hashes.append(previous[0])
+            elif embed:
                 new_ids.append(cid)
                 new_scopes.append(scope)
                 new_hashes.append(digest)
@@ -201,9 +214,11 @@ def load_encoder(dim: int, device: str | None = None) -> tuple[Encoder, str]:
 
 class DenseService:
     def __init__(self, db_path: str | Path, encode: Encoder, *, model: str, dim: int, device: str,
-                 cache_path: Path | None = None, sync_interval_s: float = 60.0) -> None:
+                 cache_path: Path | None = None, sync_interval_s: float = 60.0,
+                 is_loaded: Callable[[], bool] | None = None) -> None:
         self.db_path = str(db_path)
         self.encode = encode
+        self.is_loaded = is_loaded  # None: the encoder is always resident (tests, in-process use)
         self.model = model
         self.dim = dim
         self.device = device
@@ -214,7 +229,15 @@ class DenseService:
         self._stop = threading.Event()
 
     def sync_once(self) -> int:
-        return self.index.sync(read_confirmed_claims(self.db_path))
+        """Never loads the model: while it is unloaded only removals are applied, so the index sync
+        (every minute) cannot keep an idle model resident."""
+        claims = read_confirmed_claims(self.db_path)
+        if self.is_loaded is not None and not self.is_loaded():
+            return self.index.sync(claims, embed=False)
+        try:
+            return self.index.sync(claims)
+        except EncoderUnloaded:  # unloaded between the check and an embedding chunk: try next round
+            return 0
 
     def _sync_loop(self) -> None:
         while not self._stop.is_set():
@@ -250,8 +273,10 @@ class DenseService:
                 "probe": window.finish()}  # T-1648: observation only, empty when MEMORYMASTER_STALL_PROBE=0
 
     def health(self) -> dict[str, Any]:
+        loaded = {} if self.is_loaded is None else {"model_loaded": self.is_loaded()}
         return {"ok": True, "model": self.model, "dim": self.dim, "device": self.device,
-                "uptime_s": round(time.time() - self.started), "sync_errors": self.sync_errors, **self.index.stats()}
+                "uptime_s": round(time.time() - self.started), "sync_errors": self.sync_errors,
+                **loaded, **self.index.stats()}
 
 
 def make_handler(service: DenseService) -> type[BaseHTTPRequestHandler]:
@@ -313,20 +338,22 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--device", default=None)
     parser.add_argument("--cache", default=str(Path.home() / ".memorymaster" / "dense" / "eg2-index.npz"))
     parser.add_argument("--sync-interval", type=float, default=60.0)
+    parser.add_argument("--idle-unload-s", type=float, default=600.0,
+                        help="end the model process after this many seconds without a query (0 = never)")
     parser.add_argument("--log-file", default=str(Path.home() / ".memorymaster" / "logs" / "dense-recall.log"))
     args = parser.parse_args(argv)
     Path(args.log_file).parent.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=args.log_file, level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    encode, device = load_encoder(args.dim, args.device)
+    encoder = WorkerEncoder(args.dim, args.device, idle_s=args.idle_unload_s, log_path=Path(args.log_file))
     cache = Path(args.cache)
     if args.dim != DEFAULT_DIM:
         cache = cache.with_name(f"{cache.stem}-{args.dim}{cache.suffix}")
-    service = DenseService(args.db, encode, model=MODEL_NAME, dim=args.dim, device=device, cache_path=cache,
-                           sync_interval_s=args.sync_interval)
-    embedded = service.sync_once()
-    LOGGER.info("dense service ready on %s:%d (%s, %d indexed, %d embedded at start)",
-                args.host, args.port, device, service.index.stats()["indexed"], embedded)
+    service = DenseService(args.db, encoder, model=MODEL_NAME, dim=args.dim, device=args.device or "auto",
+                           cache_path=cache, sync_interval_s=args.sync_interval, is_loaded=lambda: encoder.loaded)
+    embedded = service.sync_once()  # cache-only: the model loads on the first query
+    LOGGER.info("dense service ready on %s:%d (%s, model unloaded, %d indexed, %d embedded at start)",
+                args.host, args.port, service.device, service.index.stats()["indexed"], embedded)
     service.start_sync()
     stall_probe.start_heartbeat()
     server = ThreadingHTTPServer((args.host, args.port), make_handler(service))
@@ -334,6 +361,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         server.serve_forever()
     finally:
         service.stop()
+        encoder.close()
 
 
 if __name__ == "__main__":
