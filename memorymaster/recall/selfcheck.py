@@ -23,6 +23,7 @@ from typing import Any
 
 from memorymaster.core import llm_budget
 from memorymaster.core.security import _sanitize_memory_claim_text, sanitize_persisted_text
+from memorymaster.stores._storage_shared import open_conn
 
 QuestionGenerator = Callable[[str, int], list[str]]
 
@@ -101,7 +102,7 @@ def default_sidecar_path(db_path: str | Path) -> Path:
 
 def _open_sidecar(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=5)
+    conn = open_conn(path)
     conn.executescript(_SCHEMA)
     return conn
 
