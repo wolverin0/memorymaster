@@ -216,7 +216,11 @@ def test_cli_run_steward_command_writes_report() -> None:
         "--artifact-json",
         str(artifact),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30)
+    # The contradiction probe builds the best embedding provider: with sentence-transformers
+    # installed that is a torch + model load (~10 s idle, past 30 s under a loaded -n 8 run,
+    # T-1889). This test is about the CLI wiring and report, so the subprocess uses hash.
+    env = {**os.environ, "MEMORYMASTER_EMBEDDING_PROVIDER": "hash"}
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=30, env=env)
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["cycles_completed"] == 1

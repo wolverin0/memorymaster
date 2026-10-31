@@ -1085,22 +1085,25 @@ def test_each_distinct_subject_is_redacted_once(tmp_path, monkeypatch):
 
 
 def test_hook_egress_stops_at_the_deadline(tmp_path, monkeypatch):
-    """Egress is CPU work before the send: a hook decision still returns by deadline + 100 ms."""
+    """Egress is CPU work before the send: a hook decision stops redacting at its deadline.
+
+    The engine clock advances 50 ms per egress call and nothing else, so the stop point is exact
+    on any machine. The wall-clock version (elapsed <= deadline + 100 ms + one call) failed under
+    a loaded -n 8 run at 0.65-0.83 s with one or two calls: the time went to work before egress,
+    not to egress (T-1889)."""
     per_call = 0.05
-    calls = _slow_egress(monkeypatch, per_call)
-    engine, fake = make_engine(tmp_path, env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "300"})
+    calls = _slow_egress(monkeypatch, 0.0)
+    engine, fake = make_engine(tmp_path, env={"MEMORYMASTER_JEV_HOOK_DEADLINE_MS": "300"},
+                               monotonic=lambda: per_call * len(calls))
     candidates = [(f"claim:{n}", f"candidate memory number {n} about the build") for n in range(20)]
     state, bound = q.build_recall("how do we run tests?", "memorymaster", candidates)
     refs = [ref for ref, _ in candidates]
-    started = time.perf_counter()
     decision = engine.decide("recall", state=state, questions=bound, items=refs, legacy_action=refs[:5],
                              choose=recall_choose)
-    elapsed = time.perf_counter() - started
     assert fake.calls == [] and decision.action == refs[:5]
     assert decision.fallback_reason == "timeout" and decision.logged is True
-    # deadline + 100 ms, plus at most the one egress call already running, plus one clock tick
-    if TIMING:
-        assert elapsed <= 0.3 + 0.1 + per_call + 0.016, (elapsed, len(calls))
+    # 21+ distinct values to redact; only the calls that fit in 300 ms ran, plus the one running.
+    assert len(calls) <= round(0.3 / per_call) + 1, len(calls)
     stored = rows(tmp_path, "SELECT fallback_reason, attempt_count, transport_outcome FROM decisions")
     assert stored == [{"fallback_reason": "timeout", "attempt_count": 0, "transport_outcome": "not_sent"}]
 

@@ -27,8 +27,10 @@ There is no hosted CI (removed 2026-10-25). `python scripts/bulk_check.py` runs 
 fast gates (release truth, contract witness, probes frozen, branch freshness, MCP
 stdio smoke) and the full non-ML suite in parallel on this host; `--ml` adds the
 isolated ML suite. Exit 0 on the branch is the merge gate; `--fast` is for iteration.
-After adding tests or console commands, regenerate existing release metadata with
-`python scripts/generate_release_truth.py`, then run it with `--check`.
+After changing MCP tools, CLI commands, console entrypoints or setup profiles,
+regenerate release metadata with `python scripts/generate_release_truth.py`, then
+run it with `--check`. Adding tests does not change it: the test-function count is
+printed at run time, not committed, so parallel PRs do not conflict on it.
 
 ## One observable memory journey
 
