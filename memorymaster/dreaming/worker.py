@@ -206,6 +206,10 @@ class DreamConfig:
     # forever); the others are deferred untouched, like a daily-budget deferral, and a later run
     # starts them.
     max_consolidate_captures_per_run: int = 0
+    # AO-2 beat: of the ``max_sessions`` slots, this many are always filled oldest-first from the
+    # whole queue (so the old backlog drains); the rest go to beat-scanned captures first. 0 =
+    # plain oldest-first, which is what the 6-hourly dream job keeps.
+    oldest_reserve: int = 0
     # TOPE DE GASTO, ordenado por el operador el 2026-08-24 (ruling MM3).
     # Los dos topes de arriba cuentan LLAMADAS, y por eso nunca acotaron el gasto:
     # medido sobre el ledger de produccion, 527 llamadas a openai costaron 9,76M
@@ -487,7 +491,8 @@ class DreamWorker:
         return totals
 
     def _extract(self, run_id: str, scope: str | None, limit: int, summary: dict[str, Any]) -> list[dict[str, Any]]:
-        rows = self.ledger.eligible(idle_minutes=self.config.idle_minutes, max_sessions=limit, scope=scope, now=self.now())
+        rows = self.ledger.eligible(idle_minutes=self.config.idle_minutes, max_sessions=limit, scope=scope, now=self.now(),
+                                    oldest_reserve=self.config.oldest_reserve)
         extracted: list[dict[str, Any]] = []
         for row in rows:
             if row.get("extraction") is not None and extraction_complete(row):

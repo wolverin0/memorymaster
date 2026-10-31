@@ -33,8 +33,11 @@ _JOB_LOG = logging.getLogger("memorymaster.jobs")
 BEAT_ENABLED_ENV = "MEMORYMASTER_BEAT_ENABLED"
 # One tick must end before the next 5-minute tick starts: the lease outlives a stuck run by at most this.
 BEAT_LEASE_TTL_SECONDS = 270
+# Three slots are enough for three consolidations: every picked capture is extracted first or already waiting.
+# Two slots go to freshly scanned sessions, one stays oldest-first so the old backlog still drains.
 BEAT_MAX_SESSIONS = 3
-BEAT_MAX_CONSOLIDATE_CAPTURES = 1
+BEAT_MAX_CONSOLIDATE_CAPTURES = 3
+BEAT_OLDEST_RESERVE = 1
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -176,7 +179,7 @@ def _run_capture_beat(args: argparse.Namespace, outcomes: list[str] | None = Non
     Off unless MEMORYMASTER_BEAT_ENABLED is truthy. The guard is asked first; on ``skip`` nothing
     else is touched. Otherwise the tick holds the shared ``dream-worker`` lease while it scans, and
     releases it before ``run_dream``, which takes that same lease itself. Hourly Dreaming holding it is a normal no-op for the beat, not a failure.
-    ``allow`` runs the worker with ``max_sessions`` 3 and one consolidated capture, under the
+    ``allow`` runs the worker with ``max_sessions`` 3 (two fresh, one oldest-first) and three consolidated captures, under the
     existing daily token ceiling; ``capture_only`` and ``skip`` never call a model.
     Claims are applied only if the operator passes ``--apply-candidates``.
     """
@@ -215,6 +218,7 @@ def _run_capture_beat(args: argparse.Namespace, outcomes: list[str] | None = Non
                 lease_ttl_seconds=BEAT_LEASE_TTL_SECONDS,
                 max_sessions=BEAT_MAX_SESSIONS,
                 max_consolidate_captures_per_run=BEAT_MAX_CONSOLIDATE_CAPTURES,
+                oldest_reserve=BEAT_OLDEST_RESERVE,
             )
             dream = run_dream(args.db, args.workspace, apply_candidates=bool(args.apply_candidates), config=config)
     log_event(_JOB_LOG, "beat_tick", surface="job", job="beat", outcome=decision.action,

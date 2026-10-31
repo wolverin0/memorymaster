@@ -322,17 +322,36 @@ class DreamLedger:
             raise KeyError(capture_id)
         return _decode_row(row)
 
-    def eligible(self, *, idle_minutes: int, max_sessions: int, scope: str | None = None, now: datetime | None = None) -> list[dict[str, Any]]:
+    def eligible(
+        self, *, idle_minutes: int, max_sessions: int, scope: str | None = None, now: datetime | None = None,
+        oldest_reserve: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Captures a run may work on, oldest first.
+
+        ``oldest_reserve`` > 0 (the beat) fills ``max_sessions - oldest_reserve`` slots with
+        beat-scanned captures (``source_mtime`` set, oldest first among them), then every
+        remaining slot, at least ``oldest_reserve``, oldest-first over the whole queue, so the
+        old backlog drains every tick while fresh sessions do not wait behind it.
+        """
         cutoff = _iso((now or _utc_now()) - timedelta(minutes=max(0, idle_minutes)))
         params: list[Any] = [cutoff]
         where = "(state IN ('captured','retryable') OR (state='extracted' AND resume_eligible=1)) AND turn_count >= 2 AND last_activity_at <= ?"
         if scope:
             where += " AND scope=?"
             params.append(scope)
-        params.append(max(0, max_sessions))
+        limit = max(0, max_sessions)
+        fresh_slots = limit - max(0, oldest_reserve) if oldest_reserve > 0 else 0
         with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT * FROM dream_captures WHERE {where} ORDER BY last_activity_at, id LIMIT ?", params,
+            rows: list[Any] = []
+            if fresh_slots > 0:
+                rows = conn.execute(
+                    f"SELECT * FROM dream_captures WHERE {where} AND source_mtime IS NOT NULL "
+                    "ORDER BY last_activity_at, id LIMIT ?", [*params, fresh_slots],
+                ).fetchall()
+            taken = ",".join(str(int(row["id"])) for row in rows) or "-1"
+            rows += conn.execute(
+                f"SELECT * FROM dream_captures WHERE {where} AND id NOT IN ({taken}) "
+                "ORDER BY last_activity_at, id LIMIT ?", [*params, limit - len(rows)],
             ).fetchall()
         return [_decode_row(row) for row in rows]
 
