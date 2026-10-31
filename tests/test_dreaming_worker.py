@@ -1699,7 +1699,7 @@ def test_a_hung_first_call_is_still_an_outage(tmp_path):
 
 
 @pytest.mark.parametrize("hung_call", [1, 2])
-def test_first_consolidate_timeout_falls_back_for_remaining_calls_only(tmp_path, hung_call):
+def test_first_consolidate_timeout_falls_back_and_retries_the_hung_batch(tmp_path, hung_call):
     import json
 
     service = _service(tmp_path)
@@ -1726,18 +1726,80 @@ def test_first_consolidate_timeout_falls_back_for_remaining_calls_only(tmp_path,
     assert summary["consolidate_breaker"] is None
     assert summary["consolidate_fallback"] == extractor.provider
     assert len(primary_calls) == hung_call
-    assert len(fallback_calls) == 4 - hung_call
-    assert summary["consolidated"] == 3
-    assert summary["deferred_consolidate_provider"] == 1
+    assert len(fallback_calls) == 5 - hung_call  # the hung batch is retried, then the rest
+    assert summary["consolidated"] == 4
+    assert summary["deferred_consolidate_provider"] == 0
     assert summary["errors"] == 1
     assert worker.consolidator is primary  # fallback must not leak into another run
-    assert sorted(ledger.get_capture(i)["state"] for i in ids) == ["consolidated"] * 3 + ["extracted"]
+    assert sorted(ledger.get_capture(i)["state"] for i in ids) == ["consolidated"] * 4
     with ledger._connect() as conn:
         usage = conn.execute("SELECT provider, outcome FROM dream_provider_usage ORDER BY id").fetchall()
         persisted = json.loads(conn.execute("SELECT summary_json FROM dream_runs").fetchone()[0])
-    assert sum(row[0] == extractor.provider and row[1] == "ok" for row in usage) == 4 - hung_call
+    assert sum(row[0] == extractor.provider and row[1] == "ok" for row in usage) == 5 - hung_call
     assert sum(row[0] == "antigravity" and row[1] != "ok" for row in usage) == 1
     assert persisted["consolidate_fallback"] == extractor.provider
+
+
+def _claude_consolidating_extractor(tmp_path, calls: list):
+    """A Claude CLI extractor (the Beat's) whose consolidation call answers an ignore per candidate."""
+    import json
+    import subprocess
+
+    from memorymaster.dreaming.providers import ClaudeCliExtractor
+
+    def runner(command, prompt, timeout, cwd, env):
+        calls.append(prompt)
+        ids = json.loads(prompt.split("\n\nINPUT:\n", 1)[1])["valid_candidate_ids"]
+        raw = json.dumps({"decisions": [{"candidate_id": candidate_id, "action": "ignore",
+                                         "rationale": "fixture", "confidence": .9} for candidate_id in ids]})
+        envelope = {"type": "result", "result": raw, "usage": {"input_tokens": 50, "output_tokens": 5}}
+        return subprocess.CompletedProcess(command, 0, json.dumps(envelope), "")
+
+    return ClaudeCliExtractor(command="claude-fixture", runner=runner, work_dir=tmp_path / "claude")
+
+
+def test_agy_hang_with_a_claude_extractor_consolidates_the_same_batch_on_claude(tmp_path):
+    """Live 2026-10-31: 100+ beat runs a day ended `consolidate_breaker: TimeoutExpired`, `consolidate_fallback: null`,
+    because the extractor is Claude. With one capture per run the hung batch must be retried on the fallback, not left."""
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _extracted_capture(ledger, candidate_id="c0")
+    claude_calls: list = []
+    agy_calls: list = []
+    extractor = _claude_consolidating_extractor(tmp_path, claude_calls)
+    primary = _agy_consolidator(tmp_path, _agy_timeout, agy_calls)
+    worker = DreamWorker(ledger, service, extractor, primary,
+                         config=DreamConfig(jev_triage_enabled=False), now=lambda: NOW)
+
+    summary = worker.run(apply_candidates=False)
+
+    assert summary["consolidate_breaker"] is None
+    assert summary["consolidate_fallback"] == "claude"
+    assert (len(agy_calls), len(claude_calls)) == (1, 1)
+    assert summary["consolidated"] == 1 and summary["deferred_consolidate_provider"] == 0
+    assert ledger.get_capture(capture_id)["state"] == "consolidated"
+    assert worker.consolidator is primary  # run-scoped: the next run tries agy again
+
+
+def test_claude_fallback_is_not_stopped_by_the_daily_consolidate_caps(tmp_path):
+    """Claude runs on the subscription (uncapped_daily) and its extraction calls share the provider/model counters."""
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    _extracted_capture(ledger, candidate_id="c0")
+    claude_calls: list = []
+    extractor = _claude_consolidating_extractor(tmp_path, claude_calls)
+    prior_run = ledger.start_run(True, extractor.model, "fixture", now=NOW)
+    ledger.record_provider_call(prior_run, provider="claude", model="haiku", outcome="ok", latency_ms=10,
+                                structured_valid=True, input_tokens=5_000_000, output_tokens=1,
+                                http_status=200, now=NOW)
+    ledger.finish_run(prior_run, "completed", {}, now=NOW)
+    config = DreamConfig(jev_triage_enabled=False, max_consolidate_calls_daily=1, max_input_tokens_daily=100_000)
+
+    summary = DreamWorker(ledger, service, extractor, _agy_consolidator(tmp_path, _agy_timeout, []),
+                          config=config, now=lambda: NOW).run(apply_candidates=False)
+
+    assert len(claude_calls) == 1
+    assert summary["consolidated"] == 1 and summary["deferred_consolidate_budget"] == 0
 
 
 @pytest.mark.parametrize("hung_call", [1, 2])
@@ -1781,7 +1843,7 @@ def test_consolidate_fallback_respects_extract_provider_budget(tmp_path, budget)
     assert len(calls) == 1
     assert summary["consolidate_fallback"] == extractor.provider
     assert summary["consolidate_breaker"] is None
-    assert summary["deferred_consolidate_budget"] == 2
+    assert summary["deferred_consolidate_budget"] == 3  # the hung batch is retried on the fallback, then deferred by its budget
     assert summary["errors"] == 1
 
 
