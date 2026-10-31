@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -29,6 +30,8 @@ from typing import Any, BinaryIO
 import numpy as np
 
 from memorymaster.core import stall_probe
+
+LOGGER = logging.getLogger("memorymaster.dense_worker")
 
 # Model load measured at 5-8 s; a child silent for this long is killed so the service never hangs on it.
 EXCHANGE_TIMEOUT_S = 120.0
@@ -53,6 +56,10 @@ class WorkerEncoder:
         self._idle_s = idle_s
         self._lock = threading.Lock()  # one exchange at a time, and load/unload never overlap one
         self._proc: subprocess.Popen[bytes] | None = None
+        self._ready = False  # the child has reported ready: a process that is still importing torch is not loaded
+        self._warming = threading.Lock()  # held while a background load runs: one load at a time
+        self.warm_failures = 0
+        self.last_warm_error: str | None = None  # class name of the latest failed background load
         self._last_query = 0.0
         self.device = device or "auto"
         self.loads = 0
@@ -72,7 +79,33 @@ class WorkerEncoder:
     @property
     def loaded(self) -> bool:
         proc = self._proc
-        return proc is not None and proc.poll() is None
+        return self._ready and proc is not None and proc.poll() is None
+
+    def warm(self) -> bool:
+        """Start loading the model in the background; False when it is already loaded or loading.
+
+        A query that finds the model unloaded is answered cold at once instead of waiting for the 5-8 s
+        load (the hook's deadline is 1.5 s), and the load it triggered serves the next query."""
+        if self.loaded or not self._warming.acquire(blocking=False):
+            return False
+        threading.Thread(target=self._warm, name="dense-warm", daemon=True).start()
+        return True
+
+    def warm_status(self) -> dict[str, Any]:
+        return {"warm_failures": self.warm_failures, "last_warm_error": self.last_warm_error}
+
+    def _warm(self) -> None:
+        try:
+            with self._lock:
+                self._last_query = time.monotonic()  # the load is activity: the reaper must not drop it at once
+                self._ensure_started()
+                self._last_query = time.monotonic()
+        except EncoderUnavailable as exc:  # the next cold query tries again
+            self.warm_failures += 1
+            self.last_warm_error = str(exc)
+            LOGGER.warning("dense model warm-up failed: %s", exc)
+        finally:
+            self._warming.release()
 
     def __call__(self, texts: Sequence[str], kind: str) -> np.ndarray:
         queued = time.perf_counter()
@@ -93,7 +126,7 @@ class WorkerEncoder:
     def _ensure_started(self) -> None:
         if self.loaded:
             return
-        self._proc = None
+        self._kill()  # reaps a child that exited on its own while idle and clears _ready: _kill is the only reset
         stderr: Any = subprocess.DEVNULL
         if self._log_path is not None:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,6 +146,7 @@ class WorkerEncoder:
             self._kill()
             raise EncoderUnavailable(str(ready.get("error") or "worker did not report ready"))
         self.device = str(ready.get("device") or self.device)
+        self._ready = True
         self.loads += 1
 
     def _read_line(self) -> dict[str, Any]:
@@ -146,6 +180,7 @@ class WorkerEncoder:
 
     def _kill(self) -> None:
         proc, self._proc = self._proc, None
+        self._ready = False
         if proc is None:
             return
         for stream in (proc.stdin, proc.stdout):

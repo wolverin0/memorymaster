@@ -93,6 +93,41 @@ def test_dense_hard_breach_means_skip(tmp_path: Path) -> None:
     assert any(reason.startswith("dense_hard") for reason in decision.reasons)
 
 
+def _dense_rows(path: Path, rows: list[tuple[str, float]], *, age_minutes: float = 5) -> None:
+    stamp = (NOW - timedelta(minutes=age_minutes)).isoformat(timespec="seconds")
+    with path.open("a", encoding="utf-8") as handle:
+        for outcome, total in rows:
+            handle.write(json.dumps({"ts": stamp, "outcome": outcome, "total_ms": total}) + "\n")
+
+
+def test_cold_model_rows_do_not_count_toward_the_dense_p95(tmp_path: Path) -> None:
+    """2026-10-31: two cold-load timeouts in a sparse hour made p95 ~1508 ms and skipped half the ticks."""
+    _dense_rows(tmp_path / "dense.jsonl", [("dense", 90.0)] * 8 + [("cold", 1600.0)] * 2)
+
+    decision = _run(tmp_path)
+
+    assert decision.action == "allow"
+    assert decision.metrics["dense"] == {"n": 8, "p95_ms": 90.0}
+
+
+def test_only_cold_rows_leave_the_dense_signal_empty(tmp_path: Path) -> None:
+    _dense_rows(tmp_path / "dense.jsonl", [("cold", 1600.0)] * 10)
+
+    decision = _run(tmp_path)
+
+    assert decision.action == "allow" and decision.metrics["dense"]["n"] == 0
+
+
+def test_real_dense_timeouts_still_count(tmp_path: Path) -> None:
+    """A loaded model that is too slow is the overload the guard exists for."""
+    _dense_rows(tmp_path / "dense.jsonl", [("dense", 90.0)] * 5 + [("fallback:TimeoutError", 1508.0)] * 5)
+
+    decision = _run(tmp_path)
+
+    assert decision.action == "skip"
+    assert any(reason.startswith("dense_hard") for reason in decision.reasons)
+
+
 def test_hook_soft_and_hard_breaches(tmp_path: Path) -> None:
     _hook_log(tmp_path / "hook.log", [1000.0] * 10)
     assert _run(tmp_path).action == "capture_only"

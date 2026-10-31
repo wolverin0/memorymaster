@@ -172,6 +172,45 @@ def test_an_unavailable_service_falls_back_to_lexical_recall(claims, monkeypatch
     assert _events(claims["log"])[-1]["outcome"] == "fallback:URLError"
 
 
+def test_a_cold_service_makes_the_hook_fall_back_at_once_with_a_distinct_outcome(claims, monkeypatch) -> None:
+    monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+
+    def cold(query, scopes, **_):
+        raise dense_recall.DenseCold("cold")
+
+    monkeypatch.setattr(dense_recall, "search", cold)
+    lexical = context_hook.recall("weapon recoil spread", db_path=claims["db"], return_ids=True,
+                                  hook_data={**claims["hook"], "session_id": "s-cold"})
+    assert lexical[1]  # the prompt still gets lexical recall
+    assert _events(claims["log"])[-1]["outcome"] == "cold"
+
+
+def test_the_client_reads_the_cold_answer_as_cold_not_as_a_failure(monkeypatch) -> None:
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            return b'{"cold": true, "model": "fake"}'
+
+    monkeypatch.setattr(dense_recall._OPENER, "open", lambda *_a, **_k: Response())
+    with pytest.raises(dense_recall.DenseCold):
+        dense_recall.search("q", None)
+
+
+def test_summary_counts_cold_apart_from_fallback() -> None:
+    """`fallback_rate` is the service failing; a cold model is its own `cold_rate`, in neither it nor dense."""
+    events = [{"outcome": "dense", "service_ms": 100}] * 6 + [{"outcome": "cold"}] * 3 + [
+        {"outcome": "fallback:TimeoutError"}]
+    summary = dense_recall.summarize(events)
+    assert summary["cold_rate"] == 0.3 and summary["fallback_rate"] == 0.1
+    assert summary["service_ms_p50"] == 100.0  # cold rows do not enter the dense latency
+    assert dense_recall.summarize([])["cold_rate"] is None
+
+
 def test_off_by_default_and_never_outside_the_prompt_hook(claims, monkeypatch) -> None:
     def must_not_run(*_args, **_kwargs):
         raise AssertionError("dense service called")
