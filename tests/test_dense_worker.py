@@ -304,3 +304,45 @@ def test_a_failed_background_load_is_counted_and_shown_in_health(claims_db, capl
         assert "warm-up failed" in caplog.text
     finally:
         encoder.close()
+
+
+def test_a_background_load_runs_one_throwaway_encode_before_the_model_counts_as_loaded() -> None:
+    """The first inference after a load took ~1 s (CUDA warm-up) and landed in the guard's dense p95."""
+    slow_warmup = (
+        "import time, numpy as np\n"
+        "from memorymaster.recall import dense_worker\n"
+        "def load():\n"
+        "    def encode(texts, kind):\n"
+        "        if dense_worker.WARMUP_TEXT in texts: time.sleep(1.5)\n"
+        "        return np.array([[len(t), 1.0, 0.0, 0.0] for t in texts], dtype=np.float32)\n"
+        "    return encode, 'fake'\n"
+        "dense_worker.run(load)\n")
+    encoder = WorkerEncoder(4, "cpu", idle_s=0.0, command=[sys.executable, "-c", slow_warmup])
+    try:
+        assert encoder.warm() is True
+        time.sleep(0.7)  # the child has reported ready by now and is inside the warm-up encode
+        assert not encoder.loaded
+        _wait_loaded(encoder)
+        started = time.perf_counter()
+        encoder(["abc"], "query")
+        assert time.perf_counter() - started < 0.5  # the first user query pays no warm-up
+    finally:
+        encoder.close()
+
+
+def test_a_failing_warmup_encode_fails_the_background_load() -> None:
+    bad = ("import numpy as np\n"
+           "from memorymaster.recall import dense_worker\n"
+           "def load():\n"
+           "    def encode(texts, kind): raise RuntimeError('boom')\n"
+           "    return encode, 'fake'\n"
+           "dense_worker.run(load)\n")
+    encoder = WorkerEncoder(4, "cpu", idle_s=0.0, command=[sys.executable, "-c", bad])
+    try:
+        assert encoder.warm() is True
+        deadline = time.monotonic() + 20
+        while encoder.warm_failures == 0 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert encoder.warm_failures == 1 and encoder.last_warm_error == "RuntimeError" and not encoder.loaded
+    finally:
+        encoder.close()
