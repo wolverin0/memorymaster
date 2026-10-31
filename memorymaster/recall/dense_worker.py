@@ -36,6 +36,9 @@ LOGGER = logging.getLogger("memorymaster.dense_worker")
 # Model load measured at 5-8 s; a child silent for this long is killed so the service never hangs on it.
 EXCHANGE_TIMEOUT_S = 120.0
 CREATE_NO_WINDOW = 0x08000000
+# The first inference after a load is slow (CUDA warm-up measured at ~1 s against ~100 ms warm). A background
+# load encodes this once before reporting ready, so the first user query is already warm.
+WARMUP_TEXT = "warm-up"
 
 
 class EncoderUnavailable(RuntimeError):
@@ -98,7 +101,7 @@ class WorkerEncoder:
         try:
             with self._lock:
                 self._last_query = time.monotonic()  # the load is activity: the reaper must not drop it at once
-                self._ensure_started()
+                self._ensure_started(warmup=True)
                 self._last_query = time.monotonic()
         except EncoderUnavailable as exc:  # the next cold query tries again
             self.warm_failures += 1
@@ -123,7 +126,7 @@ class WorkerEncoder:
             raise EncoderUnavailable(str(reply["error"]))
         return np.frombuffer(base64.b64decode(reply["vectors"]), dtype=np.float32).reshape(reply["shape"]).copy()
 
-    def _ensure_started(self) -> None:
+    def _ensure_started(self, *, warmup: bool = False) -> None:
         if self.loaded:
             return
         self._kill()  # reaps a child that exited on its own while idle and clears _ready: _kill is the only reset
@@ -146,6 +149,11 @@ class WorkerEncoder:
             self._kill()
             raise EncoderUnavailable(str(ready.get("error") or "worker did not report ready"))
         self.device = str(ready.get("device") or self.device)
+        if warmup:  # _ready is still False: queries meanwhile are answered cold, not queued behind this
+            reply = self._exchange({"texts": [WARMUP_TEXT], "kind": "query"})
+            if "error" in reply:
+                self._kill()
+                raise EncoderUnavailable(str(reply["error"]))
         self._ready = True
         self.loads += 1
 
