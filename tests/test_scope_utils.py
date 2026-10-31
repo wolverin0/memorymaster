@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
 import pytest
 
+from memorymaster.core import scope_utils
 from memorymaster.core.scope_utils import (
     cwd_from_transcript,
     scope_from_cwd,
@@ -326,3 +328,33 @@ def test_nameless_workspace_does_not_inspect_filesystem(tmp_path, monkeypatch, s
     assert resolve_workspace_scope(root, strict=strict) == expected
     wrapper = resolve_transcript_workspace_scope if strict else scope_from_cwd
     assert wrapper(root) == expected
+
+
+# T-1874: the folder name alone no longer owns a scope; the witness for the
+# root registry lives here, the rest of its cases in test_scope_registry.py.
+def _registry_repo(path: Path) -> Path:
+    (path / ".git").mkdir(parents=True)
+    return path
+
+
+def _scope_registry() -> dict:
+    return json.loads(Path(os.environ[scope_utils.SCOPE_REGISTRY_ENV]).read_text(encoding="utf-8"))["roots"]
+
+
+def test_the_first_root_keeps_the_plain_scope_and_a_second_gets_a_derived_one(tmp_path, caplog) -> None:
+    a = _registry_repo(tmp_path / "client-a" / "api")
+    b = _registry_repo(tmp_path / "client-b" / "api")
+
+    assert scope_from_cwd(a) == "project:api"
+    with caplog.at_level(logging.WARNING, logger=scope_utils.__name__):
+        b_scope = scope_from_cwd(b)
+    assert b_scope.startswith("project:api-") and b_scope != "project:api"
+    assert [r for r in caplog.records if "scope collision" in r.getMessage()], "the collision must be announced"
+
+    # Stable across calls, across both resolution modes, and from subdirectories.
+    (b / "src").mkdir()
+    assert scope_from_cwd(b / "src") == b_scope
+    assert resolve_transcript_workspace_scope(b) == b_scope
+    assert scope_from_cwd(a) == "project:api"
+    assert resolve_transcript_workspace_scope(a) == "project:api"
+    assert sorted(entry["scope"] for entry in _scope_registry().values()) == sorted(["project:api", b_scope])
