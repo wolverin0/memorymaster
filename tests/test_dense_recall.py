@@ -172,6 +172,35 @@ def test_an_unavailable_service_falls_back_to_lexical_recall(claims, monkeypatch
     assert _events(claims["log"])[-1]["outcome"] == "fallback:URLError"
 
 
+def test_a_cold_service_makes_the_hook_fall_back_at_once_with_a_distinct_outcome(claims, monkeypatch) -> None:
+    monkeypatch.setenv(dense_recall.ENABLE_ENV, "1")
+
+    def cold(query, scopes, **_):
+        raise dense_recall.DenseCold("cold")
+
+    monkeypatch.setattr(dense_recall, "search", cold)
+    lexical = context_hook.recall("weapon recoil spread", db_path=claims["db"], return_ids=True,
+                                  hook_data={**claims["hook"], "session_id": "s-cold"})
+    assert lexical[1]  # the prompt still gets lexical recall
+    assert _events(claims["log"])[-1]["outcome"] == "cold"
+
+
+def test_the_client_reads_the_cold_answer_as_cold_not_as_a_failure(monkeypatch) -> None:
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def read(self):
+            return b'{"cold": true, "model": "fake"}'
+
+    monkeypatch.setattr(dense_recall._OPENER, "open", lambda *_a, **_k: Response())
+    with pytest.raises(dense_recall.DenseCold):
+        dense_recall.search("q", None)
+
+
 def test_off_by_default_and_never_outside_the_prompt_hook(claims, monkeypatch) -> None:
     def must_not_run(*_args, **_kwargs):
         raise AssertionError("dense service called")

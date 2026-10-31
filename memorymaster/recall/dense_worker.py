@@ -53,6 +53,8 @@ class WorkerEncoder:
         self._idle_s = idle_s
         self._lock = threading.Lock()  # one exchange at a time, and load/unload never overlap one
         self._proc: subprocess.Popen[bytes] | None = None
+        self._ready = False  # the child has reported ready: a process that is still importing torch is not loaded
+        self._warming = threading.Lock()  # held while a background load runs: one load at a time
         self._last_query = 0.0
         self.device = device or "auto"
         self.loads = 0
@@ -72,7 +74,28 @@ class WorkerEncoder:
     @property
     def loaded(self) -> bool:
         proc = self._proc
-        return proc is not None and proc.poll() is None
+        return self._ready and proc is not None and proc.poll() is None
+
+    def warm(self) -> bool:
+        """Start loading the model in the background; False when it is already loaded or loading.
+
+        A query that finds the model unloaded is answered cold at once instead of waiting for the 5-8 s
+        load (the hook's deadline is 1.5 s), and the load it triggered serves the next query."""
+        if self.loaded or not self._warming.acquire(blocking=False):
+            return False
+        threading.Thread(target=self._warm, name="dense-warm", daemon=True).start()
+        return True
+
+    def _warm(self) -> None:
+        try:
+            with self._lock:
+                self._last_query = time.monotonic()  # the load is activity: the reaper must not drop it at once
+                self._ensure_started()
+                self._last_query = time.monotonic()
+        except EncoderUnavailable:
+            pass  # the next cold query tries again
+        finally:
+            self._warming.release()
 
     def __call__(self, texts: Sequence[str], kind: str) -> np.ndarray:
         queued = time.perf_counter()
@@ -113,6 +136,7 @@ class WorkerEncoder:
             self._kill()
             raise EncoderUnavailable(str(ready.get("error") or "worker did not report ready"))
         self.device = str(ready.get("device") or self.device)
+        self._ready = True
         self.loads += 1
 
     def _read_line(self) -> dict[str, Any]:
@@ -146,6 +170,7 @@ class WorkerEncoder:
 
     def _kill(self) -> None:
         proc, self._proc = self._proc, None
+        self._ready = False
         if proc is None:
             return
         for stream in (proc.stdin, proc.stdout):

@@ -89,7 +89,10 @@ def _p95(values: list[float]) -> float | None:
 def _dense_metrics(path: Path, since: datetime) -> dict[str, Any]:
     from memorymaster.recall import dense_recall
 
-    totals = [float(event.get("total_ms") or 0) for event in dense_recall.read_events(path, since=since)]
+    # A cold model (idle unload) is not load the beat caused, and skipping the beat cannot warm it. A timeout
+    # with the model loaded is a different outcome and still counts.
+    totals = [float(event.get("total_ms") or 0) for event in dense_recall.read_events(path, since=since)
+              if event.get("outcome") != "cold"]
     return {"n": len(totals), "p95_ms": _p95(totals)}
 
 

@@ -2362,7 +2362,8 @@ def _dense_prompt_rows(svc, query: str, plan, seen: frozenset[int] = frozenset()
     try:
         answer = dense_recall.search(query, scopes, outside_k=dense_recall.FETCH_K if scopes else 0)
     except dense_recall.DenseUnavailable as exc:
-        return None, {"outcome": f"fallback:{exc}", "service_ms": dense_recall.elapsed_ms(started),
+        outcome = "cold" if isinstance(exc, dense_recall.DenseCold) else f"fallback:{exc}"
+        return None, {"outcome": outcome, "service_ms": dense_recall.elapsed_ms(started),
                       "probe": {"rtt_ms": _stage_ms(started)}}
     rtt_ms = _stage_ms(started)
     service_probe = answer.probe

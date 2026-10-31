@@ -180,3 +180,70 @@ def test_the_service_keeps_numpy_to_one_blas_thread() -> None:
             "print(os.environ.get('OPENBLAS_NUM_THREADS'))")
     done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert done.stdout.strip() == "1", done.stderr
+
+
+def _cold_service(claims_db, encoder: WorkerEncoder) -> dense_server.DenseService:
+    service = dense_server.DenseService(claims_db, encoder, model="fake", dim=4, device="cpu",
+                                        is_loaded=lambda: encoder.loaded, warm=encoder.warm)
+    encoder(["alpha"], "query")  # load once so the index can embed, then drop the model: a cold service
+    service.index.sync([(1, "project:a", "alpha")])
+    assert encoder.unload() and not encoder.loaded
+    return service
+
+
+def _wait_loaded(encoder: WorkerEncoder) -> None:
+    deadline = time.monotonic() + 20
+    while not encoder.loaded and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert encoder.loaded
+
+
+def test_a_query_on_an_unloaded_model_answers_cold_at_once_and_loads_in_the_background(claims_db) -> None:
+    """Regression 2026-10-31: the first query after an idle unload waited for the 5-8 s load and hit the
+    hook's 1.5 s deadline; it must answer immediately and let the load run behind it."""
+    encoder = _encoder()
+    try:
+        service = _cold_service(claims_db, encoder)
+        started = time.perf_counter()
+        answer = service.search("hello", ["project:a"], 5)
+        assert answer["cold"] is True and "results" not in answer
+        assert time.perf_counter() - started < 0.5  # no model load on the request path
+        _wait_loaded(encoder)
+        assert encoder.loads == 2  # the setup load plus exactly one background load
+        warm = service.search("hello", ["project:a"], 5)
+        assert "cold" not in warm and warm["results"]  # the next query is served by the loaded model
+    finally:
+        encoder.close()
+
+
+def test_concurrent_cold_queries_start_one_load(claims_db) -> None:
+    encoder = _encoder()
+    try:
+        service = _cold_service(claims_db, encoder)
+        assert all(service.search("q", None, 5).get("cold") for _ in range(5))
+        _wait_loaded(encoder)
+        assert encoder.loads == 2  # the setup load plus exactly one background load
+    finally:
+        encoder.close()
+
+
+def test_a_background_load_counts_as_activity_so_the_reaper_does_not_drop_it_at_once(claims_db) -> None:
+    encoder = _encoder(idle_s=30.0)
+    try:
+        assert encoder.warm() is True
+        _wait_loaded(encoder)
+        assert encoder._last_query > 0 and time.monotonic() - encoder._last_query < 5
+    finally:
+        encoder.close()
+
+
+def test_the_model_is_not_reported_loaded_while_its_child_is_still_starting() -> None:
+    slow = ("import time; time.sleep(1.5)\n" + FAKE_CHILD)
+    encoder = WorkerEncoder(4, "cpu", idle_s=0.0, command=[sys.executable, "-c", slow])
+    try:
+        assert encoder.warm() is True
+        time.sleep(0.4)
+        assert not encoder.loaded  # a query now must still be answered cold, not queue behind the load
+        _wait_loaded(encoder)
+    finally:
+        encoder.close()

@@ -72,6 +72,10 @@ class DenseUnavailable(RuntimeError):
     """The service did not give a usable answer; the caller falls back to lexical recall."""
 
 
+class DenseCold(DenseUnavailable):
+    """The service is up but its model is unloaded (idle unload); it started loading and answers the next query."""
+
+
 @dataclass(frozen=True)
 class DenseAnswer:
     results: tuple[tuple[int, float], ...]
@@ -121,6 +125,8 @@ def search(query: str, scopes: Sequence[str] | None, *, k: int = FETCH_K, outsid
         request = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
         with _OPENER.open(request, timeout=_float_env(TIMEOUT_ENV, DEFAULT_TIMEOUT_S)) as response:
             payload = json.loads(response.read())
+        if payload.get("cold"):
+            raise DenseCold("cold")
         results = tuple((int(item["id"]), float(item["score"])) for item in payload["results"])
         outside = tuple((int(item["id"]), float(item["score"])) for item in payload.get("outside") or ())
         return DenseAnswer(results, float(payload.get("embed_ms") or 0.0), float(payload.get("search_ms") or 0.0),
@@ -129,6 +135,8 @@ def search(query: str, scopes: Sequence[str] | None, *, k: int = FETCH_K, outsid
     # Any failure means "no dense answer": a truncated body (IncompleteRead), a bad status
     # line, an overflowing id or a malformed URL all fell through a narrower list (verifier,
     # 2026-10-06) and cost the prompt its lexical fallback.
+    except DenseCold:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise DenseUnavailable(type(exc).__name__) from exc
 
