@@ -214,7 +214,7 @@ class AntigravityClient:
 
         usage = payload.get("usage") or {}
         return AntigravityResponse(
-            text=str(payload.get("response") or ""),
+            text=_without_completion_marker(str(payload.get("response") or "")),
             model=self.model,
             input_tokens=int(usage.get("input_tokens") or 0),
             output_tokens=int(usage.get("output_tokens") or 0),
@@ -222,6 +222,20 @@ class AntigravityClient:
             duration_seconds=float(payload.get("duration_seconds") or 0.0),
             conversation_id=str(payload.get("conversation_id") or ""),
         )
+
+
+# T-1420: `agy` sometimes appends its agent completion marker to the model's
+# answer, fenced or not (12 of 436 profile replies on a 2026-10-30 snapshot).
+# It is the agent's, not the model's, and it turned a valid JSON answer into
+# "malformed JSON" for every caller that parses the text.
+_COMPLETION_MARKER = "<!-- GOAL_COMPLETE -->"
+
+
+def _without_completion_marker(text: str) -> str:
+    stripped = text.rstrip()
+    if stripped.endswith(_COMPLETION_MARKER):
+        return stripped[: -len(_COMPLETION_MARKER)].rstrip()
+    return text
 
 
 def strip_code_fence(text: str) -> str:

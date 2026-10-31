@@ -163,14 +163,18 @@ class CompiledProfileEngine:
             # sensible...). Sin el mensaje hay que bisecar a mano cual de las
             # siete fue, que es el mismo costo que ya pago AntigravityError.
             detail = str(exc).strip()
+            # T-1420: re-read the status. `run` predates mark_reducing, so a
+            # reduce failure in the tick that finished mapping was logged as
+            # "fallo en mapping" and sent the 22-23/10 diagnosis to the mapper.
+            status = str(self.repo.run(int(run["id"]))["status"])
             logger.warning(
                 "compiled profile run %s fallo en %s: %s: %s",
-                run["id"], run["status"], type(exc).__name__, detail[:500],
+                run["id"], status, type(exc).__name__, detail[:500],
             )
             self.repo.record_error(int(run["id"]), type(exc).__name__, now=current)
             return {
                 "ok": False,
-                "status": str(run["status"]),
+                "status": status,
                 "error": type(exc).__name__,
                 "detail": detail[:500],
             }

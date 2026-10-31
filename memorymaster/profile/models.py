@@ -36,6 +36,7 @@ PREDICATE_CATEGORY = {
     "tooling_constraint": "standing_constraints",
 }
 PROFILE_VOLATILITIES = ("stable", "preference")
+MAX_CANDIDATE_SUPPORTS = 20
 PROFILE_ACTIONS = ("add", "reinforce", "replace", "ignore")
 _INSTRUCTION = re.compile(
     r"(?i)\b(?:you|assistant|agents?|claude|codex)\b.{0,50}\b(?:must|should|always|never)\b"
@@ -54,17 +55,21 @@ class ProfileVocabularyError(ProfileValidationError):
         super().__init__(f"{reason}: {token!r}; candidate_ids={candidate_ids!r}")
 
 
-def validate_fact_fields(
-    category: str, predicate: str, value: str, volatility: str,
-    *, candidate_ids: tuple[str, ...] = (),
-) -> None:
-    # Unsafe values must still abort even when their vocabulary is also invalid.
+def validate_profile_value(value: str) -> None:
     if not value.strip() or len(value.strip()) > 240 or "\n" in value:
         raise ProfileValidationError("profile value is malformed or oversized")
     if _INSTRUCTION.search(value):
         raise ProfileValidationError("profile value is instruction-shaped")
     if scan_persisted_value(value):
         raise ProfileValidationError("profile value contains sensitive material")
+
+
+def validate_fact_fields(
+    category: str, predicate: str, value: str, volatility: str,
+    *, candidate_ids: tuple[str, ...] = (),
+) -> None:
+    # Unsafe values must still abort even when their vocabulary is also invalid.
+    validate_profile_value(value)
     # These fields now enter diagnostics. Never echo a provider-supplied secret
     # disguised as a vocabulary token or candidate identifier.
     if scan_persisted_value((category, predicate, volatility, candidate_ids)):
@@ -98,7 +103,7 @@ class ProfileCandidate:
     def __post_init__(self) -> None:
         if not self.candidate_id or len(self.candidate_id) > 120:
             raise ProfileValidationError("candidate id is malformed")
-        if not self.support_ids or len(self.support_ids) > 20:
+        if not self.support_ids or len(self.support_ids) > MAX_CANDIDATE_SUPPORTS:
             raise ProfileValidationError("candidate supports are malformed")
         if len(set(self.support_ids)) != len(self.support_ids):
             raise ProfileValidationError("candidate supports contain duplicates")

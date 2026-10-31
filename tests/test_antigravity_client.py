@@ -127,6 +127,20 @@ def test_a_successful_call_reports_usage(tmp_path: Path):
     assert r.model == "gemini-3.7-flash-low"
 
 
+_MEDIO = '{"a": "<!-- GOAL_COMPLETE --> en el medio queda"}'
+
+
+@pytest.mark.parametrize("respuesta,esperado", [
+    ('{"a": 1}\n<!-- GOAL_COMPLETE -->', '{"a": 1}'),
+    ('```json\n{"a": 1}\n```\n\n<!-- GOAL_COMPLETE -->\n', '```json\n{"a": 1}\n```'),
+    (_MEDIO, _MEDIO),
+])
+def test_the_agent_completion_marker_is_not_part_of_the_answer(tmp_path: Path, respuesta, esperado):
+    """T-1420: el marcador final de `agy` volvia "malformed JSON" una respuesta valida."""
+    c = _client(runner=_runner(_envelope(response=respuesta)), work_dir=tmp_path)
+    assert c.complete("x").text == esperado
+
+
 def test_default_model_is_one_the_current_agy_lists():
     # `agy` rechaza con status=ERROR un id que ya no lista, y con eso cada corrida
     # de Dreaming y del perfil compilado quedo parcial desde el 2026-10-13: el

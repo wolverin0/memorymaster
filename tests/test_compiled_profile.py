@@ -297,6 +297,8 @@ def test_engine_reducer_non_vocabulary_failures_remain_closed(tmp_path, caplog, 
     assert message in result["detail"]
     row = repo.active_run()
     assert row["status"] == "reducing" and row["error_code"] == "ProfileValidationError"
+    # T-1420: mapping finished in this same tick; the failure is the reducer's.
+    assert result["status"] == "reducing" and "fallo en reducing" in caplog.text
     assert repo.active_facts() == () and not (output / "user.md").exists()
     assert "malformed private marker" not in json.dumps(result) + row["error_code"] + caplog.text
     if isinstance(invalid_fields.get("value"), str):
