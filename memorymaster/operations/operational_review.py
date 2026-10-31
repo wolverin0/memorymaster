@@ -823,9 +823,16 @@ def _beat_paths(config: ReviewConfig) -> tuple[Path, Path]:
     return state_db, guard_log
 
 
-def _beat_lag(state_db: Path, since: datetime) -> dict[str, Any]:
-    """M3: seconds from a transcript's last write to the capture being processed, per provider."""
-    out: dict[str, Any] = {"providers": {}, "processed": 0, "pending": 0}
+def _beat_lag(state_db: Path, since: datetime, end: datetime) -> dict[str, Any]:
+    """M3: seconds from a transcript's last write to the capture being processed, per provider.
+
+    Only beat-scanned rows carry a source mtime, so only they give a lag; processed and pending
+    counts cover every capture (the beat also works through hook captures, and a count limited to
+    scanned rows read 0 while ~70 a day were being extracted). A scanned row still waiting is a
+    lag of at least its age, reported as ``pending_scanned_oldest_age_s``.
+    """
+    out: dict[str, Any] = {"providers": {}, "processed": 0, "processed_scanned": 0, "pending": 0,
+                           "pending_scanned": 0, "pending_scanned_oldest_age_s": None}
     if not state_db.exists():
         return out
     try:
@@ -833,18 +840,21 @@ def _beat_lag(state_db: Path, since: datetime) -> dict[str, Any]:
             marks = ",".join("?" for _ in BEAT_PROCESSED_STATES)
             rows = conn.execute(
                 f"SELECT provider, updated_at, captured_at, source_mtime FROM dream_captures "
-                f"WHERE source_mtime IS NOT NULL AND state IN ({marks}) AND updated_at >= ?",
+                f"WHERE state IN ({marks}) AND updated_at >= ?",
                 (*BEAT_PROCESSED_STATES, since.isoformat()),
             ).fetchall()
-            pending = conn.execute(
-                f"SELECT COUNT(*) FROM dream_captures WHERE source_mtime IS NOT NULL AND state IN "
-                f"({','.join('?' for _ in BEAT_PENDING_STATES)})", BEAT_PENDING_STATES,
-            ).fetchone()[0]
+            pending, pending_scanned, oldest_mtime = conn.execute(
+                f"SELECT COUNT(*), COUNT(source_mtime), MIN(source_mtime) FROM dream_captures "
+                f"WHERE turn_count >= 2 AND state IN ({','.join('?' for _ in BEAT_PENDING_STATES)})",
+                BEAT_PENDING_STATES,
+            ).fetchone()
     except sqlite3.OperationalError:
         return out  # no such table/column: a ledger that predates the beat has no beat data
     lags: dict[str, list[float]] = {}
     capture_lags: dict[str, list[float]] = {}
     for row in rows:
+        if row["source_mtime"] is None:
+            continue
         processed, captured = _parse_utc(str(row["updated_at"])), _parse_utc(str(row["captured_at"]))
         if processed is None:
             continue
@@ -858,7 +868,10 @@ def _beat_lag(state_db: Path, since: datetime) -> dict[str, Any]:
             "capture_lag_p50_s": _nearest_rank(capture_lags[provider], 0.5) if provider in capture_lags else None,
             "capture_lag_p95_s": _nearest_rank(capture_lags[provider], 0.95) if provider in capture_lags else None,
         }
-    out["processed"], out["pending"] = len(rows), int(pending)
+    out["processed"], out["processed_scanned"] = len(rows), sum(len(values) for values in lags.values())
+    out["pending"], out["pending_scanned"] = int(pending), int(pending_scanned)
+    if oldest_mtime is not None:
+        out["pending_scanned_oldest_age_s"] = max(0, int(end.timestamp() - float(oldest_mtime)))
     return out
 
 
@@ -893,9 +906,10 @@ def compute_beat_measurements(
     """Read-only M3/M4 numbers; the beat CLI is the only caller that persists them."""
     end = _utc(now)
     since = end - timedelta(hours=window_hours)
-    m3 = _beat_lag(state_db, since)
+    m3 = _beat_lag(state_db, since, end)
     m3["target_p95_s"] = BEAT_LAG_TARGET_SECONDS
-    m3["within_target"] = all(p["lag_p95_s"] <= BEAT_LAG_TARGET_SECONDS for p in m3["providers"].values())
+    m3["within_target"] = (all(p["lag_p95_s"] <= BEAT_LAG_TARGET_SECONDS for p in m3["providers"].values())
+                           and (m3["pending_scanned_oldest_age_s"] or 0) <= BEAT_LAG_TARGET_SECONDS)
     return {"observed_at": end.isoformat(), "window_hours": window_hours, "m3": m3,
             "m4": _beat_guard(guard_log, since)}
 
@@ -908,19 +922,25 @@ def check_beat_health(config: ReviewConfig, *, now: datetime | None = None) -> R
     except (OSError, sqlite3.Error) as exc:
         return ReviewResult("beat_health", Verdict.WARN, f"probe_error={type(exc).__name__}")
     m3, m4 = data["m3"], data["m4"]
-    if not m3["processed"] and not m3["pending"] and not m4["ticks"]:
+    # Hook captures alone say nothing about the beat: only scanned rows (source mtime) or guard ticks do.
+    if not m3["processed_scanned"] and not m3["pending_scanned"] and not m4["ticks"]:
         return ReviewResult("beat_health", Verdict.PASS, f"no beat data in the last {data['window_hours']}h (beat inactive)")
-    counts = {"processed_24h": m3["processed"], "pending": m3["pending"], "guard_ticks": m4["ticks"],
+    counts = {"processed_24h": m3["processed"], "processed_scanned_24h": m3["processed_scanned"],
+              "pending": m3["pending"], "pending_scanned": m3["pending_scanned"],
+              "pending_scanned_oldest_age_s": m3["pending_scanned_oldest_age_s"], "guard_ticks": m4["ticks"],
               "guard_allow": m4["allow"], "guard_capture_only": m4["capture_only"], "guard_skip": m4["skip"]}
     for provider, stats in m3["providers"].items():
         counts[f"{provider}_lag_p50_s"], counts[f"{provider}_lag_p95_s"] = stats["lag_p50_s"], stats["lag_p95_s"]
     lag = "; ".join(f"{name} lag p50={s['lag_p50_s']}s p95={s['lag_p95_s']}s (n={s['n']})"
-                    for name, s in m3["providers"].items()) or "no processed captures"
-    detail = (f"M3 {lag}, pending={m3['pending']}; M4 {m4['verdict']} "
+                    for name, s in m3["providers"].items()) or "no lag figure (no beat-scanned capture processed)"
+    waiting = ""
+    if m3["pending_scanned"]:
+        waiting = f" ({m3['pending_scanned']} scanned, oldest {m3['pending_scanned_oldest_age_s']}s)"
+    detail = (f"M3 {lag}, processed={m3['processed']}, pending={m3['pending']}{waiting}; M4 {m4['verdict']} "
               f"allow={m4['allow']} capture_only={m4['capture_only']} skip={m4['skip']}")
     verdict = Verdict(m4["verdict"])
     if not m3["within_target"]:
-        detail = f"lag p95 over {BEAT_LAG_TARGET_SECONDS}s: {detail}"
+        detail = f"lag over {BEAT_LAG_TARGET_SECONDS}s: {detail}"
         verdict = Verdict.FAIL if verdict is Verdict.FAIL else Verdict.WARN
     return ReviewResult("beat_health", verdict, detail, counts)
 

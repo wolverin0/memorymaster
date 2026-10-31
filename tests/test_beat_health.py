@@ -84,21 +84,82 @@ def test_lag_over_an_hour_warns(tmp_path: Path) -> None:
     assert "lag" in result.detail
 
 
-def test_unprocessed_and_pre_beat_rows_do_not_enter_the_lag_numbers(tmp_path: Path) -> None:
-    ledger = DreamLedger(tmp_path / "state" / "capture-control.db")
-    _capture(ledger, 1, provider="claude", lag_s=90000, state="captured")  # still waiting
-    with sqlite3.connect(ledger.db_path) as conn:  # hook-captured: no source mtime
+def _hook_capture(ledger: DreamLedger, key: str, *, state: str, ago_s: float = 600, turns: int = 2) -> None:
+    """A hook-captured row: it never gets a source mtime, so it carries no lag figure."""
+    stamp = (NOW - timedelta(seconds=ago_s)).isoformat()
+    with sqlite3.connect(ledger.db_path) as conn:
         conn.execute(
             """INSERT INTO dream_captures (capture_key, version, provider, session_hash, scope, captured_at,
                last_activity_at, messages_json, cursor_start, cursor_end, content_hash, byte_count,
-               turn_count, state, updated_at) VALUES ('k','v','claude','s','p',?,?,'[]',0,1,'h',1,2,'applied',?)""",
-            (NOW.isoformat(),) * 3,
+               turn_count, state, updated_at) VALUES (?,'v','claude','s','p',?,?,'[]',0,1,'h',1,?,?,?)""",
+            (key, stamp, stamp, turns, state, stamp),
         )
+
+
+def test_unprocessed_rows_do_not_enter_the_lag_percentiles(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "state" / "capture-control.db")
+    _capture(ledger, 1, provider="claude", lag_s=500, state="extracted")
+    _capture(ledger, 2, provider="claude", lag_s=90000, state="captured")  # still waiting
+    _hook_capture(ledger, "hook-applied", state="applied")  # processed, but no mtime to measure
 
     result = review.check_beat_health(_config(tmp_path), now=NOW)
 
-    assert result.verdict is review.Verdict.PASS
-    assert result.counts["processed_24h"] == 0 and result.counts["pending"] == 1
+    assert result.counts["claude_lag_p95_s"] == 500
+
+
+def test_processed_counts_every_capture_even_when_the_beat_scan_only_queues_others(tmp_path: Path) -> None:
+    """Live 2026-10-31: the beat extracted ~70 hook captures a day (no source mtime) while the 768
+    beat-scanned ones waited; the review reported processed_24h=0 and no lag at all."""
+    ledger = DreamLedger(tmp_path / "state" / "capture-control.db")
+    for index in range(3):
+        _hook_capture(ledger, f"hook-{index}", state="applied")
+    _capture(ledger, 1, provider="codex", lag_s=100000, state="captured", processed_ago_s=100000)
+
+    result = review.check_beat_health(_config(tmp_path), now=NOW)
+
+    assert result.counts["processed_24h"] == 3
+    assert result.counts["processed_scanned_24h"] == 0
+    assert result.counts["pending_scanned"] == 1
+    assert "claude_lag_p95_s" not in result.counts  # nothing scanned was processed: no percentile to invent
+
+
+def test_a_scanned_capture_waiting_past_the_target_warns_even_with_nothing_processed(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "state" / "capture-control.db")
+    _capture(ledger, 1, provider="codex", lag_s=0, state="captured", processed_ago_s=7200)
+
+    result = review.check_beat_health(_config(tmp_path), now=NOW)
+
+    assert result.verdict is review.Verdict.WARN
+    assert result.counts["pending_scanned_oldest_age_s"] == 7200
+    assert "pending" in result.detail
+
+
+def test_a_fresh_scanned_capture_waiting_is_not_a_warning(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "state" / "capture-control.db")
+    _capture(ledger, 1, provider="codex", lag_s=0, state="captured", processed_ago_s=600)
+
+    assert review.check_beat_health(_config(tmp_path), now=NOW).verdict is review.Verdict.PASS
+
+
+def test_pending_counts_every_eligible_capture_and_skips_single_turn_rows(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "state" / "capture-control.db")
+    _capture(ledger, 1, provider="codex", lag_s=10, state="captured")
+    _hook_capture(ledger, "hook-waiting", state="captured")
+    _hook_capture(ledger, "hook-one-turn", state="captured", turns=1)  # never eligible for extraction
+
+    result = review.check_beat_health(_config(tmp_path), now=NOW)
+
+    assert result.counts["pending"] == 2 and result.counts["pending_scanned"] == 1
+
+
+def test_hook_captures_alone_leave_the_beat_inactive(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "state" / "capture-control.db")
+    _hook_capture(ledger, "hook-applied", state="applied")
+    _hook_capture(ledger, "hook-waiting", state="captured")
+
+    result = review.check_beat_health(_config(tmp_path), now=NOW)
+
+    assert result.verdict is review.Verdict.PASS and "beat inactive" in result.detail
 
 
 def test_m4_from_the_guard_log(tmp_path: Path) -> None:
