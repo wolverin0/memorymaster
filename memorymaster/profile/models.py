@@ -36,6 +36,7 @@ PREDICATE_CATEGORY = {
     "tooling_constraint": "standing_constraints",
 }
 PROFILE_VOLATILITIES = ("stable", "preference")
+MAX_CANDIDATE_SUPPORTS = 20
 PROFILE_ACTIONS = ("add", "reinforce", "replace", "ignore")
 _INSTRUCTION = re.compile(
     r"(?i)\b(?:you|assistant|agents?|claude|codex)\b.{0,50}\b(?:must|should|always|never)\b"
@@ -98,7 +99,7 @@ class ProfileCandidate:
     def __post_init__(self) -> None:
         if not self.candidate_id or len(self.candidate_id) > 120:
             raise ProfileValidationError("candidate id is malformed")
-        if not self.support_ids or len(self.support_ids) > 20:
+        if not self.support_ids or len(self.support_ids) > MAX_CANDIDATE_SUPPORTS:
             raise ProfileValidationError("candidate supports are malformed")
         if len(set(self.support_ids)) != len(self.support_ids):
             raise ProfileValidationError("candidate supports contain duplicates")
