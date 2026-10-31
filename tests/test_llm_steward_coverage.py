@@ -111,3 +111,29 @@ class TestParseApiKeys:
             os.environ.pop("MEMORYMASTER_API_KEY", None)
             result = _parse_api_keys()
             assert result == [""]  # empty string fallback
+
+
+class TestGeminiDefaultAndThinking:
+    """T-1902: flash-latest times out / 503s live; the steward uses flash-lite with minimal thinking."""
+
+    def test_default_model_is_flash_lite(self):
+        from memorymaster.govern.llm_steward import PROVIDERS
+
+        assert PROVIDERS["gemini"]["default_model"] == "gemini-flash-lite-latest"
+
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("gemini-flash-lite-latest", {"thinkingLevel": "minimal"}),
+            ("gemini-flash-latest", None),
+        ],
+    )
+    def test_request_payload_thinking_config(self, model, expected):
+        import json
+
+        from memorymaster.govern.llm_steward import _build_request_for_key
+
+        _, payload, _ = _build_request_for_key("gemini", "k", model, "p", "")
+        cfg = json.loads(payload)["generationConfig"]
+        assert cfg["maxOutputTokens"] == 1024
+        assert cfg.get("thinkingConfig") == expected
