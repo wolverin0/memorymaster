@@ -201,6 +201,16 @@ def test_the_client_reads_the_cold_answer_as_cold_not_as_a_failure(monkeypatch) 
         dense_recall.search("q", None)
 
 
+def test_summary_counts_cold_apart_from_fallback() -> None:
+    """`fallback_rate` is the service failing; a cold model is its own `cold_rate`, in neither it nor dense."""
+    events = [{"outcome": "dense", "service_ms": 100}] * 6 + [{"outcome": "cold"}] * 3 + [
+        {"outcome": "fallback:TimeoutError"}]
+    summary = dense_recall.summarize(events)
+    assert summary["cold_rate"] == 0.3 and summary["fallback_rate"] == 0.1
+    assert summary["service_ms_p50"] == 100.0  # cold rows do not enter the dense latency
+    assert dense_recall.summarize([])["cold_rate"] is None
+
+
 def test_off_by_default_and_never_outside_the_prompt_hook(claims, monkeypatch) -> None:
     def must_not_run(*_args, **_kwargs):
         raise AssertionError("dense service called")

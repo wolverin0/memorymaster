@@ -247,3 +247,60 @@ def test_the_model_is_not_reported_loaded_while_its_child_is_still_starting() ->
         _wait_loaded(encoder)
     finally:
         encoder.close()
+
+
+def test_a_child_that_died_while_idle_is_not_reported_loaded_during_the_next_background_load() -> None:
+    """The child can exit on its own while idle, so _kill() never ran and _ready stayed True: a query during
+    the next load then queued behind the load lock instead of being answered cold."""
+    slow = ("import time; time.sleep(1.5)\n" + FAKE_CHILD)
+    encoder = WorkerEncoder(4, "cpu", idle_s=0.0, command=[sys.executable, "-c", FAKE_CHILD])
+    try:
+        encoder(["a"], "query")
+        assert encoder.loaded
+        encoder._proc.kill()
+        encoder._proc.wait()
+        assert not encoder.loaded  # dead child: not loaded even before anything reaps it
+        encoder._command = [sys.executable, "-c", slow]
+        assert encoder.warm() is True
+        time.sleep(0.4)
+        assert not encoder.loaded  # the new child is still starting
+        _wait_loaded(encoder)
+    finally:
+        encoder.close()
+
+
+def test_a_query_during_the_reload_after_an_idle_crash_answers_cold_fast(claims_db) -> None:
+    slow = ("import time; time.sleep(1.5)\n" + FAKE_CHILD)
+    encoder = _encoder()
+    try:
+        service = _cold_service(claims_db, encoder)
+        encoder(["a"], "query")
+        encoder._proc.kill()
+        encoder._proc.wait()
+        encoder._command = [sys.executable, "-c", slow]
+        assert service.search("q", None, 5).get("cold")  # starts the reload
+        time.sleep(0.4)
+        started = time.perf_counter()
+        assert service.search("q", None, 5).get("cold")
+        assert time.perf_counter() - started < 0.5  # not blocked behind the load lock
+        _wait_loaded(encoder)
+    finally:
+        encoder.close()
+
+
+def test_a_failed_background_load_is_counted_and_shown_in_health(claims_db, caplog) -> None:
+    encoder = WorkerEncoder(4, "cpu", idle_s=0.0, command=[sys.executable, "-c", "raise SystemExit(1)"])
+    try:
+        service = dense_server.DenseService(claims_db, encoder, model="fake", dim=4, device="cpu",
+                                            is_loaded=lambda: encoder.loaded, warm=encoder.warm,
+                                            warm_status=encoder.warm_status)
+        with caplog.at_level("WARNING", logger="memorymaster.dense_worker"):
+            assert service.search("q", None, 5).get("cold")
+            deadline = time.monotonic() + 20
+            while encoder.warm_failures == 0 and time.monotonic() < deadline:
+                time.sleep(0.02)
+        health = service.health()
+        assert health["warm_failures"] == 1 and health["last_warm_error"] == "worker exited"
+        assert "warm-up failed" in caplog.text
+    finally:
+        encoder.close()

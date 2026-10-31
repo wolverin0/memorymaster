@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -29,6 +30,8 @@ from typing import Any, BinaryIO
 import numpy as np
 
 from memorymaster.core import stall_probe
+
+LOGGER = logging.getLogger("memorymaster.dense_worker")
 
 # Model load measured at 5-8 s; a child silent for this long is killed so the service never hangs on it.
 EXCHANGE_TIMEOUT_S = 120.0
@@ -55,6 +58,8 @@ class WorkerEncoder:
         self._proc: subprocess.Popen[bytes] | None = None
         self._ready = False  # the child has reported ready: a process that is still importing torch is not loaded
         self._warming = threading.Lock()  # held while a background load runs: one load at a time
+        self.warm_failures = 0
+        self.last_warm_error: str | None = None  # class name of the latest failed background load
         self._last_query = 0.0
         self.device = device or "auto"
         self.loads = 0
@@ -86,14 +91,19 @@ class WorkerEncoder:
         threading.Thread(target=self._warm, name="dense-warm", daemon=True).start()
         return True
 
+    def warm_status(self) -> dict[str, Any]:
+        return {"warm_failures": self.warm_failures, "last_warm_error": self.last_warm_error}
+
     def _warm(self) -> None:
         try:
             with self._lock:
                 self._last_query = time.monotonic()  # the load is activity: the reaper must not drop it at once
                 self._ensure_started()
                 self._last_query = time.monotonic()
-        except EncoderUnavailable:
-            pass  # the next cold query tries again
+        except EncoderUnavailable as exc:  # the next cold query tries again
+            self.warm_failures += 1
+            self.last_warm_error = str(exc)
+            LOGGER.warning("dense model warm-up failed: %s", exc)
         finally:
             self._warming.release()
 
@@ -116,7 +126,7 @@ class WorkerEncoder:
     def _ensure_started(self) -> None:
         if self.loaded:
             return
-        self._proc = None
+        self._kill()  # reaps a child that exited on its own while idle and clears _ready: _kill is the only reset
         stderr: Any = subprocess.DEVNULL
         if self._log_path is not None:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)

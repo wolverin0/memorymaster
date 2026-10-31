@@ -199,11 +199,14 @@ def summarize(events: Sequence[dict[str, Any]]) -> dict[str, Any]:
     injected = [int(e.get("injected") or 0) for e in dense]
     chars = [int(e.get("chars") or 0) for e in dense]
     top = [float(e["top_score"]) for e in dense if e.get("top_score") is not None]
+    # fallback_rate counts only `fallback:*` (the service failed); `cold` (the model was unloaded and is
+    # loading after an idle unload) has its own cold_rate and is in neither dense nor fallback.
     return {
         "recalls": len(events),
         "outcomes": dict(outcomes),
         "fallback_rate": round(sum(n for o, n in outcomes.items() if o.startswith("fallback")) / len(events), 3)
         if events else None,
+        "cold_rate": round(outcomes.get("cold", 0) / len(events), 3) if events else None,
         "empty_rate": round(outcomes.get("dense_empty", 0) / len(dense), 3) if dense else None,
         "service_ms_p50": _pct((float(e.get("service_ms") or 0) for e in dense), 0.5),
         "service_ms_p95": _pct((float(e.get("service_ms") or 0) for e in dense), 0.95),

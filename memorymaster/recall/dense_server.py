@@ -215,11 +215,13 @@ def load_encoder(dim: int, device: str | None = None) -> tuple[Encoder, str]:
 class DenseService:
     def __init__(self, db_path: str | Path, encode: Encoder, *, model: str, dim: int, device: str,
                  cache_path: Path | None = None, sync_interval_s: float = 60.0,
-                 is_loaded: Callable[[], bool] | None = None, warm: Callable[[], object] | None = None) -> None:
+                 is_loaded: Callable[[], bool] | None = None, warm: Callable[[], object] | None = None,
+                 warm_status: Callable[[], dict[str, Any]] | None = None) -> None:
         self.db_path = str(db_path)
         self.encode = encode
         self.is_loaded = is_loaded  # None: the encoder is always resident (tests, in-process use)
         self.warm = warm  # starts the model load in the background; None: a query loads it inline
+        self.warm_status = warm_status  # background-load failures, shown in /health
         self.model = model
         self.dim = dim
         self.device = device
@@ -280,7 +282,7 @@ class DenseService:
         loaded = {} if self.is_loaded is None else {"model_loaded": self.is_loaded()}
         return {"ok": True, "model": self.model, "dim": self.dim, "device": self.device,
                 "uptime_s": round(time.time() - self.started), "sync_errors": self.sync_errors,
-                **loaded, **self.index.stats()}
+                **loaded, **(self.warm_status() if self.warm_status else {}), **self.index.stats()}
 
 
 def make_handler(service: DenseService) -> type[BaseHTTPRequestHandler]:
@@ -354,7 +356,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.dim != DEFAULT_DIM:
         cache = cache.with_name(f"{cache.stem}-{args.dim}{cache.suffix}")
     service = DenseService(args.db, encoder, model=MODEL_NAME, dim=args.dim, device=args.device or "auto",
-                           cache_path=cache, sync_interval_s=args.sync_interval, is_loaded=lambda: encoder.loaded, warm=encoder.warm)
+                           cache_path=cache, sync_interval_s=args.sync_interval, is_loaded=lambda: encoder.loaded, warm=encoder.warm, warm_status=encoder.warm_status)
     embedded = service.sync_once()  # cache-only: the model loads on the first query
     LOGGER.info("dense service ready on %s:%d (%s, model unloaded, %d indexed, %d embedded at start)",
                 args.host, args.port, service.device, service.index.stats()["indexed"], embedded)
