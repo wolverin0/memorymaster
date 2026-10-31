@@ -148,6 +148,33 @@ def test_timeout_is_reported(tmp_path):
     assert report["checks"][0]["detail"] == "hook timed out"
 
 
+def test_scratch_cleanup_failure_does_not_mask_timeout(tmp_path, monkeypatch):
+    # T-1973: on Windows a killed/scanned probe can hold a handle in the scratch dir (WinError 32);
+    # the resulting PermissionError at cleanup used to replace the timeout verdict.
+    real_rmdir = hd.os.rmdir
+
+    def locked_rmdir(path, *args, **kwargs):
+        if "memorymaster-hooks-doctor-" in str(path):
+            raise PermissionError(13, "simulated sharing violation", str(path))
+        return real_rmdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(hd.os, "rmdir", locked_rmdir)
+    folder = _install_command(tmp_path, "claude", "SessionStart", "import time; time.sleep(10)", timeout=1)
+    report = hd.doctor({"claude": folder})
+    assert report["checks"][0]["detail"] == "hook timed out"
+
+
+def test_nonexistent_command_is_still_reported_as_not_executable(tmp_path):
+    folder = _install_command(tmp_path, "claude", "SessionStart", "print(1)")
+    config = json.loads((folder / "settings.json").read_text())
+    handler = config["hooks"]["SessionStart"][0]["hooks"][0]
+    handler["command"] = f'"{tmp_path / "python-does-not-exist.exe"}" "{folder / "memorymaster-fixture.py"}"'
+    (folder / "settings.json").write_text(json.dumps(config))
+    report = hd.doctor({"claude": folder})
+    assert report["status"] == "FAIL"
+    assert report["checks"][0]["detail"] == "hook command could not be executed"
+
+
 def test_probe_blocks_external_db_even_when_hook_swallows_failure(tmp_path):
     outside = tmp_path / "must-not-open.db"
     folder = _install_command(tmp_path, "codex", "Stop",
