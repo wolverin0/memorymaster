@@ -185,3 +185,24 @@ def test_opencode_prompt_is_unchanged_by_the_shared_rules(tmp_path):
     assert prompt.startswith("Extract at most five stable facts, decisions, preferences, profiles, or constraints.")
     assert "implementation progress. Return one JSON object with a candidates array." in prompt
     assert prompt.count("Output JSON only.") == 1
+
+
+def test_claude_extractor_is_a_consolidation_fallback(tmp_path):
+    """The Beat's extractor is Claude: T-1793's fallback returned None for it, so an agy hang always opened the breaker."""
+    from memorymaster.dreaming.models import DreamCandidate
+    from memorymaster.dreaming.providers import consolidation_fallback
+
+    seen = []
+    raw = json.dumps({"decisions": [{"candidate_id": "c1", "action": "ignore", "rationale": "fixture", "confidence": .9}]})
+    envelope = json.dumps({"type": "result", "result": raw, "usage": {"input_tokens": 11, "output_tokens": 3}})
+    fallback = consolidation_fallback(_extractor(tmp_path, envelope, seen=seen))
+    candidate = DreamCandidate("c1", "Prefer readable code", "preference", "user", "prefers",
+                               "readable code", "personal", "m1", "Prefer readable code", .9)
+
+    result = fallback.consolidate([candidate], [], scope="personal")
+
+    assert fallback is not None and fallback.uncapped_daily is True
+    assert result.decisions[0].candidate_id == "c1"
+    assert (result.usage.provider, result.usage.model) == ("claude", "haiku")
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (11, 3)
+    assert seen[0][4]["MEMORYMASTER_INTERNAL_RUN"] == "1"  # the headless child must not be recaptured

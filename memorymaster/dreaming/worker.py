@@ -782,13 +782,14 @@ class DreamWorker:
                 provider_deferred.update(capture_ids)
                 summary["deferred_consolidate_provider"] = len(provider_deferred)
                 continue
-            if self.ledger.provider_calls_today(
+            # Subscription-backed fallbacks (Claude CLI) opt out of the daily caps, as for extraction.
+            if not getattr(consolidator, "uncapped_daily", False) and (self.ledger.provider_calls_today(
                 consolidator.provider,
                 model=consolidator.model,
                 now=self.now(),
             ) >= self.config.max_consolidate_calls_daily or self._over_token_budget(
                 consolidator.provider, consolidator.model,
-            ):
+            )):
                 self._hold_lease()
                 for capture_id in capture_ids:
                     self.ledger.defer_consolidation(capture_id, run_id)
@@ -866,17 +867,22 @@ class DreamWorker:
                 if fallback is not None or (
                     timed_out and consolidator is self.consolidator and answered > 0 and hung == 0
                 ):
-                    # T-1793: switch the remaining calls to the configured
-                    # extractor on the first timeout. Leave this batch for a
-                    # later run. With no fallback, retain T-1687's tolerance of
-                    # one hung call after an answer; fallback failures break.
+                    # T-1793: switch to the configured extractor on the first
+                    # timeout and retry the hung batch on it. With no fallback,
+                    # retain T-1687's tolerance of one hung call after an
+                    # answer (batch left for a later run); fallback failures break.
                     hung += 1
-                    if fallback is not None:
-                        consolidator = fallback
-                        summary["consolidate_fallback"] = fallback.provider
                     summary["consolidate_hung_calls"] = hung
                     summary["errors"] += 1
                     LOGGER.warning("Dreaming consolidation call hung, continuing the run: %s", str(exc)[:300])
+                    if fallback is not None:
+                        consolidator = fallback
+                        summary["consolidate_fallback"] = fallback.provider
+                        # The Beat consolidates one capture per run, usually one batch: leaving the
+                        # hung batch would make the fallback unreachable. Retry it on the fallback; a
+                        # fallback failure is no longer `consolidator is self.consolidator`, so it breaks.
+                        batches.appendleft((effective_scope, pairs))
+                        continue
                     self._hold_lease()
                     tripped.update(capture_ids)
                     self.ledger.record_consolidation_trip(capture_ids, alone=len(capture_ids) == 1 and answered > 0, now=self.now())

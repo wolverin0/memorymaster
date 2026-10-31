@@ -937,12 +937,25 @@ class ClaudeCliExtractor:
         capture_hash: str,
     ) -> ExtractionResult:
         prompt = self._prompt(messages, scope)
+        started = time.monotonic()
+        raw, input_tokens, output_tokens = self.complete(prompt)
+        rows = _json_object(_without_markdown_fence(raw)).get("candidates", [])
+        if not isinstance(rows, list):
+            raise ProviderOutputError("Claude CLI candidates must be an array")
+        candidates, structured_valid = _candidates_from_rows(rows, messages, capture_hash)
+        usage = ProviderUsage(
+            self.provider, self.model, 200, int((time.monotonic() - started) * 1000),
+            input_tokens, output_tokens, structured_valid,
+        )
+        return ExtractionResult(tuple(candidates), usage)
+
+    def complete(self, prompt: str) -> tuple[str, int, int]:
+        """One ``claude -p`` call: ``(text, input_tokens, output_tokens)``; shared by extraction and the consolidation fallback."""
         command = self._command()
         self.work_dir.mkdir(parents=True, exist_ok=True)
         # Headless child: hooks installed for interactive sessions must not recapture it.
         # Defence in depth with --no-session-persistence and the capture scratch-cwd guard.
         env = {**os.environ, "MEMORYMASTER_INTERNAL_RUN": "1", "MEMORYMASTER_DREAM_ENABLED": "0", "NO_COLOR": "1"}
-        started = time.monotonic()
         try:
             completed = self.runner(command, prompt, self.timeout, self.work_dir, env)
         except FileNotFoundError as exc:
@@ -958,15 +971,7 @@ class ClaudeCliExtractor:
             input_tokens = self.token_counter(prompt)
         if output_tokens is None:
             output_tokens = self.token_counter(raw)
-        rows = _json_object(_without_markdown_fence(raw)).get("candidates", [])
-        if not isinstance(rows, list):
-            raise ProviderOutputError("Claude CLI candidates must be an array")
-        candidates, structured_valid = _candidates_from_rows(rows, messages, capture_hash)
-        usage = ProviderUsage(
-            self.provider, self.model, 200, int((time.monotonic() - started) * 1000),
-            input_tokens, output_tokens, structured_valid,
-        )
-        return ExtractionResult(tuple(candidates), usage)
+        return raw, input_tokens, output_tokens
 
     def _command(self) -> list[str]:
         from memorymaster.core.llm_provider import _resolve_claude_bin
@@ -1151,7 +1156,7 @@ class OpenCodeConsolidator:
 class _ExtractConsolidator:
     """Use the configured extractor's transport and limits for consolidation."""
 
-    def __init__(self, extractor: GeminiExtractor | OpenCodeExtractor) -> None:
+    def __init__(self, extractor: GeminiExtractor | OpenCodeExtractor | ClaudeCliExtractor) -> None:
         self.extractor = extractor
 
     def __getattr__(self, name: str) -> Any:
@@ -1166,6 +1171,10 @@ class _ExtractConsolidator:
         prompt = consolidation_prompt(candidates, current_claims, scope)
         extractor = self.extractor
         started = time.monotonic()
+        if isinstance(extractor, ClaudeCliExtractor):
+            raw, input_tokens, output_tokens = extractor.complete(prompt)
+            return consolidation_from_raw(raw, candidates, started=started, input_tokens=input_tokens,
+                                          output_tokens=output_tokens, provider=self.provider, model=self.model)
         if isinstance(extractor, GeminiExtractor):
             payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {
                 "temperature": 0.1, "maxOutputTokens": 2000,
@@ -1223,6 +1232,9 @@ def consolidation_fallback(extractor: Any) -> _ExtractConsolidator | None:
     """Return an adapter only for an available, already configured extractor."""
     if isinstance(extractor, GeminiExtractor):
         return _ExtractConsolidator(extractor) if extractor.api_key else None
+    if isinstance(extractor, ClaudeCliExtractor):
+        # The scheduled Beat's extractor; unsupported until 2026-10-31, so every agy hang opened the breaker.
+        return _ExtractConsolidator(extractor)
     if isinstance(extractor, OpenCodeExtractor):
         if extractor.max_output_tokens is not None:
             if extractor.max_input_tokens is None or not callable(getattr(extractor.client, "complete_bounded", None)):
