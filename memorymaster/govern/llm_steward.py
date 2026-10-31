@@ -24,7 +24,7 @@ import urllib.error
 from dataclasses import dataclass
 from typing import Any
 
-from memorymaster.stores._storage_shared import open_conn
+from memorymaster.stores._storage_shared import open_conn, utc_now
 from memorymaster.core import observability
 from memorymaster.core.llm_provider import gemini_thinking_fields
 from memorymaster.core.models import tuple_key
@@ -522,15 +522,20 @@ def _confirm_candidate_cas(
         return False
     # The stored subject/predicate change, so the persisted tuple identity must follow (T-1877, review F6).
     # A database that predates migration 31 has no such column.
-    has_key = any(col[1] == "tuple_key" for col in conn.execute("PRAGMA table_info(claims)"))
+    columns = {col[1] for col in conn.execute("PRAGMA table_info(claims)")}
+    has_key = "tuple_key" in columns
+    # A confirmation is evidence: restart the decay clock (T-1870 AC3; column from migration 32).
+    has_clock = "last_evidence_at" in columns
     cur = conn.execute(
         "UPDATE claims SET status = 'confirmed', subject = ?, predicate = ?, "
         "object_value = ?, confidence = ?, "
         + ("tuple_key = ?, " if has_key else "")
+        + ("last_evidence_at = ?, " if has_clock else "")
         + "version = version + 1 "
         "WHERE id = ? AND version = ? AND status = 'candidate'",
         (subject, predicate, object_value, confidence,
-         *((tuple_key(subject, predicate),) if has_key else ()), claim_id, version),
+         *((tuple_key(subject, predicate),) if has_key else ()),
+         *((utc_now(),) if has_clock else ()), claim_id, version),
     )
     return cur.rowcount > 0
 

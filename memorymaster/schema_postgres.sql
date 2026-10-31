@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS claims (
     source_agent TEXT,
     visibility TEXT NOT NULL DEFAULT 'public',
     wiki_article TEXT,
-    holder TEXT
+    holder TEXT,
+    last_evidence_at TIMESTAMPTZ,
+    last_decayed_at TIMESTAMPTZ
 );
 
 ALTER TABLE claims
@@ -75,6 +77,10 @@ ALTER TABLE claims ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'pu
 -- takes_vs_facts (gbrain multi-holder-belief dimension): nullable holder of the
 -- belief. NULL = holder-agnostic (default, byte-identical to pre-holder rows).
 ALTER TABLE claims ADD COLUMN IF NOT EXISTS holder TEXT;
+-- T-1870 AC3 decay clock (SQLite: migration 32). NULL on both = legacy rows, which
+-- decay keeps aging from updated_at.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS last_evidence_at TIMESTAMPTZ;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS last_decayed_at TIMESTAMPTZ;
 
 DO $$
 BEGIN

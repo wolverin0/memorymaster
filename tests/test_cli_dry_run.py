@@ -129,7 +129,8 @@ def test_decay_dry_run_no_writes(tmp_db: Path, capsys) -> None:
         volatility="high",
         confidence="0.9",
     )
-    _set_claim(tmp_db, claim_id, status="confirmed", confidence=0.9, updated_at=_old_iso(30))
+    _set_claim(tmp_db, claim_id, status="confirmed", confidence=0.9, updated_at=_old_iso(30),
+               last_evidence_at=_old_iso(30))
     before_claims = _claim_state(tmp_db)
     before_events = _event_count(tmp_db)
 

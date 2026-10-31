@@ -26,6 +26,21 @@ def _parse_iso(dt: str) -> datetime:
     return parsed
 
 
+def _decay_anchor(claim) -> tuple[str, str]:
+    """(field, timestamp) decay ages a claim from: the later of its evidence and last decay step.
+
+    T-1870 AC3: never ``updated_at`` when the clock is set -- deterministic and the
+    validator move ``updated_at`` with value changes that bring no new evidence. Rows
+    without the clock (pre-migration-32 Postgres, raw inserts) keep the legacy anchor.
+    """
+    stamps = [(v, f) for f, v in (("last_evidence_at", claim.last_evidence_at),
+                                  ("last_decayed_at", claim.last_decayed_at)) if v]
+    if not stamps:
+        return "updated_at", claim.updated_at
+    stamp, name = max(stamps, key=lambda item: _parse_iso(item[0]))
+    return name, stamp
+
+
 def _edge_decay_enabled() -> bool:
     """Hebbian/Ebbinghaus edge decay is RECALL-ALTERING — default OFF.
 
@@ -166,12 +181,12 @@ def run(
         transitioned = 0
 
         for claim in claims:
-            updated_dt = _parse_iso(claim.updated_at)
-            raw_age_seconds = (now - updated_dt).total_seconds()
+            anchor_field, anchor = _decay_anchor(claim)
+            raw_age_seconds = (now - _parse_iso(anchor)).total_seconds()
             age_days = max(raw_age_seconds / 86400.0, 0.0)
             if age_days <= 0:
                 if raw_age_seconds < 0:
-                    skipped_future.append({"claim_id": claim.id, "updated_at": claim.updated_at})
+                    skipped_future.append({"claim_id": claim.id, anchor_field: anchor})
                 continue
 
             rate = decay_rates.get(claim.volatility, decay_rates["medium"])
@@ -216,8 +231,8 @@ def run(
     transitioned = 0
 
     for claim in claims:
-        updated_dt = _parse_iso(claim.updated_at)
-        raw_age_seconds = (now - updated_dt).total_seconds()
+        anchor_field, anchor = _decay_anchor(claim)
+        raw_age_seconds = (now - _parse_iso(anchor)).total_seconds()
         age_days = max(raw_age_seconds / 86400.0, 0.0)
         if age_days <= 0:
             # F-10 fix (overnight audit 2026-05-04): when raw_age_seconds < 0
@@ -234,7 +249,7 @@ def run(
                     store.record_event(
                         claim_id=claim.id,
                         event_type="decay",
-                        details=f"skipped: future updated_at={claim.updated_at}",
+                        details=f"skipped: future {anchor_field}={anchor}",
                     )
                 except Exception:
                     # Don't let event recording failure crash the decay loop
@@ -247,6 +262,7 @@ def run(
             claim.id,
             new_conf,
             details=f"decay_rate={rate:.3f};age_days={age_days:.3f}",
+            decay_step=True,
         )
         decayed += 1
 

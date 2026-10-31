@@ -232,8 +232,8 @@ class _WriteClaimsMixin:
                         scope, volatility, status, confidence, pinned, supersedes_claim_id,
                         replaced_by_claim_id, created_at, updated_at, last_validated_at, archived_at,
                         tenant_id, event_time, valid_from, valid_until, source_agent, visibility, holder,
-                        content_fingerprint, tuple_key
-                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        content_fingerprint, tuple_key, last_evidence_at
+                    ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'candidate', ?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         text,
@@ -256,6 +256,7 @@ class _WriteClaimsMixin:
                         holder or None,
                         content_fingerprint(text),
                         tuple_key(subject, predicate),
+                        now,  # the ingest is the claim's first evidence (decay clock)
                     ),
                 )
             except sqlite3.IntegrityError:
@@ -529,7 +530,7 @@ class _WriteClaimsMixin:
 
 
     def adopt_claim_history(self, claim_id: int, source_claim_id: int) -> None:
-        """Give a copy its source's age and use: created/validated times, tier, accesses.
+        """Give a copy its source's age and use: created/validated times, decay clock, tier, accesses.
 
         A rescoped claim is the same knowledge, so ranking must not treat it as new:
         freshness anchors on last_validated_at and recompute_tiers promotes anything
@@ -539,8 +540,10 @@ class _WriteClaimsMixin:
         with self.connect() as conn:
             cur = conn.execute(
                 """
-                UPDATE claims SET (created_at, last_validated_at, tier, access_count, last_accessed) =
-                    (SELECT created_at, last_validated_at, tier, access_count, last_accessed
+                UPDATE claims SET (created_at, last_validated_at, tier, access_count, last_accessed,
+                                   last_evidence_at, last_decayed_at) =
+                    (SELECT created_at, last_validated_at, tier, access_count, last_accessed,
+                            last_evidence_at, last_decayed_at
                      FROM claims WHERE id = ?), updated_at = ?
                 WHERE id = ? AND EXISTS (SELECT 1 FROM claims WHERE id = ?)
                 """,
@@ -550,7 +553,10 @@ class _WriteClaimsMixin:
                 raise ValueError(f"Claim {claim_id} or source {source_claim_id} does not exist.")
             conn.commit()
 
-    def set_confidence(self, claim_id: int, confidence: float, details: str | None = None) -> None:
+    def set_confidence(
+        self, claim_id: int, confidence: float, details: str | None = None, *, decay_step: bool = False
+    ) -> None:
+        """Write a new confidence. ``decay_step`` (decay only) also advances ``last_decayed_at``."""
         bounded = max(0.0, min(1.0, confidence))
         now = utc_now()
         with self.connect() as conn:
@@ -570,8 +576,10 @@ class _WriteClaimsMixin:
                     bump_counter("claim_confidence_noop_total", writer=details_writer(details))
                 return
             conn.execute(
-                "UPDATE claims SET confidence = ?, updated_at = ? WHERE id = ?",
-                (bounded, now, claim_id),
+                "UPDATE claims SET confidence = ?, updated_at = ?"
+                + (", last_decayed_at = ?" if decay_step else "")
+                + " WHERE id = ?",
+                (bounded, now, *((now,) if decay_step else ()), claim_id),
             )
             if details:
                 self._insert_event_row(
@@ -590,9 +598,13 @@ class _WriteClaimsMixin:
     def set_pinned(self, claim_id: int, pinned: bool, reason: str) -> None:
         now = utc_now()
         with self.connect() as conn:
+            # Decay skips pinned claims; on unpin it resumes from now instead of charging
+            # the whole pinned period at once (T-1870 AC3).
             conn.execute(
-                "UPDATE claims SET pinned = ?, updated_at = ? WHERE id = ?",
-                (1 if pinned else 0, now, claim_id),
+                "UPDATE claims SET pinned = ?, updated_at = ?"
+                + ("" if pinned else ", last_decayed_at = ?")
+                + " WHERE id = ?",
+                (1 if pinned else 0, now, *(() if pinned else (now,)), claim_id),
             )
             self._insert_event_row(
                 conn,

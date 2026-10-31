@@ -74,7 +74,9 @@ def _seed_claims(db_path: Path, workspace: Path) -> None:
                     pinned = ?,
                     last_validated_at = ?,
                     archived_at = ?,
-                    updated_at = ?
+                    updated_at = ?,
+                    last_evidence_at = ?,
+                    last_decayed_at = ?
                 WHERE id = ?
                 """,
                 (
@@ -84,6 +86,8 @@ def _seed_claims(db_path: Path, workspace: Path) -> None:
                     f"2026-04-{idx:02d}T00:00:00+00:00",
                     f"2026-05-{idx:02d}T00:00:00+00:00" if status == "archived" else None,
                     f"2026-06-{idx:02d}T00:00:00+00:00",
+                    f"2026-03-{idx:02d}T00:00:00+00:00",
+                    f"2026-06-{idx:02d}T12:00:00+00:00" if status == "confirmed" else None,
                     idx,
                 ),
             )

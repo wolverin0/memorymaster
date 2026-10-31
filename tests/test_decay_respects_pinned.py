@@ -53,6 +53,7 @@ def _create_claim(
         confidence=confidence,
         updated_at=_iso_days_ago(days_since_validation),
         last_validated_at=_iso_days_ago(days_since_validation),
+        last_evidence_at=_iso_days_ago(days_since_validation),  # the decay clock (T-1870 AC3)
     )
     return store.get_claim(claim.id, include_citations=False)
 

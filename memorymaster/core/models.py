@@ -510,4 +510,8 @@ class Claim:
     # belief. None = holder-agnostic. The belief-TYPE axis (take/fact/bet/hunch)
     # already rides on the free-form claim_type string.
     holder: str | None = None
+    # T-1870 AC3: the decay clock. Evidence = ingest or a confirmation; decayed =
+    # the last decay step. Neither moves with updated_at (other maintenance writes).
+    last_evidence_at: str | None = None
+    last_decayed_at: str | None = None
     citations: list[Citation] = field(default_factory=list)

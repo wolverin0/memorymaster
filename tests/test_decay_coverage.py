@@ -51,6 +51,7 @@ def _create_confirmed_claim(
         store,
         claim.id,
         updated_at=_iso_days_ago(updated_days_ago),
+        last_evidence_at=_iso_days_ago(updated_days_ago),  # decay ages from evidence (T-1870 AC3)
         confidence=confidence,
     )
     return store.get_claim(claim.id, include_citations=False)
