@@ -4,8 +4,9 @@ The beat shares the machine with the interactive recall hook. Before each tick i
 reads two recent signals and returns ``allow``, ``capture_only`` or ``skip``:
 
 * dense recall events (``recall-dense.jsonl``), thresholds soft 150 ms / hard 300 ms;
-* end-to-end hook durations (``hook.log`` ``recall / latency_total``), thresholds
-  soft 900 ms / hard 1200 ms, the T-1042 bound.
+* end-to-end prompt-hook durations (the hook's own ``hook.log`` ``recall / timing`` line, not the
+  per-call ``latency_total`` every recall() caller writes), thresholds soft 900 ms / hard 1200 ms,
+  the T-1042 bound.
 
 A signal with fewer than ``MEMORYMASTER_BEAT_GUARD_MIN_EVENTS`` events in the window
 (missing log, cold start, quiet hour) says nothing and never blocks. An error inside the
@@ -48,7 +49,10 @@ HOOK_LOG_TAIL_BYTES = 512 * 1024
 GUARD_LOG_MAX_BYTES = 1024 * 1024
 GUARD_LOG_NAME = "beat-guard.jsonl"
 
-_HOOK_LINE = re.compile(r"^\[(?P<ts>[^\]]+)\]\s+hook=recall\b.*\bevent=(?P<event>latency_total|timing)\b.*\btotal_ms=(?P<ms>[0-9.]+)")
+# Only the UserPromptSubmit hook writes ``timing`` (its own wall clock). ``latency_total`` is written by every
+# context_hook.recall() call (benches, CLI, MCP, the shared server), so it says nothing about prompt latency.
+# The line needs the stall probe on (MEMORYMASTER_STALL_PROBE=0 drops it: the hook signal is then insufficient_data).
+_HOOK_LINE = re.compile(r"^\[(?P<ts>[^\]]+)\]\s+hook=recall\b.*\bevent=timing\b.*\btotal_ms=(?P<ms>[0-9.]+)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +108,6 @@ def _hook_metrics(path: Path, since: datetime) -> dict[str, Any]:
     except OSError:
         return {"n": 0, "p95_ms": None}
     totals: list[float] = []
-    seen: dict[tuple[str, str], dict[str, int]] = {}
     for raw in text.splitlines():
         match = _HOOK_LINE.match(raw)
         if match is None:
@@ -113,15 +116,8 @@ def _hook_metrics(path: Path, since: datetime) -> dict[str, Any]:
             stamp = _parse_ts(match.group("ts"))
         except ValueError:
             continue
-        identity = (match.group("ts"), match.group("ms"))
         if stamp >= since:
-            counts = seen.setdefault(identity, {"timing": 0, "latency_total": 0})
-            event = match.group("event")
-            other = "timing" if event == "latency_total" else "latency_total"
-            counts[event] += 1
-            # Pair mirrored formats, preserving repeated same-format events.
-            if counts[event] > counts[other]:
-                totals.append(float(match.group("ms")))
+            totals.append(float(match.group("ms")))
     return {"n": len(totals), "p95_ms": _p95(totals)}
 
 

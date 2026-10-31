@@ -31,7 +31,9 @@ def _hook_log(path: Path, totals: list[float], *, age_minutes: float = 5) -> Non
     stamp = (NOW - timedelta(minutes=age_minutes)).astimezone().isoformat(timespec="seconds")
     with path.open("a", encoding="utf-8") as handle:
         for total in totals:
-            handle.write(f"[{stamp}] hook=recall event=latency_total total_ms={total} dense_ms=12.5\n")
+            # The line the UserPromptSubmit hook writes: its own wall clock, including imports and the server wait.
+            handle.write(f"[{stamp}] hook=recall session=abc123 event=timing via=shared import_ms=40.1 "
+                         f"recall_ms=30.2 deliver_ms=1.1 total_ms={total}\n")
         handle.write(f"[{stamp}] hook=recall event=done injected=2\n")  # no duration: ignored
 
 
@@ -128,6 +130,43 @@ def test_real_dense_timeouts_still_count(tmp_path: Path) -> None:
     assert any(reason.startswith("dense_hard") for reason in decision.reasons)
 
 
+def _recall_calls(path: Path, totals: list[float], *, age_minutes: float = 5) -> None:
+    """``recall / latency_total`` rows: one per context_hook.recall() call, whoever the caller (benches, CLI, MCP, server)."""
+    stamp = (NOW - timedelta(minutes=age_minutes)).astimezone().isoformat(timespec="seconds")
+    with path.open("a", encoding="utf-8") as handle:
+        for total in totals:
+            handle.write(f"[{stamp}] hook=recall event=latency_total total_ms={total} fts5_ms=9.5\n")
+
+
+def test_recall_calls_that_are_not_prompt_hooks_do_not_count_as_hook_latency(tmp_path: Path) -> None:
+    """2026-10-31: ~790 non-hook recall calls an hour (p95 ~1.1 s) put the guard in capture_only while prompts took ~100-350 ms."""
+    _recall_calls(tmp_path / "hook.log", [1500.0] * 800)
+    _hook_log(tmp_path / "hook.log", [120.0] * 10)
+
+    decision = _run(tmp_path)
+
+    assert decision.action == "allow"
+    assert decision.metrics["hook"] == {"n": 10, "p95_ms": 120.0}
+
+
+def test_a_log_of_only_non_hook_recall_calls_is_no_hook_signal(tmp_path: Path) -> None:
+    _recall_calls(tmp_path / "hook.log", [1500.0] * 50)
+
+    decision = _run(tmp_path)
+
+    assert decision.action == "allow"
+    assert decision.metrics["hook"] == {"n": 0, "p95_ms": None}
+
+
+def test_slow_real_prompt_hooks_still_trip_soft_and_hard_amid_fast_recall_calls(tmp_path: Path) -> None:
+    _recall_calls(tmp_path / "hook.log", [20.0] * 500)
+    _hook_log(tmp_path / "hook.log", [1000.0] * 10)
+    assert _run(tmp_path).action == "capture_only"
+
+    _hook_log(tmp_path / "hook.log", [1500.0] * 30)
+    assert _run(tmp_path).action == "skip"
+
+
 def test_hook_soft_and_hard_breaches(tmp_path: Path) -> None:
     _hook_log(tmp_path / "hook.log", [1000.0] * 10)
     assert _run(tmp_path).action == "capture_only"
@@ -192,7 +231,7 @@ def test_guard_log_defaults_to_the_state_dir_and_hook_log_is_tail_read(tmp_path:
     with big.open("w", encoding="utf-8") as handle:
         handle.write("x" * (latency_guard.HOOK_LOG_TAIL_BYTES * 3) + "\n")
         for _ in range(10):
-            handle.write(f"[{stamp}] hook=recall event=latency_total total_ms=1500.0\n")
+            handle.write(f"[{stamp}] hook=recall session=abc123 event=timing total_ms=1500.0\n")
 
     assert _run(tmp_path, hook_log=big).action == "skip"
 
@@ -202,7 +241,7 @@ def test_hook_log_timestamps_with_a_trailing_z_are_read(tmp_path: Path) -> None:
     stamp = (NOW - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     with (tmp_path / "hook.log").open("w", encoding="utf-8") as handle:
         for _ in range(10):
-            handle.write(f"[{stamp}] hook=recall event=latency_total total_ms=1500.0" + chr(10))
+            handle.write(f"[{stamp}] hook=recall session=abc123 event=timing total_ms=1500.0" + chr(10))
 
     assert latency_guard._parse_ts(stamp).utcoffset() == timedelta(0)
     assert _run(tmp_path).action == "skip"
