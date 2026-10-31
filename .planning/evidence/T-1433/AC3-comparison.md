@@ -4,6 +4,11 @@
 <!-- /doc-head -->
 # T-1433: measured comparison after the recall-hook trim
 
+> **AC3 superseded (2026-10-30):** the single-judge, two-candidate comparison below is
+> replaced by [`AC3-two-judge-replay.md`](AC3-two-judge-replay.md), which uses a read-only
+> snapshot, 80 recent prompts, the full authorized pool and two blind judges (Gemini 4
+> Argon, Claude Sonnet). The AC1 measurement here stands.
+
 Measured on 2026-10-18 against source revision `e1e2129f1a144404d86784996830f85a4c790007`.
 **AC1 PASS (measurement): 83/113 injected claims irrelevant, 73.45%, on 57
 assessable prompt events. AC3 PASS (bounded offline comparison): index plus
