@@ -80,7 +80,8 @@ def test_allow_asks_the_guard_then_scans_then_runs_a_bounded_dream(beat, monkeyp
     dream_kwargs = beat["calls"][2][1]
     config = dream_kwargs["config"]
     assert config.max_sessions == 3
-    assert config.max_consolidate_captures_per_run == 1
+    assert config.max_consolidate_captures_per_run == 3
+    assert config.oldest_reserve == 1
     assert config.lease_ttl_seconds == 270
     assert config.max_input_tokens_daily == 2_000_000  # the shared daily ceiling is kept
     assert dream_kwargs["apply_candidates"] is False  # applying claims is a separate activation
