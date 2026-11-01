@@ -415,3 +415,17 @@ def test_ensure_verdict_table_runs_ddl_once_per_db(env, monkeypatch):
     assert ddl_runs["n"] == 1, f"DDL issued {ddl_runs['n']} times, expected 1"
     # And the guard now records this DB as ensured.
     assert str(db) in cp._ensured_verdict_dbs
+
+
+def test_detect_contradictions_text_output_reports_skipped_when_no_encoder(env, monkeypatch, capsys):
+    from memorymaster.surfaces import cli
+
+    db, _svc, _holder, _prov = env
+    monkeypatch.setattr(
+        contradiction_probe, "create_best_provider", lambda: UnavailableProvider(reason="no local encoder")
+    )
+
+    rc = cli.main(["--db", db, "detect-contradictions"])
+
+    assert rc == 0
+    assert " SKIPPED (encoder unavailable: no local encoder)" in capsys.readouterr().out
