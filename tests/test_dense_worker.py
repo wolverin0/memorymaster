@@ -15,7 +15,7 @@ import time
 import numpy as np
 import pytest
 
-from memorymaster.recall import dense_server
+from memorymaster.recall import dense_server, dense_worker
 from memorymaster.recall.dense_worker import EncoderUnavailable, EncoderUnloaded, WorkerEncoder
 
 # A stand-in for the real child: same protocol loop, a tiny deterministic "model", no torch.
@@ -346,3 +346,29 @@ def test_a_failing_warmup_encode_fails_the_background_load() -> None:
         assert encoder.warm_failures == 1 and encoder.last_warm_error == "RuntimeError" and not encoder.loaded
     finally:
         encoder.close()
+
+
+# --- T-2004: the same child serves the MCP servers' MiniLM embedder (``--model``) ---
+
+
+def test_the_embedding_adapter_answers_single_texts_and_batches_through_the_child(monkeypatch) -> None:
+    monkeypatch.setattr(dense_worker, "child_command", lambda *args: [sys.executable, "-c", FAKE_CHILD])
+    transformer = dense_worker.WorkerTransformer("any-model")
+    try:
+        assert transformer.get_sentence_embedding_dimension() == 4
+        assert transformer.encode("abc", normalize_embeddings=True).tolist() == [3.0, 1.0, 0.0, 0.0]
+        assert transformer.encode(["a", "bcd"]).shape == (2, 4)
+    finally:
+        transformer.close()
+
+
+def test_the_child_command_selects_the_model_and_the_console_python(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "executable", "C:/py/pythonw.exe")
+    assert dense_worker.child_command("--model", "m") == [
+        "C:/py/python.exe", "-m", "memorymaster.recall.dense_worker", "--model", "m",
+    ]
+
+
+def test_the_worker_needs_a_dimension_unless_it_serves_a_plain_model() -> None:
+    with pytest.raises(SystemExit):
+        dense_worker.main([])
