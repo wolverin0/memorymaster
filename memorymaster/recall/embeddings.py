@@ -253,7 +253,7 @@ def _load_transformer(model: str) -> Any:
         raise ImportError(
             "sentence-transformers is required for semantic embeddings. "
             "Install with: pip install sentence-transformers\n"
-            "Or use the default hash-v1 model (no dependencies, but not semantic)."
+            "Without it, hybrid recall ranks lexically (or set MEMORYMASTER_EMBEDDING_PROVIDER=hash for tests)."
         ) from e
     with _TRANSFORMERS_LOCK:
         transformer = _TRANSFORMERS.get(model)

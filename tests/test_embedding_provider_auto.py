@@ -53,8 +53,12 @@ def _forbid_network(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", _boom)
     monkeypatch.setattr(socket.socket, "connect", _boom)
     monkeypatch.setattr(socket, "create_connection", _boom)
-    genai = pytest.importorskip("google.genai")
-    monkeypatch.setattr(genai, "Client", _boom)
+    try:
+        from google import genai
+    except ImportError:  # the urllib/socket bans above still enforce zero egress
+        genai = None
+    if genai is not None:
+        monkeypatch.setattr(genai, "Client", _boom)
     monkeypatch.setattr(embeddings, "_load_gemini_client", _boom)
 
 
