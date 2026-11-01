@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from memorymaster.core.models import CitationInput
+from memorymaster.core.service import MemoryService
 from memorymaster.recall import dense_worker, embeddings
 
 REPO = Path(__file__).parents[1]
@@ -85,3 +87,38 @@ def test_without_the_package_the_isolated_path_raises_import_error(monkeypatch):
     monkeypatch.setattr(embeddings.importlib.util, "find_spec", lambda name: None)
     with pytest.raises(ImportError):
         embeddings._load_transformer("all-MiniLM-L6-v2")
+
+
+class _DeadChildProvider:
+    """A MiniLM provider whose child died (OOM kill or watchdog) after the provider was chosen."""
+
+    model = "all-MiniLM-L6-v2"
+    is_semantic = True
+
+    def __init__(self, fail_on: str) -> None:
+        self.fail_on = fail_on
+
+    def embed(self, text):
+        if self.fail_on == "embed":
+            raise embeddings.EncoderUnavailable("worker exited")
+        return [1.0, 0.0]
+
+    def embed_batch(self, texts):
+        raise embeddings.EncoderUnavailable("worker exited")
+
+
+@pytest.mark.parametrize("fail_on", ["embed", "embed_batch"])
+def test_a_dead_embedding_child_degrades_the_query_to_lexical_ranking(tmp_path, caplog, fail_on):
+    svc = MemoryService(tmp_path / "m.db", workspace_root=tmp_path)
+    svc.init_db()
+    claim = svc.store.create_claim(
+        text="orbital relay handshake", citations=[CitationInput(source="synthetic-test")], confidence=0.9,
+    )
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET status='confirmed' WHERE id=?", (claim.id,))
+        conn.commit()
+    svc.embedding_provider = _DeadChildProvider(fail_on)
+    with caplog.at_level("WARNING", logger="memorymaster.core.service"):
+        rows = svc.query_rows("orbital relay", retrieval_mode="hybrid", limit=5)
+    assert [row["claim"].id for row in rows] == [claim.id]
+    assert "ranking lexically" in caplog.text

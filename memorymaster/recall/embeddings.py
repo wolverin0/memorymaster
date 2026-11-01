@@ -14,6 +14,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+class EncoderUnavailable(RuntimeError):
+    """The embedding model child failed to start or died mid-request (T-2004)."""
+
+
 @dataclass(slots=True)
 class EmbeddingProvider:
     model: str = "hash-v1"

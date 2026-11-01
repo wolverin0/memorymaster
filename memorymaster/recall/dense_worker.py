@@ -30,6 +30,7 @@ from typing import Any, BinaryIO
 import numpy as np
 
 from memorymaster.core import stall_probe
+from memorymaster.recall.embeddings import EncoderUnavailable  # defined there so core/service can catch it without numpy
 
 LOGGER = logging.getLogger("memorymaster.dense_worker")
 
@@ -46,10 +47,6 @@ def child_command(*args: str) -> list[str]:
     if exe.lower().endswith("pythonw.exe"):  # a console child with no window keeps its std handles valid
         exe = exe[:-len("pythonw.exe")] + "python.exe"
     return [exe, "-m", "memorymaster.recall.dense_worker", *args]
-
-
-class EncoderUnavailable(RuntimeError):
-    """The model child failed to start or died mid-request."""
 
 
 class EncoderUnloaded(RuntimeError):
