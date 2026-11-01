@@ -281,7 +281,13 @@ def test_apply_backs_up_a_replaced_task_and_keeps_operator_owned_files(tmp_path)
     run_cli(["--apply", *wheel], host, env)
     assert host.registered == ["MemoryMaster-Beat"]
     backups = list((Path(env["USERPROFILE"]) / ".memorymaster/runtime/task-backups").glob("MemoryMaster-Beat.*.xml"))
-    assert len(backups) == 1 and "PT9M" in backups[0].read_text(encoding="utf-8")
+    assert len(backups) == 1
+    raw = backups[0].read_bytes()
+    # The header declares UTF-16, so the bytes must be UTF-16 with a BOM (schtasks /Create /XML restores it).
+    assert raw[:2] in (b"\xff\xfe", b"\xfe\xff")
+    text = raw.decode("utf-16")
+    assert 'encoding="UTF-16"' in text and "PT9M" in text
+    assert wt.normalize_xml(text)["triggers"][0]["repetition"]["interval"] == "PT9M"
     assert steward.read_text(encoding="utf-8") == "operator edit"
     assert host.registry[("Environment", "MEMORYMASTER_BEAT_ENABLED")] == "0"
 

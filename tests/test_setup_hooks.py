@@ -738,3 +738,64 @@ def test_provider_readiness_for_claude_extract_requires_the_cli(monkeypatch) -> 
     assert sh._provider_readiness()["dream_extractor"] is False
     monkeypatch.setattr(sh.shutil, "which", lambda command: "claude.cmd" if command == "claude" else None)
     assert sh._provider_readiness()["dream_extractor"] is True
+
+
+# ---------------------------------------------------------------------------
+# windows-tasks subcommand (ops/windows-tasks/manifest.json installer)
+# ---------------------------------------------------------------------------
+
+class _EmptyPc:
+    """No tasks, no registry, no pip: stands in for schtasks/HKCU so nothing real is touched."""
+
+    def __init__(self) -> None:
+        self.mutations: list[str] = []
+
+    def query_task_xml(self, name):
+        return None
+
+    def register_task(self, name, xml):
+        self.mutations.append(name)
+
+    def registry_get(self, key, name):
+        return None
+
+    def registry_set(self, key, name, value):
+        self.mutations.append(name)
+
+    def freeze(self, python):
+        return {}
+
+    def package_version(self, python, package):
+        return None
+
+    def run(self, argv):
+        self.mutations.append(" ".join(argv))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+def _route_windows_tasks_through_fake(monkeypatch, tmp_path, host):
+    import memorymaster.surfaces.windows_tasks as wt
+
+    home = tmp_path / "home"
+    env = {"USERPROFILE": str(home), "LOCALAPPDATA": str(home / "AppData" / "Local"),
+           "USERNAME": "tester", "USERDOMAIN": "BOX", f"{wt.ENV_PREFIX}HERMES_HOST": "203.0.113.7"}
+    real, lines = wt.main, []
+    monkeypatch.setattr(wt, "main", lambda argv=None: real(argv, host=host, env=env, out=lines.append))
+    return lines
+
+
+def test_windows_tasks_subcommand_is_dispatched_and_defaults_to_plan(monkeypatch, tmp_path):
+    host = _EmptyPc()
+    lines = _route_windows_tasks_through_fake(monkeypatch, tmp_path, host)
+    assert sh.main(["windows-tasks"]) == 0  # no mode flag -> --plan: reads state, changes nothing
+    assert any("MemoryMaster-Beat" in line and "[create" in line for line in lines)
+    assert "would be" in lines[-1]
+    assert host.mutations == []
+
+
+def test_windows_tasks_check_maps_drift_to_exit_1(monkeypatch, tmp_path):
+    host = _EmptyPc()
+    lines = _route_windows_tasks_through_fake(monkeypatch, tmp_path, host)
+    assert sh.main(["windows-tasks", "--check"]) == 1  # every task is absent -> drift
+    assert "not matching the manifest" in lines[-1]
+    assert host.mutations == []

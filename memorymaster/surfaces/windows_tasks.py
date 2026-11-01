@@ -644,7 +644,7 @@ class Reconciler:
             if self.apply:
                 if live_xml is not None:
                     self.backup_dir.mkdir(parents=True, exist_ok=True)
-                    (self.backup_dir / f"{task['name']}.{self.stamp}.xml").write_text(live_xml, encoding="utf-8")
+                    (self.backup_dir / f"{task['name']}.{self.stamp}.xml").write_bytes(live_xml.encode("utf-16"))  # matches the declared header; BOM like schtasks
                 self.host.register_task(task["name"], xml)
             items.append(_item("task", task["name"], status, detail))
         return items
