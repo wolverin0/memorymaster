@@ -1,0 +1,15 @@
+# Client interpreter (the Python the shared MCP server and the NAS backup run on): only what
+# the scheduled tasks import beyond the stdlib. The wheel is installed on top (--no-deps).
+# The shared server must embed with sentence-transformers, or recall degrades to hash-v1.
+--extra-index-url https://download.pytorch.org/whl/cu128
+mcp==1.30.0
+uvicorn==0.46.0
+starlette==0.50.0
+structlog==24.1.0
+tenacity==9.1.4
+requests==2.34.2
+numpy==1.26.4
+scikit-learn==1.7.1
+sentence-transformers==5.2.3
+transformers==4.57.3
+torch==2.11.0+cu128

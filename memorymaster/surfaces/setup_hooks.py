@@ -1587,6 +1587,11 @@ def _emit_json(payload: dict[str, Any]) -> None:
 def main(argv: Optional[list[str]] = None) -> int:
     """Entry point. In --json mode, all human chatter is routed to stderr so
     that stdout contains ONLY the parseable JSON document."""
+    raw = sys.argv[1:] if argv is None else list(argv)
+    if raw and raw[0] == "windows-tasks":  # rebuild/audit the scheduled tasks (ops/windows-tasks/manifest.json)
+        from memorymaster.surfaces import windows_tasks
+
+        return windows_tasks.main(raw[1:])
     args = build_arg_parser().parse_args(argv)
     if not args.json:
         rc, _payload = _run_main(args)

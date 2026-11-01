@@ -206,12 +206,11 @@ On Windows, install the bounded read-only review task after installing the
 release:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows-operational-review.ps1 `
-  -PythonExe "<runtime-python.exe>" `
-  -Database "<memorymaster.db>" `
-  -ExpectedVersion "4.7.2" `
-  -EveryHours 6
+memorymaster-setup windows-tasks --apply --only MemoryMaster-Operational-Review
 ```
+
+(Every scheduled task is declared in `ops/windows-tasks/manifest.json`; see
+"Reinstall after reformat" in `docs/e2e-candidate-deployment.md`.)
 
 `MemoryMaster-Operational-Review` then checks:
 

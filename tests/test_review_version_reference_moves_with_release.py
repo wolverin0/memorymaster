@@ -31,8 +31,8 @@ INSTALADA = importlib.metadata.version("memorymaster")
 
 def test_scheduled_installer_does_not_pin_a_historical_release():
     root = Path(__file__).resolve().parents[1]
-    installer = (root / 'scripts/install-windows-operational-review.ps1').read_text()
-    assert '[string]$ExpectedVersion = ""' in installer
+    manifest = (root / 'ops/windows-tasks/manifest.json').read_text(encoding='utf-8')
+    assert 'expected_version' not in manifest
 
 
 @pytest.mark.parametrize('pin', [None, '', '1.2.3'])

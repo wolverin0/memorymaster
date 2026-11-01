@@ -3,6 +3,7 @@ Covers: seven remediation packages, useful-selection receipts, wheel identity an
 Read before installing the September E2E candidate; use the adjacent implementation checklist for evidence.
 Executed installation, client changes and restart are recorded in LIVE-DEPLOYMENT.md; restore/history stay separate.
 ROADMAP.md remains the only roadmap; this document is an operator procedure.
+Last section, "Reinstall after reformat", rebuilds every Windows scheduled task (memorymaster-setup windows-tasks).
 <!-- /doc-head -->
 
 # E2E candidate operator procedure
@@ -56,19 +57,17 @@ source hashes against the manifest, then restart only the affected dashboard/MCP
 owners. Never kill all Python or stdio MCP processes to refresh one environment.
 Keep the authenticated/legacy mode and tokens unchanged.
 
-Reinstall the operational-review wrapper from the candidate source bundle using
-the **existing** database, interval, canary, expected version and task name:
+Reinstall the operational-review wrapper from the candidate source bundle; the
+interval, canary and task name are declared in `ops/windows-tasks/manifest.json`
+(`config.json` is created when absent and an existing one is kept):
 
 ```powershell
-& .\scripts\install-windows-operational-review.ps1 `
-  -PythonExe $TargetPython -Database $ExistingDatabase `
-  -ExpectedVersion '4.8.9' -EveryHours $ExistingEveryHours `
-  -LookbackHours $ExistingLookbackHours -CanaryQuery $ExistingCanaryQuery `
-  -CanaryHumanId $ExistingCanaryHumanId -TaskName $ExistingTaskName
+memorymaster-setup windows-tasks --plan  --only MemoryMaster-Operational-Review
+memorymaster-setup windows-tasks --apply --only MemoryMaster-Operational-Review
 ```
 
-This registers/replaces a task and schedules its first run about two minutes
-later. It is a deployment action, not a harmless installer check. The task uses
+This registers/replaces a task (the previous XML is saved under
+`~/.memorymaster/runtime/task-backups`). It is a deployment action, not a harmless installer check. The task uses
 priority 6 (normal I/O); the internal supervisor deadline is 24 minutes and the
 scheduler limit is 25 minutes. The observed priority-7 slowdown and final
 naturally scheduled PASS are recorded in LIVE-DEPLOYMENT.md.
@@ -169,3 +168,47 @@ python -m memorymaster.dreaming.history_inventory --ledger $ExistingCaptureLedge
 The inventory is query-only and reports IDs, age, origin, quantities and
 fingerprints. It contains no bulk-apply command. Production restore and selective
 historical recovery remain separate future decisions.
+
+## Reinstall after reformat
+
+Every MemoryMaster scheduled task (12) is declared in `ops/windows-tasks/manifest.json`;
+`memorymaster-setup windows-tasks` rebuilds them. Obsidian-Cockpit-Sync is not covered.
+Modes: `--plan` (default, read-only), `--apply`, `--check` (exit 1 on drift). Output shows
+machine paths as `{HOME}`, `{REPO}`, ... tokens; `--show-paths` prints them.
+
+1. Install Python 3.12 (the client interpreter) and Git; clone this repository to the path the
+   tasks served before, or pass `--var REPO=<path>` when the workspace differs from the checkout
+   that holds the manifest.
+2. Restore `memorymaster.db` from the latest verified weekly NAS backup (the
+   `MemoryMaster-Backup-NAS-Weekly` job; the restore procedure is in the infra repo). The installer
+   never creates or overwrites the DB.
+3. Restore the infra repo's `~/scripts/infra-backup-window.*` and `run-hidden.vbs`; the backup and
+   weekly-digest tasks call them and `--check` reports `external-missing` until they exist.
+4. Load the two secrets from the vault into the environment of the shell that runs `--apply`:
+   `MEMORYMASTER_MCP_HTTP_TOKEN` (local shared MCP) and `MEMORYMASTER_HERMES_MCP_HTTP_TOKEN`
+   (Hermes MCP). A token already in `HKCU\Software\MemoryMaster\SharedMcp` / `HermesMcp` is used
+   as is. With either missing, `--apply` stops before changing anything. Tokens are copied only
+   into HKCU, never printed or written to a file.
+5. Supply the Hermes bind address, which is not stored in the repo: `--var HERMES_HOST=<address>`
+   or `MEMORYMASTER_WINTASKS_HERMES_HOST`. Other per-machine values (`PYTHON`, `DB`,
+   `WORKSPACE_ALLOWLIST`, ...) are variables too: command line, `MEMORYMASTER_WINTASKS_<NAME>`
+   or `~/.memorymaster/windows-tasks.vars.json`.
+6. Run `memorymaster-setup windows-tasks --plan`, then `--apply`. It creates the venvs from
+   `ops/windows-tasks/requirements/*.txt`, installs the memorymaster wheel (built from the checkout
+   unless `--wheel`/`--wheel-sha256` is given) into each runtime and the client Python, writes the
+   wrappers, sets the non-secret HKCU configuration and the user environment the tasks read (for
+   example `MEMORYMASTER_BEAT_ENABLED`), and registers the tasks from schtasks XML. A replaced
+   task's XML is first saved under `~/.memorymaster/runtime/task-backups`.
+7. Before the first dense-recall start, fill the Hugging Face cache with the EmbeddingGemma model
+   (the service runs with `HF_HUB_OFFLINE=1`). The client Python needs sentence-transformers
+   (`requirements/client.txt`), otherwise shared-MCP recall degrades to hash-v1.
+8. Log off and on (environment changes reach tasks at logon); `--check` must then exit 0.
+
+What `--apply` leaves alone: operator-owned values that already exist (HKCU configuration, the
+user environment, `config.json`, the steward script under `~/.claude/hooks`, the daily prompt) are
+created when absent and otherwise only reported by `--check` as `differs-kept`. Wrappers and task
+definitions are replaced. `--check` ignores the registration date/author, the principal's user id,
+the date part of start times and idle settings. A task whose repo prerequisite is missing is
+reported `blocked` and not registered (today `MemoryMasterWeeklyDigest`, whose script was removed
+in #333). Interactive-session environment (Jev, recall format, snapshot dir, hook paths) is outside
+this manifest.
