@@ -204,14 +204,15 @@ machine paths as `{HOME}`, `{REPO}`, ... tokens; `--show-paths` prints them.
    (the service runs with `HF_HUB_OFFLINE=1`). The client Python needs sentence-transformers
    (`requirements/client.txt`), otherwise shared-MCP recall degrades to hash-v1.
 8. Log off and on (environment changes reach tasks at logon); `--check` must then report only
-   lines you accept: `blocked` for the weekly digest and any `differs-kept` you chose to keep
-   (for example extra `WORKSPACE_ALLOWLIST` entries such as a one-off analysis folder).
+   lines you accept: any `differs-kept` you chose to keep (for example extra `WORKSPACE_ALLOWLIST`
+   entries such as a one-off analysis folder). The weekly digest also needs `ATLAS_VM` (ssh target of
+   the Jarvis relay) in the user environment, and a Gemini key, to send; neither is stored in the repo.
 
 What `--apply` leaves alone: operator-owned values that already exist (HKCU configuration, the
 user environment, `config.json`, the steward script under `~/.claude/hooks`, the daily prompt) are
 created when absent and otherwise only reported by `--check` as `differs-kept`. Wrappers and task
 definitions are replaced. `--check` ignores the registration date/author, the principal's user id,
 the date part of start times and idle settings. A task whose repo prerequisite is missing is
-reported `blocked` and not registered (today `MemoryMasterWeeklyDigest`, whose script was removed
-in #333). Interactive-session environment (Jev, recall format, snapshot dir, hook paths) is outside
+reported `blocked` and not registered (for example `MemoryMasterWeeklyDigest` on a checkout without
+`scripts/atlas_weekly_digest.py`). Interactive-session environment (Jev, recall format, snapshot dir, hook paths) is outside
 this manifest.

@@ -258,7 +258,7 @@ def test_apply_is_idempotent_and_check_is_clean_afterwards(tmp_path):
 
     code, output = run_cli(["--check"], host, env)
     drift_lines = [ln for ln in output.splitlines() if ln.startswith("[") and not ln.startswith("[unchanged")]
-    # only what the repo cannot supply remains: the removed digest script and the infra repo's backup scripts
+    # only what the repo cannot supply remains: the infra repo's backup scripts
     assert all(ln.startswith(("[blocked", "[external-missing", "[optional-missing")) for ln in drift_lines), drift_lines
     assert code == (1 if drift_lines else 0)
 
