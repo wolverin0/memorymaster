@@ -422,15 +422,16 @@ def test_review_process_flag_cannot_hide_retained_worker_failures(tmp_path, monk
 
 def test_powershell_scheduler_contract_is_bounded() -> None:
     root = Path(__file__).resolve().parents[1]
-    installer = (root / "scripts" / "install-windows-operational-review.ps1").read_text(encoding="utf-8")
+    manifest = json.loads((root / "ops" / "windows-tasks" / "manifest.json").read_text(encoding="utf-8"))
+    task = next(t for t in manifest["tasks"] if t["name"] == "MemoryMaster-Operational-Review")
+    config = next(f for f in manifest["files"] if f["id"] == "opreview-config")["content_json"]
     runner = (root / "scripts" / "windows-operational-review.ps1").read_text(encoding="utf-8")
 
-    assert "RepetitionInterval" in installer
-    assert "ExecutionTimeLimit" in installer
-    assert "New-TimeSpan -Minutes 25" in installer
-    assert "MultipleInstances IgnoreNew" in installer
+    assert task["triggers"][0]["repetition"]["interval"] == "PT6H"
+    assert task["settings"]["execution_time_limit"] == "PT25M"
+    assert task["settings"]["multiple_instances"] == "IgnoreNew"
+    assert config["every_hours"] == 6
     assert "memorymaster.operations.review_supervisor" in runner
-    assert "every_hours = $EveryHours" in installer
     assert "work-receipt" not in runner.lower()
 
 

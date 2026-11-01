@@ -22,31 +22,40 @@ USER_ENVIRONMENT_KEYS = (
 )
 
 
+# Hermes-only identity lives in its own key so local stdio MCP sessions do not
+# inherit the team principal from the global user environment (review F-19).
+HERMES_KEY = r"Software\MemoryMaster\HermesMcp"
+
+
 def _load_user_environment() -> None:
-    """Load only the allowlisted HKCU environment when Task Scheduler omitted it."""
     if os.name != "nt":
         return
     import winreg
 
-    try:
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment")
-    except OSError:
-        return
-    with key:
-        for name in USER_ENVIRONMENT_KEYS:
-            if os.environ.get(name):
-                continue
-            try:
-                value, _kind = winreg.QueryValueEx(key, name)
-            except OSError:
-                continue
-            if isinstance(value, str) and value.strip():
-                os.environ[name] = value.strip()
+    for subkey in (HERMES_KEY, "Environment"):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, subkey)
+        except OSError:
+            continue
+        with key:
+            for name in USER_ENVIRONMENT_KEYS:
+                if os.environ.get(name):
+                    continue
+                try:
+                    value, _kind = winreg.QueryValueEx(key, name)
+                except OSError:
+                    continue
+                if isinstance(value, str) and value.strip():
+                    os.environ[name] = value.strip()
 
 
 def _log_stream():
     configured = os.environ.get("MEMORYMASTER_LOG_DIR", "").strip()
-    base = Path(configured) if configured else Path(os.environ["LOCALAPPDATA"]) / "MemoryMaster" / "logs"
+    base = (
+        Path(configured)
+        if configured
+        else Path(os.environ["LOCALAPPDATA"]) / "MemoryMaster" / "logs"
+    )
     base.mkdir(parents=True, exist_ok=True)
     return (base / "mcp-http.log").open("a", encoding="utf-8", buffering=1)
 

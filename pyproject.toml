@@ -77,6 +77,10 @@ line-length = 120
 select = ["E", "F", "W"]
 ignore = ["E501"]  # line length handled by formatter
 
+[tool.ruff.lint.per-file-ignores]
+# Verbatim copy of the live steward script (tests/test_windows_tasks.py pins it as a template).
+"ops/windows-tasks/wrappers/steward-cycle.py" = ["E401"]
+
 [tool.setuptools.packages.find]
 where = ["."]
 # Ship ONLY the library. Without this, find() sweeps every top-level dir

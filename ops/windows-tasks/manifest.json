@@ -1,0 +1,548 @@
+{
+  "schema": 1,
+  "about": "Declarative description of the MemoryMaster scheduled tasks on a Windows PC. Rendered by `memorymaster-setup windows-tasks --plan|--apply|--check`. {NAME} tokens are variables; no machine-specific value lives in this file.",
+  "variables": {
+    "defaults": {
+      "RUNTIME": "{HOME}\\.memorymaster\\runtime",
+      "CHECKPOINTS": "{HOME}\\.memorymaster\\checkpoints",
+      "CLAUDE_DIR": "{HOME}\\.claude",
+      "LOG_DIR": "{HOME}\\.memorymaster\\logs",
+      "DB": "{REPO}\\memorymaster.db",
+      "PYTHON": "{LOCALAPPDATA}\\Programs\\Python\\Python312\\python.exe",
+      "PYTHONW": "{PYTHON_DIR}\\pythonw.exe",
+      "WORKSPACE_ALLOWLIST": "{PYAPPS},{PYAPPS}\\*,{HOME}\\orca\\workspaces\\*,C:\\_tmp\\claude\\claude\\*,T:\\tmp\\claude\\claude\\*"
+    },
+    "required": {
+      "HERMES_HOST": "address the Hermes VM reaches this PC on (the MCP-HTTP-Hermes bind address)"
+    }
+  },
+  "runtimes": {
+    "client": {
+      "kind": "system",
+      "python": "{PYTHON}",
+      "wheel": true,
+      "requirements": "ops/windows-tasks/requirements/client.txt",
+      "note": "operator-installed Python 3.12; apply only adds the pinned packages and the wheel"
+    },
+    "graph-profile": {
+      "kind": "venv",
+      "path": "{RUNTIME}\\graph-profile-20260813",
+      "wheel": true,
+      "requirements": "ops/windows-tasks/requirements/graph-profile.txt"
+    },
+    "dense": {
+      "kind": "venv",
+      "path": "{RUNTIME}\\dense-eg2-20261006",
+      "wheel": true,
+      "requirements": "ops/windows-tasks/requirements/dense.txt",
+      "note": "needs the EmbeddingGemma model in the Hugging Face cache before first start (HF_HUB_OFFLINE=1)"
+    },
+    "wrappers-vnext": {
+      "kind": "dir",
+      "path": "{RUNTIME}\\vnext-20260727",
+      "note": "holds only the Hermes sync wrapper; the sync runs on the client Python from PATH"
+    }
+  },
+  "settings_presets": {
+    "service": {
+      "disallow_start_on_batteries": false,
+      "stop_on_batteries": false,
+      "execution_time_limit": "PT0S",
+      "hidden": true,
+      "multiple_instances": "IgnoreNew",
+      "priority": 4,
+      "restart_on_failure": {
+        "count": 999,
+        "interval": "PT1M"
+      }
+    },
+    "job": {
+      "disallow_start_on_batteries": true,
+      "stop_on_batteries": true,
+      "multiple_instances": "IgnoreNew",
+      "start_when_available": true
+    }
+  },
+  "user_env": {
+    "MEMORYMASTER_DB": "{DB}",
+    "MEMORYMASTER_DEFAULT_DB": "{DB}",
+    "MEMORYMASTER_WORKSPACE": "{REPO}",
+    "MEMORYMASTER_LOG_DIR": "{LOG_DIR}",
+    "MEMORYMASTER_WAL_DISCIPLINE": "1",
+    "MEMORYMASTER_INITDB_FASTPATH": "1",
+    "MEMORYMASTER_BEAT_ENABLED": "1",
+    "MEMORYMASTER_BEAT_DENSE_SOFT_MS": "500",
+    "MEMORYMASTER_BEAT_DENSE_HARD_MS": "1000",
+    "MEMORYMASTER_RECALL_DENSE": "1",
+    "MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK": "1",
+    "MEMORYMASTER_GRAPH_OBSERVATIONS": "1",
+    "MEMORYMASTER_COMPILED_PROFILE": "1",
+    "MEMORYMASTER_DREAM_EXTRACT_PROVIDER": "claude",
+    "MEMORYMASTER_DREAM_EXTRACT_MODEL": "gemini-3.5-flash-lite",
+    "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER": "antigravity",
+    "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL": "gemini-3.8-flash-low",
+    "MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY": "200",
+    "MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CALLS_DAILY": "500",
+    "MEMORYMASTER_DREAM_MAX_CONTEXT_CHARS": "18000",
+    "MEMORYMASTER_PROFILE_MAX_INPUT_CHARS": "24000",
+    "MEMORYMASTER_OPENCODE_AUTH_MODE": "oauth"
+  },
+  "registry": [
+    {
+      "key": "Software\\MemoryMaster\\SharedMcp",
+      "task": "MemoryMaster-MCP-Shared",
+      "values": {
+        "MEMORYMASTER_DEFAULT_DB": "{DB}",
+        "MEMORYMASTER_MCP_DB_ALLOWLIST": "{DB}",
+        "MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST": "{WORKSPACE_ALLOWLIST}",
+        "MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK": "1"
+      },
+      "secrets": [
+        {
+          "name": "MEMORYMASTER_MCP_HTTP_TOKEN",
+          "env": "MEMORYMASTER_MCP_HTTP_TOKEN",
+          "vault": "the local shared MCP token"
+        }
+      ]
+    },
+    {
+      "key": "Software\\MemoryMaster\\HermesMcp",
+      "task": "MemoryMaster-MCP-HTTP-Hermes",
+      "values": {
+        "MEMORYMASTER_MCP_AUTH_MODE": "team",
+        "MEMORYMASTER_MCP_PRINCIPAL": "hermes-memorymaster",
+        "MEMORYMASTER_ROLE_HERMES_MEMORYMASTER": "writer",
+        "MEMORYMASTER_MCP_TENANT_ID": "personal",
+        "MEMORYMASTER_MCP_WORKSPACE": "{REPO}",
+        "MEMORYMASTER_MCP_ALLOWED_SCOPES": "user,project:memorymaster",
+        "MEMORYMASTER_MCP_DB": "{DB}",
+        "MEMORYMASTER_MCP_HTTP_ALLOWED_HOSTS": "{HERMES_HOST}:8765"
+      },
+      "secrets": [
+        {
+          "name": "MEMORYMASTER_MCP_HTTP_TOKEN",
+          "env": "MEMORYMASTER_HERMES_MCP_HTTP_TOKEN",
+          "vault": "the Hermes MCP token"
+        }
+      ]
+    }
+  ],
+  "files": [
+    {
+      "id": "mcp-shared",
+      "task": "MemoryMaster-MCP-Shared",
+      "policy": "managed",
+      "source": "integrations/shared-mcp/windows/memorymaster-mcp-shared.pyw",
+      "dest": "{RUNTIME}\\graph-profile-20260813\\memorymaster-mcp-shared.pyw"
+    },
+    {
+      "id": "mcp-http",
+      "task": "MemoryMaster-MCP-HTTP-Hermes",
+      "policy": "managed",
+      "source": "integrations/hermes-memorymaster/templates/windows/memorymaster-mcp-http.pyw",
+      "dest": "{RUNTIME}\\graph-profile-20260813\\memorymaster-mcp-http.pyw"
+    },
+    {
+      "id": "dreaming",
+      "task": "MemoryMaster-Dreaming",
+      "policy": "managed",
+      "source": "ops/windows-tasks/wrappers/run-memorymaster-dreaming.pyw",
+      "dest": "{RUNTIME}\\graph-profile-20260813\\run-memorymaster-dreaming.pyw"
+    },
+    {
+      "id": "dense",
+      "task": "MemoryMaster-Dense-Recall",
+      "policy": "managed",
+      "source": "ops/windows-tasks/wrappers/run-dense-recall.pyw",
+      "dest": "{RUNTIME}\\dense-eg2-20261006\\run-dense-recall.pyw"
+    },
+    {
+      "id": "hermes-sync",
+      "task": "MemoryMaster-HermesSync-AM",
+      "policy": "managed",
+      "source": "ops/windows-tasks/wrappers/run-hermes-sync-hidden.vbs",
+      "dest": "{RUNTIME}\\vnext-20260727\\run-hermes-sync-hidden.vbs"
+    },
+    {
+      "id": "steward-script",
+      "task": "MemoryMasterSteward",
+      "policy": "create_only",
+      "note": "operator-tuned script under ~/.claude: created when missing, never overwritten",
+      "source": "ops/windows-tasks/wrappers/steward-cycle.py",
+      "dest": "{CLAUDE_DIR}\\hooks\\memorymaster-steward-cycle.py"
+    },
+    {
+      "id": "poke-cmd",
+      "task": "MemoryMaster-Checkpoint-Daily",
+      "policy": "managed",
+      "source": "ops/windows-tasks/wrappers/memorymaster-poke.cmd",
+      "dest": "{CHECKPOINTS}\\memorymaster-poke.cmd"
+    },
+    {
+      "id": "poke-py",
+      "task": "MemoryMaster-Checkpoint-Daily",
+      "policy": "managed",
+      "source": "ops/windows-tasks/wrappers/orca_poke.py",
+      "dest": "{CHECKPOINTS}\\orca_poke.py"
+    },
+    {
+      "id": "daily-prompt",
+      "task": "MemoryMaster-Checkpoint-Daily",
+      "policy": "create_only",
+      "source": "ops/windows-tasks/wrappers/daily-measurements.txt",
+      "dest": "{CHECKPOINTS}\\daily-measurements.txt"
+    },
+    {
+      "id": "opreview-runner",
+      "task": "MemoryMaster-Operational-Review",
+      "policy": "managed",
+      "source": "scripts/windows-operational-review.ps1",
+      "dest": "{LOCALAPPDATA}\\MemoryMaster\\operational-review\\windows-operational-review.ps1"
+    },
+    {
+      "id": "opreview-config",
+      "task": "MemoryMaster-Operational-Review",
+      "policy": "create_only",
+      "dest": "{LOCALAPPDATA}\\MemoryMaster\\operational-review\\config.json",
+      "content_json": {
+        "python": "{PYTHON}",
+        "db": "{DB}",
+        "lookback_hours": 8,
+        "every_hours": 6,
+        "canary_query": "why does wezterm cli time out from Node but not from bash",
+        "canary_human_id": "mm-8aef",
+        "output_root": "{LOCALAPPDATA}\\MemoryMaster\\operational-review\\results"
+      }
+    },
+    {
+      "id": "digest-cmd",
+      "task": "MemoryMasterWeeklyDigest",
+      "policy": "managed",
+      "source": "ops/windows-tasks/wrappers/mm_weekly_digest.cmd",
+      "dest": "{HOME}\\mm_weekly_digest.cmd"
+    },
+    {
+      "id": "digest-cmdline",
+      "task": "MemoryMasterWeeklyDigest",
+      "policy": "managed",
+      "source": "ops/windows-tasks/wrappers/MemoryMasterWeeklyDigest.cmdline",
+      "dest": "{HOME}\\scripts\\hidden-tasks\\MemoryMasterWeeklyDigest.cmdline"
+    }
+  ],
+  "tasks": [
+    {
+      "name": "MemoryMaster-MCP-Shared",
+      "description": "One shared local MemoryMaster MCP server for every agent session (T-0726). Config: HKCU\\Software\\MemoryMaster\\SharedMcp",
+      "runtimes": [
+        "client"
+      ],
+      "triggers": [
+        {
+          "type": "logon"
+        }
+      ],
+      "settings": {
+        "preset": "service"
+      },
+      "action": {
+        "command": "{PYTHONW}",
+        "arguments": "\"{RUNTIME}\\graph-profile-20260813\\memorymaster-mcp-shared.pyw\"",
+        "working_directory": "{REPO}"
+      }
+    },
+    {
+      "name": "MemoryMaster-MCP-HTTP-Hermes",
+      "description": "Authenticated MemoryMaster MCP HTTP transport for the Hermes VM.",
+      "runtimes": [
+        "graph-profile"
+      ],
+      "triggers": [
+        {
+          "type": "logon"
+        }
+      ],
+      "settings": {
+        "preset": "service",
+        "priority": 6,
+        "start_when_available": true,
+        "restart_on_failure": {
+          "count": 10,
+          "interval": "PT1M"
+        }
+      },
+      "action": {
+        "command": "{RUNTIME}\\graph-profile-20260813\\Scripts\\pythonw.exe",
+        "arguments": "\"{RUNTIME}\\graph-profile-20260813\\memorymaster-mcp-http.pyw\" --host {HERMES_HOST} --port 8765 --db \"{DB}\" --workspace \"{REPO}\" --allowed-host {HERMES_HOST}:8765"
+      }
+    },
+    {
+      "name": "MemoryMaster-Dense-Recall",
+      "description": "MemoryMaster dense prompt recall (EmbeddingGemma 2) on 127.0.0.1:8767",
+      "runtimes": [
+        "dense"
+      ],
+      "triggers": [
+        {
+          "type": "logon"
+        }
+      ],
+      "settings": {
+        "preset": "service"
+      },
+      "action": {
+        "command": "{RUNTIME}\\dense-eg2-20261006\\Scripts\\pythonw.exe",
+        "arguments": "\"{RUNTIME}\\dense-eg2-20261006\\run-dense-recall.pyw\""
+      }
+    },
+    {
+      "name": "MemoryMaster-Beat",
+      "description": "T-1695 AO-2 beat v1 tick (operator order 2026-10-22); rollback: Unregister-ScheduledTask MemoryMaster-Beat and remove user env MEMORYMASTER_BEAT_ENABLED",
+      "runtimes": [
+        "graph-profile"
+      ],
+      "triggers": [
+        {
+          "type": "time",
+          "at": "11:40:35",
+          "repetition": {
+            "interval": "PT5M",
+            "duration": "P3650D",
+            "stop_at_duration_end": true
+          }
+        }
+      ],
+      "settings": {
+        "disallow_start_on_batteries": true,
+        "stop_on_batteries": true,
+        "execution_time_limit": "PT20M",
+        "multiple_instances": "IgnoreNew",
+        "start_when_available": true
+      },
+      "action": {
+        "command": "{RUNTIME}\\graph-profile-20260813\\Scripts\\pythonw.exe",
+        "arguments": "\"{RUNTIME}\\graph-profile-20260813\\run-memorymaster-dreaming.pyw\" beat --db \"{DB}\" --workspace \"{REPO}\" --extract-provider claude --extract-model haiku --consolidate-model gemini-3.8-flash-low --clear-provider-variants --apply-candidates"
+      }
+    },
+    {
+      "name": "MemoryMaster-Dreaming",
+      "description": "MemoryMaster Dreaming: quiet capture extraction and consolidation every 6 hours.",
+      "runtimes": [
+        "graph-profile"
+      ],
+      "triggers": [
+        {
+          "type": "time",
+          "at": "18:11:00",
+          "repetition": {
+            "interval": "PT6H",
+            "stop_at_duration_end": true
+          }
+        }
+      ],
+      "settings": {
+        "preset": "job"
+      },
+      "action": {
+        "command": "{RUNTIME}\\graph-profile-20260813\\Scripts\\pythonw.exe",
+        "arguments": "\"{RUNTIME}\\graph-profile-20260813\\run-memorymaster-dreaming.pyw\" dream --db \"{DB}\" --workspace \"{REPO}\" --extract-provider gemini --extract-model gemini-flash-lite-latest --consolidate-model gemini-3.8-flash-low --clear-provider-variants --apply-candidates"
+      }
+    },
+    {
+      "name": "MemoryMasterSteward",
+      "description": "MemoryMaster steward cycle every 6 hours.",
+      "runtimes": [
+        "graph-profile"
+      ],
+      "triggers": [
+        {
+          "type": "time",
+          "at": "16:52:00",
+          "repetition": {
+            "interval": "PT6H"
+          }
+        }
+      ],
+      "settings": {
+        "preset": "job",
+        "execution_time_limit": "PT2H"
+      },
+      "action": {
+        "command": "{RUNTIME}\\graph-profile-20260813\\Scripts\\pythonw.exe",
+        "arguments": "-m memorymaster.surfaces.scheduled_task steward --db \"{DB}\" --workspace \"{REPO}\" --script \"{CLAUDE_DIR}\\hooks\\memorymaster-steward-cycle.py\""
+      }
+    },
+    {
+      "name": "MemoryMaster-Checkpoint-Daily",
+      "description": "Daily fail-closed MemoryMaster rollout checkpoint by stable tab title.",
+      "runtimes": [],
+      "triggers": [
+        {
+          "type": "daily",
+          "at": "11:25:00"
+        }
+      ],
+      "settings": {
+        "disallow_start_on_batteries": false,
+        "stop_on_batteries": false,
+        "execution_time_limit": "PT5M",
+        "multiple_instances": "IgnoreNew",
+        "start_when_available": true
+      },
+      "optional_external": [
+        {
+          "path": "{PYAPPS}\\wezbridge\\scripts\\poke-pane.cjs",
+          "owner": "wezbridge repo",
+          "note": "WezTerm fallback only; Orca is tried first"
+        }
+      ],
+      "action": {
+        "command": "C:\\Windows\\System32\\cmd.exe",
+        "arguments": "/d /c \"\"{CHECKPOINTS}\\memorymaster-poke.cmd\" \"{CHECKPOINTS}\\daily-measurements.txt\"\""
+      }
+    },
+    {
+      "name": "MemoryMaster-Operational-Review",
+      "description": "Operational review of the live MemoryMaster install every 6 hours.",
+      "runtimes": [
+        "client"
+      ],
+      "triggers": [
+        {
+          "type": "time",
+          "at": "20:05:30",
+          "repetition": {
+            "interval": "PT6H",
+            "stop_at_duration_end": true
+          }
+        }
+      ],
+      "settings": {
+        "disallow_start_on_batteries": true,
+        "stop_on_batteries": true,
+        "execution_time_limit": "PT25M",
+        "multiple_instances": "IgnoreNew",
+        "priority": 6,
+        "start_when_available": true
+      },
+      "action": {
+        "command": "powershell.exe",
+        "arguments": "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"{LOCALAPPDATA}\\MemoryMaster\\operational-review\\windows-operational-review.ps1\" -ConfigPath \"{LOCALAPPDATA}\\MemoryMaster\\operational-review\\config.json\""
+      }
+    },
+    {
+      "name": "MemoryMaster-HermesSync-AM",
+      "description": "MemoryMaster <-> Hermes delta sync (morning)",
+      "runtimes": [
+        "wrappers-vnext",
+        "client"
+      ],
+      "triggers": [
+        {
+          "type": "daily",
+          "at": "04:00:00"
+        }
+      ],
+      "settings": {
+        "preset": "job",
+        "execution_time_limit": "PT1H"
+      },
+      "action": {
+        "command": "wscript.exe",
+        "arguments": "//B //NoLogo \"{RUNTIME}\\vnext-20260727\\run-hermes-sync-hidden.vbs\""
+      }
+    },
+    {
+      "name": "MemoryMaster-HermesSync-PM",
+      "description": "MemoryMaster <-> Hermes delta sync (afternoon)",
+      "runtimes": [
+        "wrappers-vnext",
+        "client"
+      ],
+      "triggers": [
+        {
+          "type": "daily",
+          "at": "16:00:00"
+        }
+      ],
+      "settings": {
+        "preset": "job",
+        "execution_time_limit": "PT1H"
+      },
+      "action": {
+        "command": "wscript.exe",
+        "arguments": "//B //NoLogo \"{RUNTIME}\\vnext-20260727\\run-hermes-sync-hidden.vbs\""
+      }
+    },
+    {
+      "name": "MemoryMaster-Backup-NAS-Weekly",
+      "description": "Backup semanal verificado de memorymaster.db a la NAS. Latido push a Kuma monitor 59 solo si el sha256 remoto coincide.",
+      "runtimes": [
+        "client"
+      ],
+      "triggers": [
+        {
+          "type": "weekly",
+          "at": "01:00:00",
+          "days": [
+            "Sunday"
+          ]
+        }
+      ],
+      "settings": {
+        "disallow_start_on_batteries": true,
+        "stop_on_batteries": true,
+        "execution_time_limit": "PT7H",
+        "multiple_instances": "IgnoreNew",
+        "priority": 6,
+        "start_when_available": true
+      },
+      "external": [
+        {
+          "path": "{HOME}\\scripts\\infra-backup-window.py",
+          "owner": "infra repo (scripts/)"
+        },
+        {
+          "path": "{HOME}\\scripts\\infra-backup-window.json",
+          "owner": "infra repo (scripts/)"
+        }
+      ],
+      "action": {
+        "command": "{PYTHONW}",
+        "arguments": "\"{HOME}\\scripts\\infra-backup-window.py\" --config \"{HOME}\\scripts\\infra-backup-window.json\" --job memorymaster",
+        "working_directory": "{HOME}\\scripts"
+      }
+    },
+    {
+      "name": "MemoryMasterWeeklyDigest",
+      "description": "Weekly Atlas digest ('Tu semana') to Telegram.",
+      "runtimes": [
+        "client"
+      ],
+      "triggers": [
+        {
+          "type": "weekly",
+          "at": "08:00:00",
+          "days": [
+            "Monday"
+          ]
+        }
+      ],
+      "settings": {
+        "preset": "job"
+      },
+      "requires_repo_files": [
+        "scripts/atlas_weekly_digest.py"
+      ],
+      "external": [
+        {
+          "path": "{HOME}\\scripts\\run-hidden.vbs",
+          "owner": "infra repo (scripts/)"
+        }
+      ],
+      "action": {
+        "command": "wscript.exe",
+        "arguments": "//B //NoLogo \"{HOME}\\scripts\\run-hidden.vbs\" {HOME}\\scripts\\hidden-tasks\\MemoryMasterWeeklyDigest.cmdline"
+      }
+    }
+  ]
+}

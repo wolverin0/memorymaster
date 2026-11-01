@@ -38,7 +38,7 @@ REQUIRED = (
     "MEMORYMASTER_MCP_DB_ALLOWLIST",
     "MEMORYMASTER_DEFAULT_DB",
 )
-OPTIONAL = ("MEMORYMASTER_LOG_DIR",)
+OPTIONAL = ("MEMORYMASTER_LOG_DIR", "MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK")
 STARTUP_GRACE_SECONDS = 300  # model pre-import + first bind can take minutes on a busy box (measured max 297 s)
 # A child that has not answered /healthz at all is killed and relaunched after this many seconds, then 2x, 4x...
 # capped at STARTUP_GRACE_SECONDS for each consecutive one that also never answers. 2026-10-13: a child that never

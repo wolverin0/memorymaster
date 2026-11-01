@@ -25,7 +25,7 @@
 # merge-db on the Hermes side is idempotent, so that is harmless.
 #
 # Install as two scheduled tasks (run once; a per-user task needs no admin).
-# See scripts/install-windows-hermes-sync.md for the exact schtasks commands.
+# The two tasks are declared in ops/windows-tasks/manifest.json (memorymaster-setup windows-tasks).
 # Recommended times: 04:00 and 16:00 - one hour after Hermes's 03:00/15:00
 # runs, so Hermes's fresh hermes-delta.db is already on the share.
 #

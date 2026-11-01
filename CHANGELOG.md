@@ -8,9 +8,22 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
-### Removed
+### Weekly digest restored, public-safe
 
-- `scripts/atlas_weekly_digest.py` (Atlas weekly digest): no longer used; no other script or doc referenced it.
+- `scripts/atlas_weekly_digest.py` was removed in #333 as unused, but the live `MemoryMasterWeeklyDigest` task
+  runs it every Monday ("Tu semana" to Telegram). Restored from the pre-#333 version with no maintainer address,
+  home path or legacy key file in the source: `ATLAS_VM` (ssh target of the Jarvis relay; required to send, no
+  default), `MEMORYMASTER_DB` (default `<repo>/memorymaster.db`), `GEMINI_API_KEY` or
+  `~/.memorymaster/gemini-keys.env`, `MM_MODEL`, `DIGEST_DAYS`, `DIGEST_NO_SEND` / `--no-send`. The key is read
+  when the model is called, not on import. With `ATLAS_VM` unset the digest is saved and the run exits non-zero.
+  Because the Windows-tasks manifest requires the file, `MemoryMasterWeeklyDigest` is no longer reported
+  `blocked`. Test: `tests/test_atlas_weekly_digest.py`.
+
+### Size budget back under the cap
+
+- `MemoryService.query_rows` hands the lexical-fallback vector hook (T-2004, `EncoderUnavailable`) to
+  `memorymaster/recall/degraded_vectors.py::build_vector_hook`; `core/service.py` is back under its 2450-line
+  budget with the budget unchanged and the same behavior and log messages.
 
 ### Decay clock separate from `updated_at` (T-1870 AC3, migration 32)
 

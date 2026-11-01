@@ -14,7 +14,7 @@
 | .planning/audits/2026-09-07-e2e-review/LIVE-DEPLOYMENT.md | CURRENT | 2026-09-20 | Two-environment candidate-fix deployment, additive migration and rollback; earlier selection-v2 Dreaming/MCP evidence remains dated. |
 | .planning/audits/2026-09-07-e2e-review/IMPLEMENTATION.md | CURRENT | 2026-09-08 | Single completed source-candidate checklist; useful-selection correction supersedes UI-first technical acceptance, with separate source/provider/live evidence. |
 | .planning/audits/2026-09-07-e2e-review/USEFUL-SELECTION.md | CURRENT | 2026-09-08 | Selection v2 implementation, authorization/replay regressions, blinded actual-provider evidence, cost and delivery limits. |
-| docs/e2e-candidate-deployment.md | CURRENT | 2026-09-08 | Installation and non-destructive rollback procedure; dated execution evidence is in LIVE-DEPLOYMENT.md. |
+| docs/e2e-candidate-deployment.md | CURRENT | 2026-11-01 | Installation and non-destructive rollback procedure plus Reinstall after reformat (windows-tasks manifest, vault secrets, DB from NAS backup); dated execution evidence is in LIVE-DEPLOYMENT.md. |
 | .planning/audits/2026-09-07-e2e-review/AI-REREVIEW-13.md | CURRENT | 2026-09-08 | AI technical review of 13 emitted records, canonical-source comparison and reusable negative evaluation labels; no live claim mutation. |
 | docs/human-review.md | CURRENT | 2026-09-08 | Local review page, source excerpts, saved drafts and human JSONL handoff; no claim mutation or automatic quality acceptance. |
 | .planning/JEV-LIVE-4.9.0.md | CURRENT | 2026-09-23 | 4.9.0 implementation contract: live Jev decisions, ledger schema, surfaces S1-S8, remediation tracks. |

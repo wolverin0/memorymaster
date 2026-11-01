@@ -14,7 +14,8 @@ from memorymaster.govern import candidate_dedupe
 from memorymaster.knowledge import entity_ingest
 from memorymaster.recall import graph_expansion, query_cache
 from memorymaster.recall.candidate_pool import hybrid_candidates, page_authorized_lexical
-from memorymaster.recall.embeddings import EmbeddingProvider, EncoderUnavailable, create_best_provider
+from memorymaster.recall.degraded_vectors import build_vector_hook
+from memorymaster.recall.embeddings import EmbeddingProvider, create_best_provider
 from memorymaster.govern.jobs import compact_summaries, compactor, decay, dedup, deterministic, extractor, integrity, qdrant_reconcile, spool_drain, validator
 from memorymaster.core.models import ActionProposal, CitationInput, Claim, ClaimLink, Event, validate_temporal_fields
 from memorymaster.core.policy import select_revalidation_candidates
@@ -1584,29 +1585,7 @@ class MemoryService(IntegrationService):
         )
         semantic = False
         if vector_hook is None and hasattr(self.store, "vector_scores"):
-            # Compute the query vector once and pass it through to storage. This
-            # avoids recomputing the same provider embedding inside vector_scores
-            # while preserving the post-embed semantic/degraded decision.
-            # The MCP servers run the model in a child process that can die (OOM, watchdog):
-            # rank lexically with a warning instead of failing the query (T-2004).
-            try:
-                query_vector = self.embedding_provider.embed(query_text)
-                semantic = self.embedding_provider.is_semantic
-            except EncoderUnavailable as exc:
-                logger.warning("query embedding unavailable (%s); ranking lexically", exc)
-            else:
-                def _vector_hook(text, claims):
-                    try:
-                        return self.store.vector_scores(
-                            text,
-                            claims,
-                            self.embedding_provider,
-                            query_vector=query_vector,
-                        )
-                    except EncoderUnavailable as exc:  # embedding stale claims needs the child too
-                        logger.warning("claim embedding unavailable (%s); ranking lexically", exc)
-                        return {}
-                vector_hook = _vector_hook
+            vector_hook, semantic = build_vector_hook(self.store, self.embedding_provider, query_text)
         rank_limit = len(candidates) if profile_weights is not None else (max(limit, 50) if use_llm_rerank else limit)
         final_rank_limit = max(limit, 50) if use_llm_rerank else limit
         ranked_rows = rank_claim_rows(
