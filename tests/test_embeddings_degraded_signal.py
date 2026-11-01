@@ -1,26 +1,21 @@
-"""Regression: a provider that silently falls back to hash must NOT keep
-reporting itself as semantic.
+"""Regression: a semantic backend that fails must raise, never turn into hash vectors.
 
-WHY THIS MATTERS: query_rows captures ``is_semantic`` and passes it as
-``semantic_vectors`` into ranking. The semantic_vectors=True path uses a
-LENIENT filter that KEEPS any claim with vector_score >= 0.55 even with zero
-lexical overlap. If the Gemini backend fails at runtime and silently downgrades
-to hash embeddings (no semantic meaning), but ``is_semantic`` still reported
-True, irrelevant claims would surface on that lenient path. After the fix the
-provider exposes a ``degraded`` flag and ``is_semantic`` returns False once the
-fallback fires — so a caller that re-reads it after embedding never runs the
-lenient filter against non-semantic vectors. This test anchors on the
-requirement (degraded provider is not semantic), not on the fallback mechanism.
+WHY THIS MATTERS: the old Gemini provider caught any error, flipped its model to
+``hash-v1`` and returned hash vectors. The stores then wrote those inert rows, and
+``query_rows`` could not tell that the semantic backend had failed. Now a failed call
+(HTTP error, timeout, daily quota) raises ``EncoderUnavailable``; ``query_rows`` ranks
+lexically on it and steward jobs skip. These tests anchor on that requirement: no
+failure path ever produces a hash vector or changes the provider's model.
 """
 from __future__ import annotations
 
-from memorymaster.recall.embeddings import EmbeddingProvider
-
 import pytest
 
-# ML/torch tests: loads real sentence-transformers/Qdrant paths; excluded from
-# the default run (see pytest.ini). Run in isolation with: pytest -m ml
-pytestmark = pytest.mark.ml
+from memorymaster.recall.embeddings import (
+    EmbeddingProvider,
+    EncoderUnavailable,
+    UnavailableProvider,
+)
 
 
 class _BoomClient:
@@ -30,30 +25,66 @@ class _BoomClient:
             raise RuntimeError("404 model deprecated")
 
 
-def test_gemini_provider_is_semantic_until_it_fails():
+def test_gemini_provider_is_semantic():
     p = EmbeddingProvider(model="gemini:gemini-embedding-001", dims=768)
-    # Before any call it is intended to be semantic.
     assert p.is_semantic is True
-    assert p.degraded is False
 
 
-def test_silent_downgrade_flips_is_semantic_false():
+def test_gemini_single_failure_raises_and_never_becomes_hash():
     p = EmbeddingProvider(model="gemini:gemini-embedding-001", dims=768)
     p._transformer = _BoomClient()
 
-    vec = p.embed("some query text")
+    with pytest.raises(EncoderUnavailable):
+        p.embed("some query text")
 
-    # Still produces a usable vector (graceful degradation preserved)...
-    assert len(vec) == 1536
-    # ...but it must no longer claim to be semantic, so the caller's
-    # semantic_vectors filter recomputes to the strict path.
-    assert p.degraded is True
+    assert p.model == "gemini:gemini-embedding-001"
+    assert p.dims == 768
+    assert p.is_semantic is True  # still the semantic backend; the call failed, nothing was faked
+
+
+def test_gemini_batch_failure_raises_and_never_becomes_hash():
+    p = EmbeddingProvider(model="gemini:gemini-embedding-001", dims=768)
+    p._transformer = _BoomClient()
+
+    with pytest.raises(EncoderUnavailable):
+        p.embed_batch(["a", "b"])
+
+    assert p.model == "gemini:gemini-embedding-001"
+
+
+def test_gemini_quota_exhaustion_raises_encoder_unavailable(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEMORYMASTER_USAGE_LEDGER_DB", str(tmp_path / "ledger.db"))
+    monkeypatch.setenv("MEMORYMASTER_MAX_EMBEDDING_ITEMS_PER_DAY", "3")
+    calls: list[int] = []
+
+    class _Client:
+        class models:  # noqa: N801
+            @staticmethod
+            def embed_content(model, contents):  # noqa: ARG004
+                calls.append(len(contents))
+                raise AssertionError("the quota must stop the request before it is sent")
+
+    p = EmbeddingProvider(model="gemini:gemini-embedding-001", dims=768)
+    p._transformer = _Client()
+
+    with pytest.raises(EncoderUnavailable):
+        p.embed_batch(["a", "b", "c", "d"])
+
+    assert calls == []
+    assert p.model == "gemini:gemini-embedding-001"
+
+
+def test_genuine_hash_provider_still_works_and_is_not_semantic():
+    p = EmbeddingProvider(model="hash-v1", dims=64)
     assert p.is_semantic is False
+    assert len(p.embed("hello world")) == 64
 
 
-def test_genuine_hash_provider_is_not_marked_degraded():
-    # A provider that was always hash is non-semantic but NOT degraded — the
-    # flag distinguishes "fell back" from "never tried".
-    p = EmbeddingProvider(model="hash-v1", dims=1536)
+def test_unavailable_provider_raises_for_embed_and_batch():
+    p = UnavailableProvider(reason="because")
     assert p.is_semantic is False
-    assert p.degraded is False
+    assert not p.model.startswith("hash")
+    with pytest.raises(EncoderUnavailable, match="because"):
+        p.embed("x")
+    with pytest.raises(EncoderUnavailable, match="because"):
+        p.embed_batch(["x"])

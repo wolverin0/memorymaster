@@ -71,8 +71,11 @@ candidates followed by authoritative SQLite/Postgres rehydration and the shared
 tenant/scope/visibility/lifecycle/sensitivity planner.
 
 `MEMORYMASTER_EMBEDDING_PROVIDER` (`auto` default, `sentence-transformers`,
-`gemini`, `hash`) selects the embedding backend. `auto` keeps the historical
-order: sentence-transformers when installed, then Gemini, then `hash-v1`. The
+`gemini`, `hash`) selects the embedding backend. `auto` uses
+sentence-transformers when it loads and otherwise answers "unavailable"
+(hybrid recall ranks lexically); it never selects Gemini, which sends claim
+text and queries to Google, and never selects `hash-v1`. Only an explicit
+`gemini` egresses and only an explicit `hash` gives hash vectors. The
 MCP server pre-imports sentence-transformers before stdio (the Windows stall
 fix, 6-18 s) only when this process will load it: under `auto` or
 `sentence-transformers` with the package installed, or with

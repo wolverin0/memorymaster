@@ -3560,20 +3560,12 @@ class PostgresStore(SQLiteStore):
         ]
         if not stale:
             return 0
-        requested_model = provider.model
         batch = getattr(provider, "embed_batch", None)
         embeddings = (
             batch([texts[claim.id] for claim in stale])
             if callable(batch)
             else [provider.embed(texts[claim.id]) for claim in stale]
         )
-        if provider.model != requested_model:
-            stale = list(claims)
-            embeddings = (
-                batch([texts[claim.id] for claim in stale])
-                if callable(batch)
-                else [provider.embed(texts[claim.id]) for claim in stale]
-            )
         if len(embeddings) != len(stale):
             raise ValueError("embedding provider returned an incomplete batch")
         now = utc_now()
