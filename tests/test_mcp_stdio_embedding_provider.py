@@ -1,4 +1,10 @@
-"""F-17: import sentence-transformers before stdio only when it will be used.
+"""F-17 / T-2004: the server never imports sentence-transformers for embeddings.
+
+T-2004: embeddings run in a child process, so the server pre-imports the package only
+for the one in-process user left, the opt-in local cross-encoder rerank. The F-17 notes
+below describe the original rule, now narrowed to that user.
+
+F-17: import sentence-transformers before stdio only when it will be used.
 
 Review repros ``review-A/r6_st_import.py`` / ``r6b_startup.py``: the Windows
 stdio stall fix (``f8146e6``) imported sentence-transformers/torch
@@ -21,6 +27,7 @@ from memorymaster.surfaces import mcp_server
 
 def _run_main(monkeypatch):
     loaded: list[str] = []
+    monkeypatch.setattr(embeddings, "_ISOLATE", False)  # main() flips it; restored after the test
     monkeypatch.setattr(mcp_server, "_environ", {})  # main() caps native threads (T-0725)
     monkeypatch.setattr(mcp_server, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr("importlib.import_module", lambda name: loaded.append(name))
@@ -43,13 +50,15 @@ def test_windows_stdio_skips_ml_import_when_package_is_absent(monkeypatch):
 
 
 @pytest.mark.parametrize("provider", [None, "auto", "sentence-transformers"])
-def test_windows_stdio_keeps_the_stall_fix_when_provider_needs_it(monkeypatch, provider):
+def test_windows_stdio_isolates_the_embedding_model_instead_of_importing_it(monkeypatch, provider):
     if provider is None:
         monkeypatch.delenv("MEMORYMASTER_EMBEDDING_PROVIDER", raising=False)
     else:
         monkeypatch.setenv("MEMORYMASTER_EMBEDDING_PROVIDER", provider)
+    monkeypatch.delenv("MEMORYMASTER_RECALL_RERANK_LOCAL", raising=False)
     monkeypatch.setattr(embeddings.importlib.util, "find_spec", lambda name: object())
-    assert _run_main(monkeypatch) == ["sentence_transformers"]
+    assert _run_main(monkeypatch) == []  # torch is never mapped by this process
+    assert embeddings._ISOLATE is True  # the model loads in a child on first use
 
 
 def test_hash_provider_config_never_loads_sentence_transformers(monkeypatch):
@@ -82,7 +91,7 @@ def test_unknown_provider_value_keeps_auto_behaviour(monkeypatch):
 def test_local_rerank_keeps_the_stall_fix_even_with_a_non_st_provider(monkeypatch, provider):
     """Verifier note: the local cross-encoder rerank also loads
     sentence-transformers lazily after stdio starts, so ``hash`` + rerank
-    must keep the pre-import or the Windows stall comes back."""
+    must keep the pre-import or the Windows stall comes back (the rerank loads in-process)."""
     monkeypatch.setenv("MEMORYMASTER_EMBEDDING_PROVIDER", provider)
     monkeypatch.setenv("MEMORYMASTER_RECALL_RERANK_LOCAL", "1")
     monkeypatch.setattr(embeddings.importlib.util, "find_spec", lambda name: object())

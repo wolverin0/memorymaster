@@ -3,6 +3,7 @@ from functools import partial, wraps
 import hashlib
 import http.client
 import importlib
+import importlib.util
 import inspect
 import json
 import logging
@@ -3205,14 +3206,19 @@ def main() -> int:
 
 
 def _preload_native_ml() -> None:
-    """Import native ML before any server I/O loop starts (stdio and HTTP)."""
-    from memorymaster.recall.embeddings import sentence_transformers_required
+    """Keep torch out of this server process (stdio and HTTP).
 
-    if os.name == "nt" and sentence_transformers_required():
-        # Native ML imports can stall after Windows stdio readers start.
-        # Import only: model construction and provider selection remain lazy.
-        # Skipped when the effective provider never loads it (review F-17:
-        # the import alone delayed stdio by 6-18 s).
+    Embeddings run in a child process (T-2004), so the stall the old pre-import avoided (a
+    first torch import after the Windows stdio readers or the event loop started, T-0726)
+    cannot happen for them and the server never maps torch (~2.65 GB). Only the opt-in
+    local cross-encoder rerank still loads sentence-transformers in-process, so only it
+    keeps the early import.
+    """
+    from memorymaster.recall.embeddings import isolate_embedding_model
+    from memorymaster.recall.local_rerank import local_rerank_enabled
+
+    isolate_embedding_model()
+    if os.name == "nt" and local_rerank_enabled() and importlib.util.find_spec("sentence_transformers"):
         try:
             importlib.import_module("sentence_transformers")
         except Exception:

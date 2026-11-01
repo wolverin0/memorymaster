@@ -17,7 +17,7 @@ end-to-end on disposable servers) ran before install. Fixed and pinned by
 - sync tools blocked the one event loop (now worker threads over HTTP);
 - the Windows proactor loop killed the listening socket (now selector loop);
 - the scheduled runtime lacks sentence-transformers (server runs on Python312);
-- sessions outside the allowlist fall back to local stdio (`MEMORYMASTER_PROXY_ROOTS`);
+- sessions outside the allowlist get a structured per-call error from the relay (`MEMORYMASTER_PROXY_ROOTS`); T-2004 removed the local stdio fallback (a full torch server, ~1.2 GB, per session; it also reopened the stray `<cwd>/memorymaster.db` path);
 - plus project_root scoping, RFC 8187 header encoding, per-workspace rate buckets,
   a wall-clock relay retry and a supervisor launcher (`integrations/shared-mcp/windows`).
 

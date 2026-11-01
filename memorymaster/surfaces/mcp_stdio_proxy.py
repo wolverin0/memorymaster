@@ -10,8 +10,9 @@ Configuration (environment):
     MEMORYMASTER_MCP_HTTP_TOKEN    bearer token of the shared server (required; on Windows
                                    falls back to the HKCU key SHARED_KEY below)
     MEMORYMASTER_PROXY_WORKSPACE   overrides the workspace; else CLAUDE_PROJECT_DIR, else cwd
-    MEMORYMASTER_PROXY_ROOTS       the server's workspace allowlist; a session outside it runs
-                                   the local stdio server instead of failing every call
+    MEMORYMASTER_PROXY_ROOTS       the server's workspace allowlist; a session outside it gets a
+                                   structured error on every tool call (T-2004: it used to run a
+                                   full local server, ~1.2 GB each); initialize/lists still answer
     MEMORYMASTER_PROXY_CACHE       file with the server's last initialize/list answers; default
                                    %LOCALAPPDATA%/MemoryMaster/relay-listings.json
 Standard library only; keep it that way so each relay stays a few MB.
@@ -214,8 +215,7 @@ def outside_served_roots(workspace: str, environ=os.environ) -> bool:
     """True when MEMORYMASTER_PROXY_ROOTS is set and the workspace is not under it.
 
     Same comma-separated exact-or-glob form as the server's workspace allowlist:
-    such a session would get a path-policy error for every tool from the shared
-    server, so it runs today's local stdio server instead.
+    the shared server would refuse every tool call from such a session.
     """
     raw = (environ.get("MEMORYMASTER_PROXY_ROOTS") or "").strip()
     if not raw:
@@ -232,18 +232,36 @@ def outside_served_roots(workspace: str, environ=os.environ) -> bool:
     return True
 
 
-def _run_local_server() -> int:
-    import subprocess
+def outside_roots_error(message: dict, workspace: str) -> dict | None:
+    """The answer to a tool call from a workspace the shared server will refuse.
 
-    return subprocess.call([sys.executable, "-I", "-m", "memorymaster.mcp_server"])
+    The shared server enforces its allowlist per request, fail-closed, so the relay never
+    needs a second server of its own: it only says why, and how to fix it, without a round trip.
+    """
+    if not isinstance(message, dict) or message.get("method") != "tools/call" or "id" not in message:
+        return None
+    detail = {
+        "ok": False,
+        "error": "workspace_outside_served_roots",
+        "workspace": workspace,
+        "message": "This folder is outside the roots served by the shared MemoryMaster server, so the "
+                   "call was not sent (no scope or database was touched).",
+        "fix": "Add the folder (or a parent glob like <parent>/*) to MEMORYMASTER_PROXY_ROOTS in this "
+               "client's MCP env and to MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST on the shared server, or "
+               "start the client from inside a served folder (MEMORYMASTER_PROXY_WORKSPACE overrides the folder).",
+    }
+    return {
+        "jsonrpc": "2.0",
+        "id": message["id"],
+        "result": {"isError": True, "content": [{"type": "text", "text": json.dumps(detail)}]},
+    }
 
 
 def main() -> int:
     for stream in (sys.stdin, sys.stdout):
         stream.reconfigure(encoding="utf-8")  # MCP stdio is UTF-8; Windows pipes default to cp1252
     workspace = resolve_workspace()
-    if outside_served_roots(workspace):
-        return _run_local_server()  # inherits this relay's stdin/stdout: the client talks to it directly
+    outside = outside_served_roots(workspace)
     url = os.environ.get("MEMORYMASTER_SHARED_MCP_URL", DEFAULT_URL).strip() or DEFAULT_URL
     token = resolve_token()
     if not token:
@@ -254,6 +272,10 @@ def main() -> int:
 
     def handle(raw: str) -> None:
         try:
+            refusal = outside_roots_error(json.loads(raw), workspace) if outside else None
+            if refusal:
+                _emit(refusal)
+                return
             for message in forward(raw, url=url, token=token, workspace=workspace, cache=cache):
                 _emit(message)
         except ValueError:

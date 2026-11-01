@@ -17,6 +17,8 @@ THREAD_VARS = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
 def _start(monkeypatch, env, os_name, load):
     monkeypatch.setattr(mcp_server, "_environ", env, raising=False)
     monkeypatch.delenv("MEMORYMASTER_EMBEDDING_PROVIDER", raising=False)
+    monkeypatch.setenv("MEMORYMASTER_RECALL_RERANK_LOCAL", "1")  # the one in-process torch user left (T-2004)
+    monkeypatch.setattr(embeddings, "_ISOLATE", False)
     monkeypatch.setattr(embeddings.importlib.util, "find_spec", lambda name: object())
     monkeypatch.setattr(mcp_server, "os", SimpleNamespace(name=os_name))
     monkeypatch.setattr("importlib.import_module", load)
