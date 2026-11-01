@@ -677,3 +677,13 @@ def test_every_documented_home_path_spelling_hides_the_whole_user_name(user):
             assert part.lower() not in lowered, (spelling, part, result.text)
         assert "'" not in result.text, (spelling, result.text)
         assert result.counts.get("home_path", 0) >= 1, (spelling, result.counts)
+
+
+def test_secrets_only_mode_keeps_privacy_classes_and_redacts_credentials() -> None:
+    from memorymaster.decisions.egress import prepare_egress
+
+    privacy = r"10.0.0.5:80 bob@example.com C:\Users\bob\x.txt /home/alice/p nas.local"
+    assert prepare_egress(privacy, max_chars=500, secrets_only=True).text == privacy
+    assert prepare_egress(privacy, max_chars=500).text != privacy  # default mode unchanged
+    cred = prepare_egress("password=hunter2xyz " + privacy, max_chars=500, secrets_only=True)
+    assert "hunter2xyz" not in cred.text and privacy in cred.text
