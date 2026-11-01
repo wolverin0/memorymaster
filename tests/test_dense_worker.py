@@ -365,8 +365,29 @@ def test_the_embedding_adapter_answers_single_texts_and_batches_through_the_chil
 def test_the_child_command_selects_the_model_and_the_console_python(monkeypatch) -> None:
     monkeypatch.setattr(sys, "executable", "C:/py/pythonw.exe")
     assert dense_worker.child_command("--model", "m") == [
-        "C:/py/python.exe", "-m", "memorymaster.recall.dense_worker", "--model", "m",
+        "C:/py/python.exe", "-P", "-m", "memorymaster.recall.dense_worker", "--model", "m",
     ]
+
+
+def test_child_command_ignores_a_shadowing_cwd(tmp_path) -> None:
+    """A server that chdir()s into a stale checkout must still import the real worker module (-P)."""
+    import os
+    from pathlib import Path
+
+    assert "-P" in dense_worker.child_command()
+    shadow = tmp_path / "memorymaster"
+    shadow.mkdir()
+    (shadow / "__init__.py").write_text("")
+    root = Path(dense_worker.__file__).resolve().parents[2]
+    env = {**os.environ, "PYTHONPATH": str(root)}
+
+    def run(argv: list[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(argv, cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
+
+    good = run(dense_worker.child_command("--help"))
+    assert good.returncode == 0 and "dense-recall model worker" in good.stdout
+    bad = run([a for a in dense_worker.child_command("--help") if a != "-P"])  # red: cwd shadows the package
+    assert bad.returncode != 0 and "No module named" in bad.stderr
 
 
 def test_the_worker_needs_a_dimension_unless_it_serves_a_plain_model() -> None:

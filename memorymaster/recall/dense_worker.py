@@ -46,7 +46,8 @@ def child_command(*args: str) -> list[str]:
     exe = sys.executable
     if exe.lower().endswith("pythonw.exe"):  # a console child with no window keeps its std handles valid
         exe = exe[:-len("pythonw.exe")] + "python.exe"
-    return [exe, "-m", "memorymaster.recall.dense_worker", *args]
+    # -P: a server that chdir()s into a stale checkout must not let its cwd shadow the installed package.
+    return [exe, "-P", "-m", "memorymaster.recall.dense_worker", *args]
 
 
 class EncoderUnloaded(RuntimeError):
