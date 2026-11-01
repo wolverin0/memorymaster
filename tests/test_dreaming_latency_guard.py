@@ -18,16 +18,17 @@ def _healthy():
         "dense": {"n": 5, "p95_ms": 20}, "hook": {"n": 5, "p95_ms": 600}})
 
 
-def test_hook_timing_and_latency_formats_pair_without_losing_same_format_events(tmp_path):
+def test_hook_metric_counts_every_timing_line_and_ignores_latency_total(tmp_path):
     from datetime import datetime, timezone
 
+    since = datetime(2026, 10, 20, tzinfo=timezone.utc)
     path = tmp_path / "hook.log"
-    timing = "[2026-10-20T12:00:00Z] hook=recall event=timing total_ms=1000\n"
-    legacy = timing.replace("event=timing", "event=latency_total")
-    path.write_text(timing * 5 + legacy * 5)
-    assert _hook_metrics(path, datetime(2026, 10, 20, tzinfo=timezone.utc)) == {"n": 5, "p95_ms": 1000}
-    path.write_text(legacy * 10)
-    assert _hook_metrics(path, datetime(2026, 10, 20, tzinfo=timezone.utc))["n"] == 10
+    timing = "[2026-10-20T12:00:00Z] hook=recall session=abc event=timing total_ms=1000\n"
+    other_call = timing.replace("event=timing", "event=latency_total")
+    path.write_text(timing * 5 + other_call * 5)  # identical (ts, ms): a recall call is not a mirror of a hook run
+    assert _hook_metrics(path, since) == {"n": 5, "p95_ms": 1000}
+    path.write_text(other_call * 10)
+    assert _hook_metrics(path, since) == {"n": 0, "p95_ms": None}
 
 
 @pytest.mark.parametrize("reason", ["insufficient_data", "guard_error:ValueError", "malformed"])
