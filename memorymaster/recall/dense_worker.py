@@ -30,6 +30,7 @@ from typing import Any, BinaryIO
 import numpy as np
 
 from memorymaster.core import stall_probe
+from memorymaster.recall.embeddings import EncoderUnavailable  # defined there so core/service can catch it without numpy
 
 LOGGER = logging.getLogger("memorymaster.dense_worker")
 
@@ -41,8 +42,11 @@ CREATE_NO_WINDOW = 0x08000000
 WARMUP_TEXT = "warm-up"
 
 
-class EncoderUnavailable(RuntimeError):
-    """The model child failed to start or died mid-request."""
+def child_command(*args: str) -> list[str]:
+    exe = sys.executable
+    if exe.lower().endswith("pythonw.exe"):  # a console child with no window keeps its std handles valid
+        exe = exe[:-len("pythonw.exe")] + "python.exe"
+    return [exe, "-m", "memorymaster.recall.dense_worker", *args]
 
 
 class EncoderUnloaded(RuntimeError):
@@ -73,10 +77,7 @@ class WorkerEncoder:
 
     @staticmethod
     def _default_command(dim: int, device: str | None) -> list[str]:
-        exe = sys.executable
-        if exe.lower().endswith("pythonw.exe"):  # a console child with no window keeps its std handles valid
-            exe = exe[:-len("pythonw.exe")] + "python.exe"
-        command = [exe, "-m", "memorymaster.recall.dense_worker", "--dim", str(dim)]
+        command = child_command("--dim", str(dim))
         return command + ["--device", device] if device else command
 
     @property
@@ -226,6 +227,46 @@ class WorkerEncoder:
             self._kill()
 
 
+class WorkerTransformer:
+    """The two SentenceTransformer calls ``EmbeddingProvider`` makes, answered by a child process (T-2004).
+
+    A long-lived MCP server that imported sentence-transformers held ~2.65 GB of private memory
+    for a model it needs only on a hybrid query. The child loads MiniLM on the first embedding
+    and ends after ``idle_s`` idle, so a server that stops needing vectors gives the memory back.
+    """
+
+    def __init__(self, model: str, *, idle_s: float = 600.0) -> None:
+        self._encoder = WorkerEncoder(0, None, idle_s=idle_s, command=child_command("--model", model))
+        self._dim: int | None = None
+
+    def encode(self, texts: str | Sequence[str], normalize_embeddings: bool = True) -> np.ndarray:
+        # The child always returns unit vectors, the only form the provider asks for.
+        single = isinstance(texts, str)
+        # kind "query" keeps the child warm and lets it load on demand; the model has no query/document prompts.
+        vectors = self._encoder([texts] if single else list(texts), "query")  # type: ignore[list-item]
+        return vectors[0] if single else vectors
+
+    def get_sentence_embedding_dimension(self) -> int:
+        if self._dim is None:
+            self._dim = int(self.encode("dimension probe").shape[0])  # also proves the child can load the model
+        return self._dim
+
+    def close(self) -> None:
+        self._encoder.close()
+
+
+def load_sentence_encoder(model: str) -> tuple[Callable[[Sequence[str], str], np.ndarray], str]:
+    """Child side of :class:`WorkerTransformer`: the plain model, no prompts."""
+    from sentence_transformers import SentenceTransformer
+
+    transformer = SentenceTransformer(model)
+
+    def encode(texts: Sequence[str], kind: str) -> np.ndarray:
+        return np.asarray(transformer.encode(list(texts), normalize_embeddings=True), dtype=np.float32)
+
+    return encode, str(transformer.device)
+
+
 def serve(encode: Callable[[Sequence[str], str], np.ndarray], stdin: BinaryIO, proto: BinaryIO) -> None:
     """The child's request loop; ends when the service closes our stdin."""
     for line in stdin:
@@ -260,9 +301,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="MemoryMaster dense-recall model worker")
-    parser.add_argument("--dim", type=int, required=True)
+    parser.add_argument("--dim", type=int)
+    parser.add_argument("--model", help="serve this sentence-transformers model as-is instead of the dense-recall one")
     parser.add_argument("--device", default=None)
     args = parser.parse_args(argv)
+    if args.model:
+        run(lambda: load_sentence_encoder(args.model))
+        return
+    if args.dim is None:
+        parser.error("--dim is required without --model")
     from memorymaster.recall import dense_server  # imports torch: only this process pays for it
 
     run(lambda: dense_server.load_encoder(args.dim, args.device))

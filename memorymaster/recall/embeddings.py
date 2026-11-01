@@ -14,6 +14,10 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+class EncoderUnavailable(RuntimeError):
+    """The embedding model child failed to start or died mid-request (T-2004)."""
+
+
 @dataclass(slots=True)
 class EmbeddingProvider:
     model: str = "hash-v1"
@@ -196,24 +200,6 @@ def configured_embedding_provider() -> str:
     return _PROVIDER_ALIASES.get(raw, "auto")
 
 
-def sentence_transformers_required() -> bool:
-    """Whether this process would load sentence-transformers.
-
-    Decided without importing it (review F-17): the Windows MCP stdio fix
-    pre-imports the package before the stdio readers start, which costs
-    6-18 s, so it must only happen when something will actually use it:
-    the embedding provider, or the local cross-encoder rerank (its own gate,
-    independent of the provider). The Qdrant vector fallback is quarantined
-    and never loads a model.
-    """
-    if configured_embedding_provider() in {"gemini", "hash"}:
-        from memorymaster.recall.local_rerank import local_rerank_enabled
-
-        if not local_rerank_enabled():
-            return False
-    return importlib.util.find_spec("sentence_transformers") is not None
-
-
 def create_best_provider() -> EmbeddingProvider:
     """Auto-detect the best available embedding provider.
 
@@ -266,7 +252,30 @@ _TRANSFORMERS: dict[str, Any] = {}
 _TRANSFORMERS_LOCK = threading.Lock()
 
 
+_ISOLATE = False
+
+
+def isolate_embedding_model() -> None:
+    """Run the local embedding model in a child process from now on (T-2004).
+
+    Called by the long-lived MCP servers so they never map torch (~2.65 GB); short CLI
+    and hook processes keep loading it in-process, which is faster for one query.
+    """
+    global _ISOLATE
+    _ISOLATE = True
+
+
 def _load_transformer(model: str) -> Any:
+    if _ISOLATE:
+        if importlib.util.find_spec("sentence_transformers") is None:
+            raise ImportError("sentence-transformers is not installed; the embedding child could not load it")
+        with _TRANSFORMERS_LOCK:
+            transformer = _TRANSFORMERS.get(model)
+            if transformer is None:
+                from memorymaster.recall.dense_worker import WorkerTransformer  # numpy: only when isolated
+
+                transformer = _TRANSFORMERS[model] = WorkerTransformer(model)
+        return transformer
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError as e:

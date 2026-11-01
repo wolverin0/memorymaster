@@ -518,15 +518,56 @@ def test_relay_detects_sessions_outside_the_served_roots(workspace, outside):
     assert relay.outside_served_roots(workspace, {}) is False  # no roots configured: always relay
 
 
-def test_relay_outside_the_roots_runs_the_local_stdio_server(monkeypatch, tmp_path):
+def _run_relay_on(monkeypatch, tmp_path, lines: list[dict], *, workspace):
+    """Run relay.main() over these stdin lines; return what it wrote to stdout."""
     monkeypatch.setenv("MEMORYMASTER_PROXY_ROOTS", str(tmp_path / "served") + "," + str(tmp_path / "served" / "*"))
-    monkeypatch.setenv("MEMORYMASTER_PROXY_WORKSPACE", str(tmp_path / "elsewhere"))
-    monkeypatch.delenv("MEMORYMASTER_MCP_HTTP_TOKEN", raising=False)
-    monkeypatch.setattr(relay, "resolve_token", lambda environ=None: "")
-    monkeypatch.setattr(relay.sys, "stdin", io.TextIOWrapper(io.BytesIO(b"")))
-    monkeypatch.setattr(relay.sys, "stdout", io.TextIOWrapper(io.BytesIO()))
-    monkeypatch.setattr(relay, "_run_local_server", lambda: 17)
-    assert relay.main() == 17  # fell back before needing a token
+    monkeypatch.setenv("MEMORYMASTER_PROXY_WORKSPACE", str(workspace))
+    monkeypatch.setattr(relay, "resolve_token", lambda environ=None: "tok")
+    monkeypatch.setattr(relay, "default_cache_path", lambda environ=None: str(tmp_path / "cache.json"))
+    forwarded: list[dict] = []
+
+    def fake_forward(raw, **kwargs):
+        message = json.loads(raw)
+        forwarded.append(message)
+        return [{"jsonrpc": "2.0", "id": message["id"], "result": {"forwarded": True}}]
+
+    monkeypatch.setattr(relay, "forward", fake_forward)
+    out = io.BytesIO()
+    stdin = "\n".join(json.dumps(line) for line in lines).encode()
+    monkeypatch.setattr(relay.sys, "stdin", io.TextIOWrapper(io.BytesIO(stdin)))
+    monkeypatch.setattr(relay.sys, "stdout", io.TextIOWrapper(out, write_through=True))
+    assert relay.main() == 0
+    return [json.loads(line) for line in out.getvalue().decode().splitlines()], forwarded
+
+
+def test_relay_outside_the_roots_never_spawns_a_local_server(monkeypatch, tmp_path):
+    """T-2004: the old fallback ran a full torch-loading server per session (1.2 GB each)."""
+    import subprocess
+
+    assert not hasattr(relay, "_run_local_server")
+    monkeypatch.setattr(subprocess, "call", lambda *a, **k: pytest.fail("spawned a local server"))
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("spawned a local server"))
+    lines = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "query_memory", "arguments": {}}},
+    ]
+    replies, forwarded = _run_relay_on(monkeypatch, tmp_path, lines, workspace=tmp_path / "elsewhere")
+    by_id = {reply["id"]: reply for reply in replies}
+    assert by_id[1]["result"] == {"forwarded": True}  # the client still connects and lists tools
+    assert [m["method"] for m in forwarded] == ["initialize"]  # the tool call never reached the shared server
+    result = by_id[2]["result"]
+    assert result["isError"] is True
+    error = json.loads(result["content"][0]["text"])
+    assert error["error"] == "workspace_outside_served_roots"
+    assert error["workspace"] == str(tmp_path / "elsewhere")
+    assert "MEMORYMASTER_PROXY_ROOTS" in error["fix"] and "MEMORYMASTER_MCP_WORKSPACE_ALLOWLIST" in error["fix"]
+
+
+def test_relay_inside_the_roots_forwards_tool_calls(monkeypatch, tmp_path):
+    lines = [{"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "query_memory"}}]
+    replies, forwarded = _run_relay_on(monkeypatch, tmp_path, lines, workspace=tmp_path / "served" / "repo")
+    assert [m["id"] for m in forwarded] == [7]
+    assert replies == [{"jsonrpc": "2.0", "id": 7, "result": {"forwarded": True}}]
 
 
 # --- a stalled event loop leaves its stacks in the log before the watchdog kills it ---------

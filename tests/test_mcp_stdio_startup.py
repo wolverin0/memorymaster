@@ -11,6 +11,7 @@ from memorymaster.surfaces import mcp_server
 def _isolated_thread_env(monkeypatch):
     # main() caps native threads in the process env (T-0725); keep it out of this one.
     monkeypatch.setattr(mcp_server, "_environ", {})
+    monkeypatch.setattr(embeddings, "_ISOLATE", False)  # main() flips it (T-2004); restored after the test
 
 
 @pytest.mark.parametrize("failure", [None, ImportError, OSError, RuntimeError])
@@ -26,9 +27,10 @@ def test_windows_stdio_initializes_optional_native_imports_before_reader(monkeyp
         # A tool may need native ML modules immediately after the reader starts.
         assert loaded == ["sentence_transformers"]
 
-    # The effective provider needs sentence-transformers (auto + installed);
+    # The local rerank is the one in-process torch user left (T-2004: embeddings run in a child);
     # the skip cases live in test_mcp_stdio_embedding_provider.py (F-17).
     monkeypatch.delenv("MEMORYMASTER_EMBEDDING_PROVIDER", raising=False)
+    monkeypatch.setenv("MEMORYMASTER_RECALL_RERANK_LOCAL", "1")
     monkeypatch.setattr(embeddings.importlib.util, "find_spec", lambda name: object())
     monkeypatch.setattr(mcp_server, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr("importlib.import_module", load)
