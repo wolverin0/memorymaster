@@ -10,7 +10,7 @@
       "DB": "{REPO}\\memorymaster.db",
       "PYTHON": "{LOCALAPPDATA}\\Programs\\Python\\Python312\\python.exe",
       "PYTHONW": "{PYTHON_DIR}\\pythonw.exe",
-      "WORKSPACE_ALLOWLIST": "{PYAPPS},{PYAPPS}\\*,{HOME}\\orca\\workspaces\\*,C:\\_tmp\\claude\\claude\\*"
+      "WORKSPACE_ALLOWLIST": "{PYAPPS},{PYAPPS}\\*,{HOME}\\orca\\workspaces\\*,C:\\_tmp\\claude\\claude\\*,T:\\tmp\\claude\\claude\\*"
     },
     "required": {
       "HERMES_HOST": "address the Hermes VM reaches this PC on (the MCP-HTTP-Hermes bind address)"

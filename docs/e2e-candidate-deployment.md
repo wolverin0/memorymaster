@@ -193,7 +193,8 @@ machine paths as `{HOME}`, `{REPO}`, ... tokens; `--show-paths` prints them.
    or `MEMORYMASTER_WINTASKS_HERMES_HOST`. Other per-machine values (`PYTHON`, `DB`,
    `WORKSPACE_ALLOWLIST`, ...) are variables too: command line, `MEMORYMASTER_WINTASKS_<NAME>`
    or `~/.memorymaster/windows-tasks.vars.json`.
-6. Run `memorymaster-setup windows-tasks --plan`, then `--apply`. It creates the venvs from
+6. From the checkout directory (or with `--repo <checkout>`, which the installed wheel needs because
+   the manifest lives in the repo), run `memorymaster-setup windows-tasks --plan`, then `--apply`. It creates the venvs from
    `ops/windows-tasks/requirements/*.txt`, installs the memorymaster wheel (built from the checkout
    unless `--wheel`/`--wheel-sha256` is given) into each runtime and the client Python, writes the
    wrappers, sets the non-secret HKCU configuration and the user environment the tasks read (for
@@ -202,7 +203,9 @@ machine paths as `{HOME}`, `{REPO}`, ... tokens; `--show-paths` prints them.
 7. Before the first dense-recall start, fill the Hugging Face cache with the EmbeddingGemma model
    (the service runs with `HF_HUB_OFFLINE=1`). The client Python needs sentence-transformers
    (`requirements/client.txt`), otherwise shared-MCP recall degrades to hash-v1.
-8. Log off and on (environment changes reach tasks at logon); `--check` must then exit 0.
+8. Log off and on (environment changes reach tasks at logon); `--check` must then report only
+   lines you accept: `blocked` for the weekly digest and any `differs-kept` you chose to keep
+   (for example extra `WORKSPACE_ALLOWLIST` entries such as a one-off analysis folder).
 
 What `--apply` leaves alone: operator-owned values that already exist (HKCU configuration, the
 user environment, `config.json`, the steward script under `~/.claude/hooks`, the daily prompt) are

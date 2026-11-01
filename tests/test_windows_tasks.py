@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -132,7 +133,12 @@ def test_required_variable_missing_is_a_clear_error(manifest, tmp_path):
 
 
 def test_manifest_and_new_files_carry_no_personal_values():
-    forbidden = re.compile(r"pauol|WOLVERIN0|192\.168\.|S-1-5-21|Bearer |token\s*=\s*['\"][A-Za-z0-9_-]{16,}", re.I)
+    # Machine identity is read from whoever runs the test, so no username or host name is written down here.
+    own = {os.environ.get(name, "") for name in ("USERNAME", "USER", "USERDOMAIN", "COMPUTERNAME")}
+    own.add(Path.home().name)
+    own = sorted(re.escape(value) for value in own if len(value) >= 4)
+    generic = [r"C:\\Users\\[^\\\s\"]+", r"192\.168\.", r"S-1-5-21", r"Bearer ", r"token\s*=\s*['\"][A-Za-z0-9_-]{16,}"]
+    forbidden = re.compile("|".join(own + generic), re.I)
     paths = [REPO / "ops/windows-tasks/manifest.json", REPO / "memorymaster/surfaces/windows_tasks.py",
              *sorted((REPO / "ops/windows-tasks/wrappers").iterdir()), *sorted((REPO / "ops/windows-tasks/requirements").iterdir())]
     for path in paths:
