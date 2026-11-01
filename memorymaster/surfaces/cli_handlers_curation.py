@@ -393,6 +393,8 @@ def _handle_mine_rules(args: argparse.Namespace, service, parser: argparse.Argum
         print(_json_envelope(result, query_ms=elapsed_ms))
     else:
         abort = f", ABORTED ({result['aborted_reason']})" if result.get("aborted_reason") else ""
+        if result.get("skipped_reason"):
+            abort += f", SKIPPED ({result['skipped_reason']})"
         print(
             f"Mined rules: {result['candidates']} candidates, {result['llm_calls']} llm calls, "
             f"{result['ingested']} ingested, {result['duplicates']} dupes, {result['skipped']} skipped "

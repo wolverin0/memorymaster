@@ -142,6 +142,12 @@ def _gemini_provider(client) -> EmbeddingProvider:
     return provider
 
 
+def test_gemini_embed_batch_of_nothing_is_empty_and_makes_no_request():
+    client = _FakeGeminiClient()
+    assert _gemini_provider(client)._gemini_embed_batch([]) == []
+    assert client.request_sizes == []
+
+
 def test_250_stale_claims_are_sent_as_three_requests_of_at_most_100(tmp_path):
     store = SQLiteStore(tmp_path / "chunk.db")
     store.init_db()

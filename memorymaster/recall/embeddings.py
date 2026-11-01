@@ -88,6 +88,8 @@ class EmbeddingProvider:
         return normalize(list(vec))
 
     def _gemini_embed_batch(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
         vectors: list[list[float]] = []
         for start in range(0, len(texts), GEMINI_MAX_BATCH):
             chunk = texts[start : start + GEMINI_MAX_BATCH]

@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
+from memorymaster.recall.embeddings import EmbeddingProvider, EncoderUnavailable, cosine_similarity, create_best_provider
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.models import Claim
 from memorymaster.stores.claim_identity import identity_namespace_key
@@ -284,21 +284,28 @@ def run(
 
     logger.info("Dedup: scanning %d claims (threshold=%.2f, dry_run=%s)", len(filtered_claims), threshold, dry_run)
 
-    pairs = find_duplicates(
-        claims,
-        provider,
-        threshold=threshold,
-        min_text_overlap=min_text_overlap,
-        limit=limit,
-        scope_filter=scope_filter,
-    )
-    conflict_pairs = find_conflicts(
-        claims,
-        provider,
-        threshold=threshold,
-        limit=limit,
-        scope_filter=scope_filter,
-    )
+    skipped_reason: str | None = None
+    try:
+        pairs = find_duplicates(
+            claims,
+            provider,
+            threshold=threshold,
+            min_text_overlap=min_text_overlap,
+            limit=limit,
+            scope_filter=scope_filter,
+        )
+        conflict_pairs = find_conflicts(
+            claims,
+            provider,
+            threshold=threshold,
+            limit=limit,
+            scope_filter=scope_filter,
+        )
+    except EncoderUnavailable as exc:
+        # No encoder (provider auto without a local model): skip, write nothing.
+        skipped_reason = f"encoder unavailable: {exc}"
+        logger.warning("Dedup skipped: %s", skipped_reason)
+        pairs, conflict_pairs = [], []
     conflicted_ids = {
         claim_id
         for pair in conflict_pairs
@@ -319,7 +326,7 @@ def run(
         conflict_pairs=conflict_pairs,
     )
 
-    if not dry_run:
+    if not dry_run and skipped_reason is None:
         for claim_id in sorted(conflicted_ids):
             try:
                 transition_claim(
@@ -398,6 +405,7 @@ def run(
         "duplicates_found": result.duplicates_found,
         "claims_archived": result.claims_archived,
         "dry_run": dry_run,
+        "skipped_reason": skipped_reason,
         "threshold": threshold,
         "limit": limit,
         "scope_filter": scope_filter,
