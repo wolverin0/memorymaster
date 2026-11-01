@@ -198,6 +198,7 @@ class GeminiEmbedder:
         """Embed documents, aligned with ``texts``. An item is None when it was withheld
         by the egress filter or rejected by the API (400 on its own); any other failure
         raises ``EmbedUnavailable`` (the caller abandons the round)."""
+        self._gate()  # an open breaker must cost microseconds, not a redaction pass per text
         out: list[list[float] | None] = [None] * len(texts)
         prepared: list[tuple[int, _Prepared]] = []
         for index, text in enumerate(texts):
@@ -416,7 +417,8 @@ class GeminiEmbedder:
                     resp = self._conn.getresponse()
                     raw = resp.read(8 * 1024 * 1024)
                     retry_after = parse_retry_after(
-                        "", {"Retry-After": resp.getheader("Retry-After")}
+                        raw.decode("utf-8", errors="replace") if resp.status == 429 else "",
+                        {"Retry-After": resp.getheader("Retry-After")},
                     )
                     if resp.will_close:
                         self._close()

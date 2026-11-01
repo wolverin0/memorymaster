@@ -229,6 +229,24 @@ def test_document_429_honours_retry_after(server, make) -> None:
     assert emb.sleeps == [3.0]  # type: ignore[attr-defined]
 
 
+def test_document_429_retry_hint_in_body_without_header(server, make) -> None:
+    body = {"error": {"message": "Quota exceeded. Please retry in 7.5s."}}
+    server.script = lambda n, r: (429, body, {}) if n == 1 else None
+    emb = make()
+    assert emb.embed_documents(["alpha"])[0] is not None
+    assert emb.sleeps == [7.5]  # type: ignore[attr-defined]
+
+
+def test_open_breaker_skips_the_redaction_pass(server, make, monkeypatch) -> None:
+    emb = make(clock=Clock())
+    emb._open_until = emb._clock() + 60
+    calls: list[str] = []
+    monkeypatch.setattr(gemini_embed, "prepare_egress", lambda *a, **k: calls.append("x"))
+    with pytest.raises(EmbedUnavailable) as err:
+        emb.embed_documents(["a"] * 100)
+    assert err.value.reason == "breaker" and calls == []
+
+
 def test_document_5xx_backs_off_then_gives_up_and_opens_nothing_early(server, make) -> None:
     server.script = lambda n, r: (503, {}, {})
     emb = make()
