@@ -15,7 +15,26 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "hermes-sync.sh"
-BASH = shutil.which("bash")
+
+
+def _posix_bash() -> str | None:
+    """A real POSIX bash, never the WSL launcher in System32.
+
+    That launcher re-parses `-c` scripts, so `$(...)` and quotes arrive mangled and the step prints nothing.
+    `shutil.which` follows PATH order, so a shell listing System32 before Git failed this test; use Git's bash then.
+    """
+    found = shutil.which("bash")
+    if found and "system32" not in found.lower():
+        return found
+    git = shutil.which("git")
+    for parent in Path(git).resolve().parents if git else ():
+        candidate = parent / "usr" / "bin" / "bash.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
+BASH = _posix_bash()
 
 
 def _twin_block() -> str:
