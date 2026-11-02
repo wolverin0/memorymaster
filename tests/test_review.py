@@ -126,3 +126,21 @@ def test_review_queue_triages_unresolved_risk_and_sensitive_filtering(monkeypatc
     without_conflicted = build_review_queue(service, limit=50, include_conflicted=False, include_sensitive=True)
     assert all(item.status != "conflicted" for item in without_conflicted)
 
+
+
+def test_restricted_caller_never_gets_sensitive_access(tmp_path) -> None:
+    """T-2070: include_sensitive is ignored for a restricted (requesting_agent) caller."""
+    service = MemoryService(tmp_path / "restricted.db", workspace_root=tmp_path)
+    service.init_db()
+    claim = service.ingest(
+        "note [REDACTED:api_key]", [CitationInput(source="session://chat")], subject="auth", predicate="token",
+    )
+    con = sqlite3.connect(str(tmp_path / "restricted.db"))
+    con.execute("UPDATE claims SET status='conflicted' WHERE id=?", (claim.id,))
+    con.commit()
+    con.close()
+
+    operator = build_review_queue(service, limit=10, include_sensitive=True)
+    restricted = build_review_queue(service, limit=10, include_sensitive=True, requesting_agent="viewer")
+    assert claim.id in {item.claim_id for item in operator}
+    assert claim.id not in {item.claim_id for item in restricted}

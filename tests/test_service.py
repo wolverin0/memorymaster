@@ -92,3 +92,28 @@ def test_content_dedup_finds_a_copy_whatever_key_the_original_used(service):
     assert unkeyed.id == first.id
     other_scope = service.ingest("Backups rotate after thirty days.", cites, scope="project:other")
     assert other_scope.id != first.id
+
+
+def test_restricted_list_claims_pages_past_other_agents_private_rows(service):
+    """T-2070: private rows of other agents must not use up a restricted caller's limit."""
+    cite = [CitationInput(source="fixture")]
+    for i in range(4):
+        service.ingest(f"private note {i}", cite, visibility="private", source_agent=f"agent{i}", confidence=0.99)
+    public = service.ingest("public note", cite, confidence=0.1)
+    rows = service.list_claims(limit=2, requesting_agent="someone-else")
+    assert [claim.id for claim in rows] == [public.id]
+
+
+def test_authorize_claims_applies_tenant_visibility_and_sensitivity():
+    from memorymaster.core.service import authorize_claims
+
+    def claim(**kw):
+        base = dict(text="plain", subject=None, predicate=None, object_value=None,
+                    visibility="public", source_agent="a", tenant_id=None)
+        return SimpleNamespace(**{**base, **kw})
+
+    rows = [claim(), claim(visibility="private"), claim(tenant_id="other"), claim(text="x [REDACTED:api_key]")]
+    kept = authorize_claims(rows, requesting_agent="viewer", tenant_id=None)
+    assert kept == [rows[0], rows[2]]
+    assert authorize_claims(rows, requesting_agent="viewer", tenant_id="t1") == []
+    assert authorize_claims(rows, include_sensitive=True) == rows

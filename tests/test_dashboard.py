@@ -359,3 +359,30 @@ def test_dashboard_operator_stream_sse_replays_log() -> None:
         streamed_payload = json.loads(data_lines[0][len("data: ") :])
         assert streamed_payload["turn_id"] == "turn-1"
         assert streamed_payload["processed_events"] == 1
+
+
+def test_viewer_lineage_of_a_private_claim_is_404(monkeypatch, tmp_path: Path) -> None:
+    """T-2070 F-1b: an unauthorized lineage id looks exactly like a missing one."""
+    monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_VIEWER", "viewer-secret")
+    monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_OPERATOR", "operator-secret")
+    service = MemoryService(tmp_path / "lineage.db", workspace_root=tmp_path)
+    service.init_db()
+    claim = service.ingest(
+        "private lineage note", [CitationInput(source="session://chat")], visibility="private", source_agent="alice",
+    )
+
+    def fetch(token: str) -> tuple[int, bytes]:
+        request = urllib.request.Request(
+            f"{base}/claim/{claim.id}/lineage", headers={"Authorization": f"Bearer {token}"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=3) as response:
+                return int(response.status), response.read()
+        except urllib.error.HTTPError as exc:
+            return int(exc.code), exc.read()
+
+    with _running_server(service, tmp_path / "ops.jsonl") as base:
+        viewer_status, viewer_body = fetch("viewer-secret")
+        operator_status, _ = fetch("operator-secret")
+    assert viewer_status == 404 and b"private lineage note" not in viewer_body
+    assert operator_status == 200

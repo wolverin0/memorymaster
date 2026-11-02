@@ -6,7 +6,11 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from memorymaster.core.security import is_sensitive_claim
+from types import SimpleNamespace
+
+from memorymaster.core.security import is_sensitive_claim, resolve_allow_sensitive_access
+from memorymaster.core.service import authorize_claims
+from memorymaster.recall.candidate_pool import page_authorized_lexical
 from memorymaster.govern.review import build_review_queue, queue_to_dicts
 from memorymaster.govern.steward import list_steward_proposals
 
@@ -30,6 +34,20 @@ def triage_flags(service: Any, limit: int) -> dict[int, dict[str, bool]]:
     return flags
 
 
+def effective_allow_sensitive(requested: bool, requesting_agent: str | None, context: str) -> bool:
+    """The caller's ``allow_sensitive`` after the policy gate (T-2070 F-1c).
+
+    A restricted caller never gets sensitive access. The operator gets it only
+    through ``resolve_allow_sensitive_access`` (env/config bypass), like MCP and
+    the service layer; a denied request degrades to "not allowed", not an error.
+    """
+    if requesting_agent is not None:
+        return False
+    return resolve_allow_sensitive_access(
+        allow_sensitive=requested, context=context, deny_mode="filter",
+    )
+
+
 def claims_payload(
     service: Any,
     *,
@@ -38,8 +56,13 @@ def claims_payload(
     include_archived: bool,
     allow_sensitive: bool,
     serialize: Serializer,
+    requesting_agent: str | None = None,
 ) -> dict[str, Any]:
-    claims = service.list_claims(status=status, limit=limit, include_archived=include_archived)
+    allow_sensitive = effective_allow_sensitive(allow_sensitive, requesting_agent, "dashboard.claims")
+    claims = service.list_claims(
+        status=status, limit=limit, include_archived=include_archived,
+        allow_sensitive=allow_sensitive, requesting_agent=requesting_agent,
+    )
     if not allow_sensitive:
         claims = [claim for claim in claims if not is_sensitive_claim(claim)]
     return {"ok": True, "rows": len(claims), "claims": [serialize(claim) for claim in claims]}
@@ -64,14 +87,31 @@ def conflicts_payload(
     limit: int,
     include_stale: bool,
     serialize: Serializer,
+    requesting_agent: str | None = None,
 ) -> dict[str, Any]:
-    conflicted = service.list_claims(status="conflicted", limit=limit, include_archived=False)
+    conflicted = service.list_claims(
+        status="conflicted", limit=limit, include_archived=False,
+        requesting_agent=requesting_agent,
+    )
     if not conflicted:
         return {"ok": True, "rows": 0, "groups": []}
     statuses = ["confirmed", "conflicted"] + (["stale"] if include_stale else [])
-    active = service.store.list_claims(
-        limit=max(limit * 12, 200), status_in=statuses,
-        include_archived=False, include_citations=True,
+    window = max(limit * 12, 200)
+
+    def fetch(size: int) -> tuple[list[Any], bool]:
+        rows = service.store.list_claims(
+            limit=size, status_in=statuses, include_archived=False, include_citations=True,
+            tenant_id=getattr(service, "tenant_id", None),
+        )
+        return rows, len(rows) < size
+
+    # Store-level read: it bypasses the service, so apply the service's policy
+    # (tenant, visibility, sensitivity) while paging, as for `conflicted` above.
+    active = page_authorized_lexical(
+        fetch, window,
+        lambda rows: authorize_claims(
+            rows, requesting_agent=requesting_agent, tenant_id=getattr(service, "tenant_id", None),
+        ),
     )
     grouped: dict[tuple[str, str, str], list[Any]] = {}
     for claim in conflicted:
@@ -109,15 +149,17 @@ def review_queue_payload(
     allow_sensitive: bool,
     exclude_reviewed: bool,
     exclude_suppressed: bool,
+    requesting_agent: str | None = None,
 ) -> dict[str, Any]:
     # Las propuestas se calculan ANTES de armar la cola: una claim confirmed
     # con propuesta pendiente ("flagged") pertenece a la cola aunque su status
     # no sea revisable — es donde viven los botones Approve/Reject.
+    allow_sensitive = effective_allow_sensitive(allow_sensitive, requesting_agent, "dashboard.review_queue")
     proposals = _pending_proposals_by_claim(service, limit)
     items = build_review_queue(
         service, limit=limit, include_stale=include_stale,
         include_conflicted=include_conflicted, include_sensitive=allow_sensitive,
-        flagged_claim_ids=set(proposals),
+        flagged_claim_ids=set(proposals), requesting_agent=requesting_agent,
     )
     flags = triage_flags(service, max(limit * 20, 200))
     out = _apply_triage_filters(queue_to_dicts(items), flags, exclude_reviewed, exclude_suppressed)
@@ -182,9 +224,14 @@ def _apply_triage_filters(
 
 
 def mobile_review_queue_payload(
-    service: Any, *, limit: int, scope: str | None, cursor: int | None
+    service: Any, *, limit: int, scope: str | None, cursor: int | None,
+    requesting_agent: str | None = None,
 ) -> dict[str, Any]:
     clauses, params = ["archived_at IS NULL"], []
+    if requesting_agent is not None:
+        # raw SQL: same predicate as _filter_agent_visibility (public, or own)
+        clauses.append("(visibility = 'public' OR source_agent = ?)")
+        params.append(requesting_agent)
     if scope is not None:
         clauses.append("scope = ?")
         params.append(scope)
@@ -192,16 +239,43 @@ def mobile_review_queue_payload(
         clauses.append("id > ?")
         params.append(cursor)
     sql = _mobile_queue_sql(" AND ".join(clauses))
-    with service.store.connect() as conn:
-        rows = conn.execute(sql, [*params, limit + 1]).fetchall()
-    page = rows[:limit]
+
+    def fetch(window: int) -> tuple[list[Any], bool]:
+        with service.store.connect() as conn:
+            rows = conn.execute(sql, [*params, window]).fetchall()
+        return [_QueueRow(row) for row in rows], len(rows) < window
+
+    # Raw SQL bypasses the service: apply the shared policy (tenant, visibility,
+    # sensitivity) while paging so dropped rows do not use up the window. The
+    # operator keeps redacted rows, as before.
+    kept = page_authorized_lexical(
+        fetch, limit + 1,
+        lambda rows: authorize_claims(
+            rows, requesting_agent=requesting_agent,
+            tenant_id=getattr(service, "tenant_id", None),
+            include_sensitive=requesting_agent is None,
+        ),
+    )
+    page = [item.row for item in kept[:limit]]
     queue = [_mobile_queue_row(row) for row in page]
-    next_cursor = int(page[-1]["id"]) if len(rows) > limit and page else None
+    next_cursor = int(page[-1]["id"]) if len(kept) > limit and page else None
     return {"queue": queue, "cursor": next_cursor}
 
 
+class _QueueRow(SimpleNamespace):
+    """A queue row with the attributes ``authorize_claims`` reads."""
+
+    def __init__(self, row: Any) -> None:
+        super().__init__(
+            row=row, **{key: row[key] for key in (
+                "tenant_id", "visibility", "source_agent", "text", "subject", "predicate", "object_value",
+            )},
+        )
+
+
 def _mobile_queue_sql(where: str) -> str:
-    return f"""SELECT id, text, created_at, scope, claim_type, confidence
+    return f"""SELECT id, text, created_at, scope, claim_type, confidence,
+               tenant_id, visibility, source_agent, subject, predicate, object_value
         FROM claims WHERE {where}
         ORDER BY created_at ASC, id ASC LIMIT ?"""
 
@@ -234,8 +308,8 @@ def audit_payload(service: Any, *, limit: int, serialize: Serializer) -> dict[st
     return {"ok": True, "rows": min(limit, len(rows)), "events": rows[:limit]}
 
 
-def namespaces_payload(service: Any, *, limit: int) -> dict[str, Any]:
-    claims = service.list_claims(limit=limit, include_archived=False)
+def namespaces_payload(service: Any, *, limit: int, requesting_agent: str | None = None) -> dict[str, Any]:
+    claims = service.list_claims(limit=limit, include_archived=False, requesting_agent=requesting_agent)
     buckets: dict[str, list[Any]] = {"facts": [], "decisions": [], "workflows": [], "project_overview": []}
     for claim in claims:
         bucket = _claim_namespace(claim)
