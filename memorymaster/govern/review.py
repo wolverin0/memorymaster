@@ -91,6 +91,9 @@ def _reviewable_claims(
     from memorymaster.core.service import authorize_claims
     from memorymaster.recall.candidate_pool import page_authorized_lexical
 
+    # A restricted caller never gets sensitive access, whatever it asked for.
+    include_sensitive = include_sensitive and requesting_agent is None
+
     store = getattr(service, "store", None)
     finder = getattr(store, "find_by_status", None)
     gathered: list = []
@@ -136,7 +139,8 @@ def _reviewable_claims(
     return [
         claim
         for claim in service.list_claims(
-            include_archived=False, limit=limit, allow_sensitive=True, requesting_agent=requesting_agent,
+            include_archived=False, limit=limit, allow_sensitive=include_sensitive,
+            requesting_agent=requesting_agent,
         )
         if claim.status in wanted or claim.id in flagged_claim_ids
     ]
@@ -155,6 +159,7 @@ def build_review_queue(
     if limit <= 0:
         return []
 
+    include_sensitive = include_sensitive and requesting_agent is None
     flagged = flagged_claim_ids or set()
     claims = _reviewable_claims(
         service,

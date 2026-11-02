@@ -18,7 +18,7 @@ config or an already-trusted caller; **Low** = defence-in-depth gap;
 |---|---|---|---|---|
 | F-1a | **High** (token mode) / Medium (legacy loopback) | `memorymaster/surfaces/dashboard_read_models.py:42-44`, reached from `memorymaster/surfaces/dashboard.py:944` | `/api/claims` hands `visibility="sensitive"` claims from **any scope and any author** to the **viewer** role. `claims_payload` calls `service.list_claims()` with no `scope_allowlist` and no `requesting_agent`, and its only filter, `is_sensitive_claim()` (`core/security.py:810`), scans text for secret patterns and never reads `claim.visibility`. MCP `list_claims` (`mcp_server.py:2508`) passes the workspace scope allowlist and the request principal, so the same claim is hidden there. | Reproduced live: a viewer-token GET with default params returned the seeded sensitive claim. Fixed; regression test: `test_viewer_never_receives_non_public_claims` |
 | F-1b | **High** (token mode) / Medium | `memorymaster/surfaces/dashboard.py:369-373`, `:917` | `/claim/<id>/lineage` loads any claim by id through `store.get_claim()` and renders its title/text with no visibility, scope, tenant or sensitivity check. Ids are sequential, so a viewer can walk them all. | Reproduced live. Fixed; regression test: `test_viewer_lineage_of_non_public_claim_is_404_without_content` |
-| F-1c | Medium | `memorymaster/surfaces/dashboard_read_models.py:43`; `dashboard.py:948`, `:992` | Dashboard `allow_sensitive=1` query flag widens results directly. It skips `resolve_allow_sensitive_access()` (`core/security.py:280`), which is the env/config gate (`MEMORYMASTER_ALLOW_SENSITIVE_BYPASS`) that MCP and the service layer enforce. Any viewer can set it. Stored secrets are already redacted at ingest, so this mostly exposes redacted rows and the existence of sensitive claims, not raw values. | Defect record: `test_claims_payload_allow_sensitive_requires_bypass_gate` |
+| F-1c | Medium (fixed) | `memorymaster/surfaces/dashboard_read_models.py:43`; `dashboard.py:948`, `:992` | Dashboard `allow_sensitive=1` query flag widens results directly. It skips `resolve_allow_sensitive_access()` (`core/security.py:280`), which is the env/config gate (`MEMORYMASTER_ALLOW_SENSITIVE_BYPASS`) that MCP and the service layer enforce. Any viewer can set it. Stored secrets are already redacted at ingest, so this mostly exposes redacted rows and the existence of sensitive claims, not raw values. | Defect record: `test_claims_payload_allow_sensitive_requires_bypass_gate` |
 | F-2 | Medium | `pyproject.toml:40` (`capture` extra: `pypdf>=6.21.2`), used by `memorymaster/capture/adapters.py:410` | The declared floor admits 7 known pypdf advisories: CVE-2026-119203…119209, fixed in 6.21.3 and 6.21.4. The capture path parses inbox PDFs, so a malformed PDF reaches the vulnerable parser. Recommendation: raise the floor to `pypdf>=6.21.4`. I did not make that change here because it is a dependency/behaviour change outside this audit's scope. | `pip-audit --no-deps -r <floors>` against every declared minimum. Only pypdf was flagged. |
 | F-3 | Medium | `memorymaster/surfaces/mcp_path_policy.py:94`, `:125` | The MCP `db`/`workspace` allowlist fails **open**: with `MEMORYMASTER_MCP_DB_ALLOWLIST` unset (the default), a stdio or local-trusted HTTP caller can point any tool at any SQLite path the process can write, including creating new files. This is documented back-compat. Team mode is not affected: `_normalize_team_arguments` (`mcp_server.py:937`) pins db/workspace/scope to the authenticated context. Also, `fnmatch` `*` matches `/` (`:77`), so `/a/*/memorymaster.db` also allows deeper paths. | Code reading; existing coverage in `tests/test_mcp_path_policy.py` |
 | F-4 | Low | `memorymaster/surfaces/mcp_server.py:2924-2962` | The MCP tool `open_dashboard` connects to a **caller-supplied host:port**, returns the parsed JSON body as `health_payload`, and returns `str(exc)`. That makes it an internal-network probe and port-scan oracle (refused/timeout/reset can be told apart). The request is fixed to `GET /health`. The tool is off in team mode (`team_enabled=False`, `mcp_server.py:881`), so only the stdio or local-trusted bearer-token holder can reach it. | Defect record: `test_open_dashboard_refuses_non_loopback_host`; lock: `test_open_dashboard_only_issues_get_health` |
@@ -55,12 +55,11 @@ All tests are in `tests/test_t2070_security_audit.py` and use `tmp_path` databas
 - `test_open_dashboard_only_issues_get_health`: whatever `path` the caller passes, the probe sends exactly `GET /health`.
 - `test_classifier_never_unpickles_without_opt_in`: `joblib.load` is not called on a file at the default path unless loading is enabled. It skips if `joblib` is not installed.
 
-**Defect records**, marked `xfail(strict=True)`. Each one asserts the *secure* behaviour for a confirmed finding. They xfail today. When someone fixes the defect, the test XPASSes, strict mode turns that into a failure, and that failure is the cue to remove the marker:
+**Defect records**, marked `xfail(strict=True)`. Each one (now only F-4) asserts the *secure* behaviour for a confirmed finding. They xfail today. When someone fixes the defect, the test XPASSes, strict mode turns that into a failure, and that failure is the cue to remove the marker:
 
-- `test_claims_payload_allow_sensitive_requires_bypass_gate` (F-1c)
 - `test_open_dashboard_refuses_non_loopback_host` (F-4)
 
-I ran both remaining records with `--runxfail`, and each fails on its assertion, not on a setup error.
+I ran the remaining record with `--runxfail`, and it fails on its assertion, not on a setup error.
 
 ## How to run
 
@@ -68,7 +67,7 @@ I ran both remaining records with `--runxfail`, and each fails on its assertion,
 pip install -e ".[dev,mcp]" joblib              # joblib only for the classifier lock
 python -m pytest tests/test_public_demo.py -q   # disposable lifecycle first (AGENTS.md)
 python -m pytest tests/test_t2070_security_audit.py -q -rxX
-python -m pytest tests/test_t2070_security_audit.py -q --runxfail   # shows the 2 open defects failing
+python -m pytest tests/test_t2070_security_audit.py -q --runxfail   # shows the 1 open defect failing
 ruff check tests/test_t2070_security_audit.py
 python scripts/bulk_check.py --fast             # fast merge gates; full suite: drop --fast
 ```
@@ -88,7 +87,7 @@ unauthorized lineage id returns the same 404 page as a missing id. The lineage l
 for every role. Scope is deliberately not used as a viewer boundary: tokens have no scope grant and the dashboard is a
 whole-database view.
 
-Open: F-1c (`allow_sensitive` query flag) and F-4 remain defect records.
+Open: F-4 remains a defect record; F-1c is fixed on the dashboard (see review round 3).
 
 Results on this branch. Audit commit, before the fix:
 
@@ -105,6 +104,8 @@ The POST-rejection tests print a harmless `BrokenPipeError` from `socketserver` 
 Review round (head after 032b7d9): non-public rows used to be dropped after the store applied its limit, so a flood of private claims could leave a viewer with fewer or zero public rows. `MemoryService.list_claims` (for a restricted caller), the review-queue builder, the conflict groups (which also gained the missing tenant filter) and the lineage candidate read now page with `page_authorized_lexical`, the same window-growing helper the lexical recall path uses. `/api/capture-inbox` lists derived claims by id and now applies the same rule. A missing or unknown role maps to the restricted principal (only the operator role is unrestricted), and the principal checks use `is not None`.
 
 Review round 2: the policy now lives in one predicate, `authorize_claims` in `core/service.py` (tenant, then per-agent visibility, then sensitivity). `list_claims`, the review-queue gather and its flagged-claim slice (authorized before it counts toward the limit), the conflict peer read, the capture-inbox claim rows and the lineage reads all use it. `list_claims` always pages, so redacted rows cannot use up the window for unrestricted callers either. The operator's capture inbox and lineage page keep redacted claims (include_sensitive for the operator only); a restricted caller gets the full policy.
+
+Review round 3 (last): the mobile review queue (`/api/v1/review-queue`, raw SQL) now pages through `authorize_claims` too, so tenant and sensitivity apply (the operator keeps redacted rows). **F-1c is fixed on the dashboard:** the `allow_sensitive` query flag goes through `effective_allow_sensitive` (a restricted caller never gets sensitive access, whatever it asks; the operator only through `resolve_allow_sensitive_access`, i.e. the env/config bypass) on claims, the review queue, retrieval and recall analysis, and `build_review_queue` / `_reviewable_claims` force `include_sensitive` off for any restricted caller. This changes local behaviour for the operator: `?allow_sensitive=1` on the review queue now needs `MEMORYMASTER_ALLOW_SENSITIVE_BYPASS`. `/api/capture-inbox`: a restricted caller gets a source (payload, evidence, jobs) only when at least one of its derived claims is authorized for them; sources have no tenant of their own, so this is also the tenant boundary. The operator view is unchanged. `MemoryService.query` accepts `requesting_agent` so the handler's `service.query` path authorizes before the limit, and the lineage reads pass the tenant to the store and the principal to the `list_claims` fallback.
 
 ## What I did not check
 

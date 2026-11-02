@@ -6,7 +6,9 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from memorymaster.core.security import is_sensitive_claim
+from types import SimpleNamespace
+
+from memorymaster.core.security import is_sensitive_claim, resolve_allow_sensitive_access
 from memorymaster.core.service import authorize_claims
 from memorymaster.recall.candidate_pool import page_authorized_lexical
 from memorymaster.govern.review import build_review_queue, queue_to_dicts
@@ -32,6 +34,20 @@ def triage_flags(service: Any, limit: int) -> dict[int, dict[str, bool]]:
     return flags
 
 
+def effective_allow_sensitive(requested: bool, requesting_agent: str | None, context: str) -> bool:
+    """The caller's ``allow_sensitive`` after the policy gate (T-2070 F-1c).
+
+    A restricted caller never gets sensitive access. The operator gets it only
+    through ``resolve_allow_sensitive_access`` (env/config bypass), like MCP and
+    the service layer; a denied request degrades to "not allowed", not an error.
+    """
+    if requesting_agent is not None:
+        return False
+    return resolve_allow_sensitive_access(
+        allow_sensitive=requested, context=context, deny_mode="filter",
+    )
+
+
 def claims_payload(
     service: Any,
     *,
@@ -42,9 +58,10 @@ def claims_payload(
     serialize: Serializer,
     requesting_agent: str | None = None,
 ) -> dict[str, Any]:
+    allow_sensitive = effective_allow_sensitive(allow_sensitive, requesting_agent, "dashboard.claims")
     claims = service.list_claims(
         status=status, limit=limit, include_archived=include_archived,
-        requesting_agent=requesting_agent,
+        allow_sensitive=allow_sensitive, requesting_agent=requesting_agent,
     )
     if not allow_sensitive:
         claims = [claim for claim in claims if not is_sensitive_claim(claim)]
@@ -137,6 +154,7 @@ def review_queue_payload(
     # Las propuestas se calculan ANTES de armar la cola: una claim confirmed
     # con propuesta pendiente ("flagged") pertenece a la cola aunque su status
     # no sea revisable — es donde viven los botones Approve/Reject.
+    allow_sensitive = effective_allow_sensitive(allow_sensitive, requesting_agent, "dashboard.review_queue")
     proposals = _pending_proposals_by_claim(service, limit)
     items = build_review_queue(
         service, limit=limit, include_stale=include_stale,
@@ -221,16 +239,43 @@ def mobile_review_queue_payload(
         clauses.append("id > ?")
         params.append(cursor)
     sql = _mobile_queue_sql(" AND ".join(clauses))
-    with service.store.connect() as conn:
-        rows = conn.execute(sql, [*params, limit + 1]).fetchall()
-    page = rows[:limit]
+
+    def fetch(window: int) -> tuple[list[Any], bool]:
+        with service.store.connect() as conn:
+            rows = conn.execute(sql, [*params, window]).fetchall()
+        return [_QueueRow(row) for row in rows], len(rows) < window
+
+    # Raw SQL bypasses the service: apply the shared policy (tenant, visibility,
+    # sensitivity) while paging so dropped rows do not use up the window. The
+    # operator keeps redacted rows, as before.
+    kept = page_authorized_lexical(
+        fetch, limit + 1,
+        lambda rows: authorize_claims(
+            rows, requesting_agent=requesting_agent,
+            tenant_id=getattr(service, "tenant_id", None),
+            include_sensitive=requesting_agent is None,
+        ),
+    )
+    page = [item.row for item in kept[:limit]]
     queue = [_mobile_queue_row(row) for row in page]
-    next_cursor = int(page[-1]["id"]) if len(rows) > limit and page else None
+    next_cursor = int(page[-1]["id"]) if len(kept) > limit and page else None
     return {"queue": queue, "cursor": next_cursor}
 
 
+class _QueueRow(SimpleNamespace):
+    """A queue row with the attributes ``authorize_claims`` reads."""
+
+    def __init__(self, row: Any) -> None:
+        super().__init__(
+            row=row, **{key: row[key] for key in (
+                "tenant_id", "visibility", "source_agent", "text", "subject", "predicate", "object_value",
+            )},
+        )
+
+
 def _mobile_queue_sql(where: str) -> str:
-    return f"""SELECT id, text, created_at, scope, claim_type, confidence
+    return f"""SELECT id, text, created_at, scope, claim_type, confidence,
+               tenant_id, visibility, source_agent, subject, predicate, object_value
         FROM claims WHERE {where}
         ORDER BY created_at ASC, id ASC LIMIT ?"""
 

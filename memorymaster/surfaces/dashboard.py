@@ -33,6 +33,7 @@ from memorymaster.surfaces.dashboard_read_models import (
     action_proposals_payload,
     audit_payload,
     claims_payload,
+    effective_allow_sensitive,
     conflicts_payload,
     events_payload,
     mobile_review_queue_payload,
@@ -381,7 +382,11 @@ def _get_lineage_claim(service: Any, claim_id: int, requesting_agent: str | None
         claim = get_claim(claim_id, include_citations=False)
     else:
         claim = next(
-            (c for c in service.list_claims(limit=5000, include_archived=True) if int(c.id) == claim_id),
+            (
+                c for c in service.list_claims(
+                    limit=5000, include_archived=True, requesting_agent=requesting_agent,
+                ) if int(c.id) == claim_id
+            ),
             None,
         )
     if claim is None:
@@ -405,9 +410,14 @@ def _lineage_candidate_claims(service: Any, requesting_agent: str | None = None)
     if not callable(list_claims):
         return []
 
+    tenant_id = getattr(service, "tenant_id", None)
+    # The tenant boundary goes into the store query so other tenants' rows do
+    # not use up the window (the service fallback has no such parameter).
+    tenant_kw = {"tenant_id": tenant_id} if tenant_id is not None and getattr(store, "list_claims", None) else {}
+
     def fetch(window: int) -> tuple[list[Any], bool]:
         try:
-            rows = list_claims(limit=window, include_archived=True, include_citations=False)
+            rows = list_claims(limit=window, include_archived=True, include_citations=False, **tenant_kw)
         except TypeError:
             rows = list_claims(limit=window, include_archived=True)
         return rows, len(rows) < window
@@ -1070,7 +1080,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         limit = params["limit"]
         include_stale = params["include_stale"]
         include_conflicted = params["include_conflicted"]
-        allow_sensitive = params["allow_sensitive"]
+        allow_sensitive = effective_allow_sensitive(
+            params["allow_sensitive"], self._requesting_agent, "dashboard.retrieval",
+        )
         scope_allowlist = params["scope_allowlist"]
 
         attempts_with_scope = _build_retrieval_method_attempts(
@@ -1080,18 +1092,23 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         query_rows_fn = getattr(self._server.service, "query_rows", None)
         claims: list[Any] = []
         scored_by_claim_id: dict[int, dict[str, Any]] = {}
-        if callable(query_rows_fn):
-            if self._requesting_agent is not None:
-                # Bound outside the fallback attempts on purpose: a query_rows without
-                # requesting_agent raises TypeError for a restricted caller (500)
-                # instead of silently retrying unrestricted. MemoryService has it.
-                query_rows_fn = functools.partial(query_rows_fn, requesting_agent=self._requesting_agent)
-            rows_data = _call_retrieval_method_with_fallback(query_rows_fn, text, attempts_with_scope)
-            claims, scored_by_claim_id = _extract_claims_from_rows(rows_data)
+        # A restricted caller's principal is bound outside the fallback attempts on
+        # purpose: a method without requesting_agent raises TypeError (500) instead
+        # of silently retrying unrestricted. Both MemoryService methods take it, and
+        # authorize while paging, so private rows cannot use up the limit.
+        def bind(method: Any) -> Any:
+            if self._requesting_agent is None:
+                return method
+            return functools.partial(method, requesting_agent=self._requesting_agent)
 
-        if not callable(query_rows_fn):
-            claims = _call_retrieval_method_with_fallback(self._server.service.query, text, attempts_with_scope)
-        # service.query() has no requesting_agent parameter, so enforce it here too.
+        if callable(query_rows_fn):
+            rows_data = _call_retrieval_method_with_fallback(bind(query_rows_fn), text, attempts_with_scope)
+            claims, scored_by_claim_id = _extract_claims_from_rows(rows_data)
+        else:
+            claims = _call_retrieval_method_with_fallback(
+                bind(self._server.service.query), text, attempts_with_scope,
+            )
+        # Defence in depth only; the service already applied the rule before its limit.
         claims = _filter_agent_visibility(claims, self._requesting_agent)
         if scope_allowlist:
             claims = [claim for claim in claims if claim.scope in scope_allowlist]
@@ -1127,7 +1144,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             include_stale=params["include_stale"],
             include_conflicted=params["include_conflicted"],
             include_candidates=include_candidates,
-            allow_sensitive=params["allow_sensitive"],
+            allow_sensitive=effective_allow_sensitive(
+                params["allow_sensitive"], self._requesting_agent, "dashboard.recall_analysis",
+            ),
             scope_allowlist=params["scope_allowlist"] or None,
             requesting_agent=self._requesting_agent,
         )

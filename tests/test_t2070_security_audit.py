@@ -125,7 +125,7 @@ def _start_dashboard(monkeypatch, tmp_path, *, tokens: bool):
     return server, thread, {
         "host": host, "port": port, "ids": ids, "service": svc,
         "sensitive_id": ids["sensitive"], "html_id": ids["html"],
-        "db": tmp_path / "dash.db", "workspace": workspace,
+        "db": tmp_path / "dash.db", "workspace": workspace, "server": server,
     }
 
 
@@ -555,6 +555,164 @@ def test_viewer_capture_inbox_drops_redacted_claims_but_operator_keeps_them(dash
     assert b"CSENS" in operator_body  # local/operator behaviour is unchanged
 
 
+def _queue_ids(body: bytes) -> list[int]:
+    import json
+
+    return [row["id"] for row in json.loads(body)["queue"]]
+
+
+def test_mobile_queue_applies_the_service_tenant(dashboard):
+    svc = dashboard["service"]
+    ids = _conflict_pair(dashboard)
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET tenant_id = 'tenant-a' WHERE id = ?", (ids["pub_a"],))
+        conn.execute("UPDATE claims SET tenant_id = 'tenant-b' WHERE id = ?", (ids["pub_b"],))
+        conn.commit()
+    svc.tenant_id = "tenant-a"
+    status, body = _request(dashboard, "GET", "/api/v1/review-queue?n=100", OPERATOR)
+    assert status == 200
+    queue = _queue_ids(body)
+    assert ids["pub_a"] in queue and ids["pub_b"] not in queue
+
+
+def test_mobile_queue_drops_redacted_rows_for_the_viewer_only(dashboard):
+    svc = dashboard["service"]
+    ids = _conflict_pair(dashboard)
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET text = 'redacted [REDACTED:api_key]' WHERE id = ?", (ids["pub_a"],))
+        conn.commit()
+    _, viewer = _request(dashboard, "GET", "/api/v1/review-queue?n=100", VIEWER)
+    _, operator = _request(dashboard, "GET", "/api/v1/review-queue?n=100", OPERATOR)
+    assert ids["pub_a"] not in _queue_ids(viewer)
+    assert ids["pub_b"] in _queue_ids(viewer)
+    assert ids["pub_a"] in _queue_ids(operator)  # operator behaviour unchanged
+
+
+def test_redacted_rows_cannot_fill_the_mobile_queue_window(dashboard):
+    flood = _seed_many(dashboard, 5, "redflood [REDACTED:api_key]", visibility="public", status="confirmed")
+    with dashboard["service"].store.connect() as conn:
+        conn.executemany("UPDATE claims SET created_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", [(i,) for i in flood])
+        conn.commit()
+    status, body = _request(dashboard, "GET", "/api/v1/review-queue?n=2", VIEWER)
+    assert status == 200
+    assert len(_queue_ids(body)) == 2
+    assert not set(_queue_ids(body)) & set(flood)
+
+
+def _seed_redacted_review_item(d):
+    svc = d["service"]
+    cid = svc.ingest(
+        "zebrafact redacted review", [CitationInput(source="test://t2070")], scope="project:ws",
+        source_agent="tester", subject="T2070REDREV [REDACTED:api_key]", predicate="has", object_value="x",
+    ).id
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET status = 'conflicted', pinned = 1 WHERE id = ?", (cid,))
+        conn.commit()
+    return cid
+
+
+def test_operator_allow_sensitive_needs_the_bypass_gate_on_the_review_queue(dashboard, monkeypatch):
+    """F-1c on the dashboard: the query flag alone must not widen the review queue."""
+    _seed_redacted_review_item(dashboard)
+    _, body = _request(dashboard, "GET", "/api/review-queue?allow_sensitive=1", OPERATOR)
+    assert b"T2070REDREV" not in body
+    monkeypatch.setenv("MEMORYMASTER_ALLOW_SENSITIVE_BYPASS", "1")
+    _, body = _request(dashboard, "GET", "/api/review-queue?allow_sensitive=1", OPERATOR)
+    assert b"T2070REDREV" in body  # positive control: the gate opens through the env switch
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/review-queue?allow_sensitive=1",
+        "/api/claims?allow_sensitive=1&limit=500",
+        "/api/retrieval?query=zebrafact&mode=legacy&allow_sensitive=1",
+    ],
+)
+def test_viewer_never_gets_sensitive_access_even_with_the_bypass_enabled(dashboard, monkeypatch, path):
+    _seed_redacted_review_item(dashboard)
+    _seed_many(dashboard, 1, "redclaim [REDACTED:api_key]", visibility="public", status="confirmed")
+    monkeypatch.setenv("MEMORYMASTER_ALLOW_SENSITIVE_BYPASS", "1")
+    status, body = _request(dashboard, "GET", path, VIEWER)
+    assert status == 200
+    assert b"T2070REDREV" not in body and b"redclaim" not in body
+
+
+def test_capture_inbox_hides_sources_without_an_authorized_claim_from_the_viewer(dashboard):
+    from memorymaster import remember
+    from memorymaster.capture import CaptureRepository
+
+    repo = CaptureRepository(dashboard["service"].store)
+    only_private = remember(
+        text="T2070PRIVSRC only a private claim", scope="project:ws",
+        db=dashboard["db"], workspace=dashboard["workspace"],
+    )
+    repo.link_claim_evidence(
+        claim_id=dashboard["ids"]["private_conflicted"], evidence_item_id=int(only_private.evidence["id"]),
+    )
+    remember(
+        text="T2070NOCLAIMSRC no claim at all", scope="project:ws",
+        db=dashboard["db"], workspace=dashboard["workspace"],
+    )
+    _, viewer = _request(dashboard, "GET", "/api/capture-inbox", VIEWER)
+    assert b"T2070PRIVSRC" not in viewer and b"T2070NOCLAIMSRC" not in viewer
+    _, operator = _request(dashboard, "GET", "/api/capture-inbox", OPERATOR)
+    assert b"T2070PRIVSRC" in operator and b"T2070NOCLAIMSRC" in operator  # operator unchanged
+
+
+def test_service_query_pages_past_private_rows_for_a_restricted_caller(dashboard):
+    svc = dashboard["service"]
+    _seed_many(dashboard, 5, "queryflood", status="confirmed")
+    rows = svc.query("zebrafact", limit=2, retrieval_mode="legacy", requesting_agent="dashboard:viewer")
+    assert len(rows) == 2
+    assert all(row.visibility == "public" for row in rows)
+
+
+def test_retrieval_without_query_rows_still_fills_the_window_for_the_viewer(dashboard):
+    import json
+
+    svc = dashboard["service"]
+    _seed_many(dashboard, 5, "queryflood", status="confirmed")
+
+    class _WithoutQueryRows:
+        """The service as an older build exposes it: no query_rows, only query."""
+
+        def __getattr__(self, name):
+            if name == "query_rows":
+                raise AttributeError(name)
+            return getattr(svc, name)
+
+    dashboard["server"].service = _WithoutQueryRows()
+    status, body = _request(dashboard, "GET", "/api/retrieval?query=zebrafact&mode=legacy&limit=2", VIEWER)
+    assert status == 200
+    assert len(json.loads(body)["rows_data"]) == 2
+    assert MARKER.encode() not in body
+
+
+def test_lineage_reads_carry_the_tenant_and_the_principal_to_the_source():
+    from types import SimpleNamespace
+
+    from memorymaster.surfaces.dashboard import _get_lineage_claim, _lineage_candidate_claims
+
+    seen: dict[str, object] = {}
+
+    def store_list(**kwargs):
+        seen["store"] = kwargs
+        return []
+
+    service = SimpleNamespace(tenant_id="tenant-a", store=SimpleNamespace(list_claims=store_list))
+    _lineage_candidate_claims(service, "dashboard:viewer")
+    assert seen["store"].get("tenant_id") == "tenant-a"
+
+    def service_list(**kwargs):
+        seen["service"] = kwargs
+        return []
+
+    fallback = SimpleNamespace(tenant_id=None, store=None, list_claims=service_list)
+    assert _get_lineage_claim(fallback, 1, "dashboard:viewer") is None
+    assert seen["service"].get("requesting_agent") == "dashboard:viewer"
+
+
 @dataclass
 class _FakeClaim:
     id: int
@@ -582,11 +740,6 @@ def test_claims_payload_default_filters_redacted_claims():
     assert [row["id"] for row in out["claims"]] == [2]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="AUDIT-T2070 F-1c: dashboard allow_sensitive=1 widens results without "
-    "resolve_allow_sensitive_access(), unlike MCP list_claims and the service layer.",
-)
 def test_claims_payload_allow_sensitive_requires_bypass_gate():
     from memorymaster.surfaces.dashboard_read_models import claims_payload
 

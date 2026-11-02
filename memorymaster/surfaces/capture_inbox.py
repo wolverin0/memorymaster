@@ -174,20 +174,34 @@ def capture_inbox_payload(
     """Return newest capture sources with their complete governed lineage."""
     store = service.store
     postgres = hasattr(store, "dsn")
-    with store.connect() as conn:
-        rows = _execute(
-            conn,
-            postgres,
-            """SELECT s.id, s.source_item_id, s.item_type, s.occurred_at,
-                      s.payload_json, s.content_hash, s.sensitivity, s.created_at,
-                      s.updated_at, s.retired_at, s.retirement_reason,
-                      x.source_type, x.display_name
-               FROM source_items s
-               JOIN external_sources x ON x.id=s.source_id
-               ORDER BY s.id DESC LIMIT ?""",
-            (min(max(limit, 1), 100),),
-        ).fetchall()
-        items = [_source_row(service, conn, postgres, row, requesting_agent) for row in rows]
+    limit = min(max(limit, 1), 100)
+
+    def fetch(window: int) -> tuple[list[dict[str, Any]], bool]:
+        with store.connect() as conn:
+            rows = _execute(
+                conn,
+                postgres,
+                """SELECT s.id, s.source_item_id, s.item_type, s.occurred_at,
+                          s.payload_json, s.content_hash, s.sensitivity, s.created_at,
+                          s.updated_at, s.retired_at, s.retirement_reason,
+                          x.source_type, x.display_name
+                   FROM source_items s
+                   JOIN external_sources x ON x.id=s.source_id
+                   ORDER BY s.id DESC LIMIT ?""",
+                (window,),
+            ).fetchall()
+            return [_source_row(service, conn, postgres, row, requesting_agent) for row in rows], len(rows) < window
+
+    if requesting_agent is None:
+        items = fetch(limit)[0]
+    else:
+        # Sources carry no tenant or visibility of their own: a restricted caller
+        # gets a source (payload, evidence, jobs) only when at least one of its
+        # derived claims is authorized for them. Paged so hidden sources do not
+        # use up the window.
+        from memorymaster.recall.candidate_pool import page_authorized_lexical
+
+        items = page_authorized_lexical(fetch, limit, lambda rows: [r for r in rows if r["claims"]])
     return {
         "ok": True,
         "rows": len(items),

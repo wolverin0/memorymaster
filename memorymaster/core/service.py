@@ -1061,6 +1061,7 @@ class MemoryService(IntegrationService):
         scope_allowlist: list[str] | None = None,
         query_type: str | None = None,
         trust_mode: str | None = None,
+        requesting_agent: str | None = None,
     ) -> list[Claim]:
         resolved_trust = trust_mode or (
             "exploratory"
@@ -1078,6 +1079,7 @@ class MemoryService(IntegrationService):
             retrieval_profile=retrieval_profile,
             allow_sensitive=allow_sensitive,
             scope_allowlist=tuple(scope_allowlist) if scope_allowlist else None,
+            requesting_agent=requesting_agent,
             query_type=query_type,
         ), vector_hook=vector_hook)
         return [row["claim"] for row in result.rows]
