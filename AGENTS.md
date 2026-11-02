@@ -54,7 +54,10 @@ are derived views.
   `python -m pytest tests/test_public_demo.py -q` for the disposable lifecycle.
 - Run Ruff on changed Python files. Use the full non-ML suite for broad changes;
   `python scripts/bulk_check.py` is the only merge gate (no hosted CI since
-  2026-10-25). Preserve useful regression coverage.
+  2026-10-25); without `--fast` it refuses to run outside a wezbridge heavy slot
+  (`node "<Py Apps>/wezbridge/scripts/heavy-slot.cjs" run --label bulk-check -- env
+  MEMORYMASTER_HEAVY_SLOT=1 python scripts/bulk_check.py`; hosts without wezbridge
+  set `MEMORYMASTER_BULK_NO_SLOT=1`). Preserve useful regression coverage.
 - Report source-tested, installed and live-verified separately. Restart only
   affected long-lived services when deployment requires it.
 - Keep GitNexus impact analysis before symbol edits and change detection before
