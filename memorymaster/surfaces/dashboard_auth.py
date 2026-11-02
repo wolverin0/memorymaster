@@ -55,6 +55,11 @@ def requesting_agent_for(role: "DashboardRole | None") -> str | None:
     return None if role == DashboardRole.OPERATOR else VIEWER_PRINCIPAL
 
 
+def principal_of(handler: object) -> str | None:
+    """The request's ``requesting_agent``; an object that never ran auth is restricted."""
+    return getattr(handler, "_requesting_agent", VIEWER_PRINCIPAL)
+
+
 # Routes that require operator role regardless of HTTP method. POST routes
 # always require operator role separately. This list captures GET routes that
 # are mutating-adjacent (start/stop operator control, stream that may carry
