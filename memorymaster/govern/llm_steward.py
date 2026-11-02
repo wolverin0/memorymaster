@@ -28,6 +28,7 @@ from memorymaster.stores._storage_shared import open_conn, utc_now
 from memorymaster.core import observability
 from memorymaster.core.llm_provider import gemini_thinking_fields
 from memorymaster.core.models import tuple_key
+from memorymaster.stores.claim_identity import content_fingerprint
 from memorymaster.core.promotion_policy import (
     auto_promotion_blocked,
     non_auto_promotable_sources,
@@ -887,7 +888,6 @@ def run_steward(
                         )
                         conf = min(1.0, max(0.0, float(extra.get("confidence", 0.7))))
                         if extra_findings:
-                            observability.bump_claim_filtered("steward_extraction_sensitive")
                             log.warning(
                                 "steward: redacted extra extraction fields from "
                                 "claim #%d [REDACTED findings=%s]",
@@ -904,7 +904,9 @@ def run_steward(
 
                         if existing:
                             # Redacted fields are written, as svc.ingest would.
-                            stats["claims_filtered_sensitive"] += bool(extra_findings)
+                            if extra_findings:
+                                observability.bump_claim_filtered("steward_extraction_sensitive")
+                                stats["claims_filtered_sensitive"] += 1
                             conn.execute(
                                 "UPDATE claims SET object_value = ?, confidence = MAX(confidence, ?), "
                                 "updated_at = datetime('now') WHERE id = ?",
@@ -944,16 +946,26 @@ def run_steward(
                                 # F-1 fix: use source claim's scope here too, so
                                 # newly-inserted extra extractions are reachable
                                 # from the same recall path as their source.
+                                # Same identity columns svc.ingest stamps (fingerprint dedup, tuple
+                                # lookup, decay clock); a DB that predates their migrations lacks them.
+                                columns = {col[1] for col in conn.execute("PRAGMA table_info(claims)")}
+                                identity = {
+                                    "content_fingerprint": content_fingerprint(sanitized.text),
+                                    "tuple_key": tuple_key(sanitized.subject, sanitized.predicate),
+                                    "last_evidence_at": utc_now(),
+                                }
+                                identity = {k: v for k, v in identity.items() if k in columns}
                                 cursor = conn.execute(
                                     "INSERT INTO claims (text, subject, predicate, object_value, "
                                     "confidence, status, scope, tenant_id, visibility, source_agent, "
-                                    "created_at, updated_at) "
+                                    "created_at, updated_at" + "".join(f", {k}" for k in identity) + ") "
                                     "VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, "
-                                    "datetime('now'), datetime('now'))",
+                                    "datetime('now'), datetime('now')" + ", ?" * len(identity) + ")",
                                     (
                                         sanitized.text, sanitized.subject, sanitized.predicate,
                                         sanitized.object_value, conf, scope,
                                         row["tenant_id"], row["visibility"], row["source_agent"],
+                                        *identity.values(),
                                     ),
                                 )
                                 new_id = cursor.lastrowid
