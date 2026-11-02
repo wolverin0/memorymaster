@@ -209,9 +209,9 @@ def create_best_provider() -> EmbeddingProvider:
 
     try:
         provider = create_semantic_provider("all-MiniLM-L6-v2")
-    except ImportError:
+    except ImportError as exc:
         logger.info("sentence-transformers not installed; embeddings unavailable (lexical ranking)")
-        return UnavailableProvider(reason="sentence-transformers is not installed")
+        return UnavailableProvider(reason=f"sentence-transformers is not installed: {exc}")
     except Exception as exc:
         logger.warning("sentence-transformers failed to load: %s", exc)
         return UnavailableProvider(reason=f"sentence-transformers failed to load ({type(exc).__name__})")
