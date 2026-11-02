@@ -27,6 +27,10 @@ There is no hosted CI (removed 2026-10-25). `python scripts/bulk_check.py` runs 
 fast gates (release truth, contract witness, probes frozen, branch freshness, MCP
 stdio smoke) and the full non-ML suite in parallel on this host; `--ml` adds the
 isolated ML suite. Exit 0 on the branch is the merge gate; `--fast` is for iteration.
+Without `--fast` it refuses to start unless it holds a heavy slot (T-2072: the parallel
+workers starved RAM next to other heavy jobs and took the shared MCP service down). Launch it as
+`node "<Py Apps>/wezbridge/scripts/heavy-slot.cjs" run --label bulk-check -- env MEMORYMASTER_HEAVY_SLOT=1 python scripts/bulk_check.py`;
+a host without wezbridge opts out with `MEMORYMASTER_BULK_NO_SLOT=1` (env only, no CLI flag).
 After changing MCP tools, CLI commands, console entrypoints or setup profiles,
 regenerate release metadata with `python scripts/generate_release_truth.py`, then
 run it with `--check`. Adding tests does not change it: the test-function count is

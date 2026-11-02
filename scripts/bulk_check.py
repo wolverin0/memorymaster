@@ -17,10 +17,19 @@ Steps, in order, stop at the first failure:
 
 Usage: python scripts/bulk_check.py [--base origin/main] [--workers 2] [--fast] [--ml]
   --fast  runs steps 1-5 only (seconds); the suite still has to run before merge.
+
+Heavy slot (T-2072): the full suite starts parallel workers and competes for RAM with every
+other heavy job on the host (workers died and the shared MCP service went down). Without
+--fast this script therefore refuses to start unless it runs under the machine-wide
+heavy-job semaphore, which exports no marker itself, so the launch line sets one:
+  node "<Py Apps>/wezbridge/scripts/heavy-slot.cjs" run --label bulk-check --       env MEMORYMASTER_HEAVY_SLOT=1 python scripts/bulk_check.py
+A host without that semaphore opts out explicitly with MEMORYMASTER_BULK_NO_SLOT=1
+(deliberately an env var, not a CLI flag, so a worker cannot bypass the guard by habit).
 """
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -28,6 +37,14 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+SLOT_MARKER_ENV = "MEMORYMASTER_HEAVY_SLOT"  # set by the launch line that holds the heavy slot
+SLOT_OPT_OUT_ENV = "MEMORYMASTER_BULK_NO_SLOT"  # machines without the semaphore
+SLOT_HINT = (
+    'bulk_check: the full suite must run under a heavy slot (T-2072); run: node "<Py Apps>/wezbridge/scripts/heavy-slot.cjs" '
+    f"run --label bulk-check -- env {SLOT_MARKER_ENV}=1 python scripts/bulk_check.py "
+    f"(no wezbridge on this host: set {SLOT_OPT_OUT_ENV}=1)"
+)
 
 FAST_GATES = (
     ("release-truth", ["scripts/generate_release_truth.py", "--check"]),
@@ -48,6 +65,11 @@ def _run(name: str, argv: list[str]) -> int:
     return code
 
 
+def _slot_ok() -> bool:
+    # shortcut: only the marker is checked, not the slot file itself; the public repo cannot depend on wezbridge's slot dir.
+    return any(os.environ.get(name) == "1" for name in (SLOT_MARKER_ENV, SLOT_OPT_OUT_ENV))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--base", default="origin/main")
@@ -55,6 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fast", action="store_true", help="fast gates only; skip the test suites")
     parser.add_argument("--ml", action="store_true", help="also run the isolated ML suite")
     args = parser.parse_args(argv)
+    if not args.fast and not _slot_ok():
+        print(SLOT_HINT, file=sys.stderr, flush=True)
+        return 2
 
     steps: list[tuple[str, list[str]]] = [
         (name, [part.format(base=args.base) for part in argv_]) for name, argv_ in FAST_GATES
