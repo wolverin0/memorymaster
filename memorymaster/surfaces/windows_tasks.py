@@ -429,7 +429,8 @@ class Reconciler:
                  wheel: Path | None = None, wheel_sha256: str = "") -> None:
         self.repo, self.manifest, self.values, self.declared = repo, manifest, values, declared
         self.host, self.env, self.apply = host, env, apply
-        self.wheel, self.wheel_sha256 = wheel, wheel_sha256.lower()
+        self.wheel, self.wheel_sha256 = wheel, wheel_sha256.strip().lower()
+        self._wheel_verified: Path | None = None
         self.only = only
         self.tasks = _selected_tasks(manifest, only)
         self.blocked = {t["name"]: _blocked_reason(repo, t) for t in self.tasks if _blocked_reason(repo, t)}
@@ -493,10 +494,11 @@ class Reconciler:
         return self._wheel_ready
 
     def _verify_wheel(self, wheel: Path) -> None:
-        if self.wheel_sha256:
-            digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+        if self.wheel_sha256 and wheel != self._wheel_verified:
+            digest = hashlib.sha256(wheel.read_bytes()).hexdigest().lower()
             if digest != self.wheel_sha256:
                 raise WindowsTasksError(f"wheel hash mismatch: {wheel.name} is not the reviewed build")
+            self._wheel_verified = wheel
 
     def runtime_items(self) -> list[dict[str, Any]]:
         items = []

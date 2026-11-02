@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,13 +12,31 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "atlas_autoloop.py"
 
 
-@pytest.fixture
-def autoloop(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+def load_autoloop(mp: pytest.MonkeyPatch):
+    """Import the script; it writes provider env keys and sys.path at import, so `mp` must undo them."""
+    mp.setenv("GEMINI_API_KEY", "test-key")
+    for key in ("MEMORYMASTER_LLM_API_KEYS", "MEMORYMASTER_LLM_PROVIDER"):
+        mp.setenv(key, "")  # tracked now, so teardown restores the original (or deletes it)
+    mp.setattr(sys, "path", list(sys.path))
     spec = importlib.util.spec_from_file_location("atlas_autoloop_under_test", SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def autoloop():
+    with pytest.MonkeyPatch.context() as mp:
+        yield load_autoloop(mp)
+
+
+def test_loading_the_script_leaves_no_environment_or_path_behind():
+    env_before, path_before = dict(os.environ), list(sys.path)
+    with pytest.MonkeyPatch.context() as mp:
+        load_autoloop(mp)
+        assert os.environ["MEMORYMASTER_LLM_PROVIDER"] == "google"  # the import really did mutate it
+    assert dict(os.environ) == env_before
+    assert sys.path == path_before
 
 
 @pytest.mark.parametrize("model,expected", [

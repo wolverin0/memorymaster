@@ -78,6 +78,7 @@ try:
 
     _tenants = revalidation.tenants_with_work(svc.store)
 except Exception as e:
+    cycle_failed = True
     _tenants = []
     print(f"[MemoryMaster] jev revalidation error: {e}", file=sys.stderr)
 for _tenant in _tenants:
@@ -88,6 +89,7 @@ for _tenant in _tenants:
         if reval.get("asked") or reval.get("stopped") not in (None, "mode_off"):
             print(f"[MemoryMaster] jev revalidation ({_tenant or 'no tenant'}): {reval}")
     except Exception as e:
+        cycle_failed = True
         print(f"[MemoryMaster] jev revalidation error ({_tenant or 'no tenant'}): {e}", file=sys.stderr)
 
 # S4 DEDUP (4.9.0): Jev judges candidate pairs and files `source: jev` steward
@@ -103,6 +105,7 @@ try:
     if dedup.get("asked") or dedup.get("stopped") not in (None, "mode_off"):
         print(f"[MemoryMaster] jev dedup: {dedup}")
 except Exception as e:
+    cycle_failed = True
     print(f"[MemoryMaster] jev dedup error: {e}", file=sys.stderr)
 
 # T-0773: rapidfuzz near-duplicates among live claims (paraphrases the Jaccard
@@ -116,6 +119,7 @@ try:
     if fuzzy.get("proposed") or fuzzy.get("stopped"):
         print(f"[MemoryMaster] fuzzy dedup: {fuzzy}")
 except Exception as e:
+    cycle_failed = True
     print(f"[MemoryMaster] fuzzy dedup error: {e}", file=sys.stderr)
 
 # Auto-archive: stale claims never accessed, older than 14 days
@@ -127,6 +131,7 @@ try:
     if archived:
         print(f"[MemoryMaster] auto-archived {archived} stale unused claims")
 except Exception as e:
+    cycle_failed = True
     print(f"[MemoryMaster] auto-archive error: {e}", file=sys.stderr)
 
 # Reclaim isolated claude_cli scratch transcripts so they never grow unbounded.
@@ -136,6 +141,7 @@ try:
     if _p.get("removed"):
         print(f"[MemoryMaster] purged {_p['removed']} old claude_cli scratch transcripts")
 except Exception as e:
+    cycle_failed = True
     print(f"[MemoryMaster] scratch purge error: {e}", file=sys.stderr)
 
 
@@ -151,6 +157,7 @@ try:
     drain = curation_drain.run(svc, limit=1000, apply=True)
     print(f"[MemoryMaster] curation drain: {drain}")
 except Exception as e:
+    cycle_failed = True
     print(f"[MemoryMaster] curation drain error: {e}", file=sys.stderr)
 
 # Jev decision outcomes (4.9.0): once per cycle, after every stage above that
@@ -164,6 +171,7 @@ try:
     if joined.get("ledger"):
         print(f"[MemoryMaster] jev outcomes: {joined}")
 except Exception as e:
+    cycle_failed = True
     print(f"[MemoryMaster] jev outcomes error: {e}", file=sys.stderr)
 
 # Wiki layer (Obsidian markdown) — RETIRED by default 2026-07-06 (mm-f826).
@@ -185,6 +193,7 @@ try:
     stats = absorb(DB_PATH, wiki_path)
     print(f"[MemoryMaster] wiki absorb: {stats}")
 except Exception as e:
+    cycle_failed = True
     print(f"[MemoryMaster] wiki absorb error: {e}", file=sys.stderr)
 
 # Wiki cleanup + breakdown — rotate one scope per cycle so each cycle stays
@@ -226,13 +235,16 @@ try:
             cleanup_stats = _wiki_cleanup(wiki_path, scope_filter=canonical)
             print(f"[MemoryMaster] wiki cleanup ({canonical}): {cleanup_stats}")
         except Exception as e:
+            cycle_failed = True
             print(f"[MemoryMaster] wiki cleanup error ({canonical}): {e}", file=sys.stderr)
         try:
             breakdown_stats = _wiki_breakdown(DB_PATH, wiki_path, scope_filter=canonical)
             print(f"[MemoryMaster] wiki breakdown ({canonical}): {breakdown_stats}")
         except Exception as e:
+            cycle_failed = True
             print(f"[MemoryMaster] wiki breakdown error ({canonical}): {e}", file=sys.stderr)
 except Exception as e:
+    cycle_failed = True
     print(f"[MemoryMaster] wiki rotation error: {e}", file=sys.stderr)
 
 sys.exit(1 if cycle_failed else 0)

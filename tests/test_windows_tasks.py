@@ -1,8 +1,7 @@
 """The Windows scheduled-task installer: rendering, plan, drift detection and idempotent apply.
 
 Nothing here registers a task or touches the registry: schtasks, HKCU and pip sit behind a fake host and
-every path lives under a tmp HOME.
-"""
+every path lives under a tmp HOME.\n"""
 
 from __future__ import annotations
 
@@ -392,23 +391,90 @@ def test_the_digest_cmdline_argument_is_quoted(manifest, tmp_path):
     assert re.search(r'MemoryMasterWeeklyDigest\.cmdline(&quot;|")</Arguments>', xml), xml
 
 
-def test_the_steward_wrapper_exits_nonzero_when_the_cycle_fails(tmp_path):
-    """L23: a failed MemoryService/run_cycle was printed and the task still ended with exit 0."""
+_STUBS = {
+    "__init__.py": "",
+    "service.py": (
+        "class MemoryService:\n"
+        "    def __init__(self, *a, **k):\n"
+        "        if {fail!r} == 'cycle_init':\n"
+        "            raise RuntimeError('stub failure: cycle_init')\n"
+        "        self.store = object()\n"
+        "    def run_cycle(self, **k):\n"
+        "        return {{}}\n"
+    ),
+    "govern/__init__.py": "",
+    "govern/jobs/__init__.py": "",
+    "govern/jobs/revalidation.py": (
+        "def tenants_with_work(store):\n"
+        "    if {fail!r} == 'revalidation':\n"
+        "        raise RuntimeError('stub failure: revalidation')\n"
+        "    return []\n"
+    ),
+    "govern/candidate_dedupe.py": "def run_jev(store, limit):\n    return {{}}\ndef jev_pairs_per_cycle():\n    return 1\n",
+    "govern/fuzzy_dedupe.py": "def run(store):\n    return {{}}\n",
+    "govern/jobs/scheduled_archive.py": "def run(svc, older_than_days):\n    return {{'archived': 0}}\n",
+    "govern/jobs/curation_drain.py": "def run(svc, limit, apply):\n    return {{}}\n",
+    "core/__init__.py": "",
+    "core/llm_provider.py": "def purge_claude_cli_scratch():\n    return {{}}\n",
+    "decisions/__init__.py": "",
+    "decisions/outcomes.py": "def steward_cycle_outcomes(db):\n    return {{}}\n",
+    "wiki_engine.py": (
+        "def absorb(db, path):\n"
+        "    if {fail!r} == 'wiki_absorb':\n"
+        "        raise RuntimeError('stub failure: wiki_absorb')\n"
+        "    return {{}}\n"
+        "def cleanup(path, scope_filter=None):\n"
+        "    return {{}}\n"
+        "def breakdown(db, path, scope_filter=None):\n"
+        "    return {{}}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("fail,exit_ok", [
+    (None, True),  # every stage works: still exit 0
+    ("cycle_init", False),
+    ("revalidation", False),
+    ("wiki_absorb", False),
+])
+def test_the_steward_wrapper_exit_code_reflects_every_stage_failure(tmp_path, fail, exit_ok):
+    """L23: a stage failure was printed to stderr and the scheduled task still ended with exit 0."""
     import subprocess
 
-    stub = tmp_path / "stub" / "memorymaster"
-    stub.mkdir(parents=True)
-    (stub / "__init__.py").write_text("", encoding="utf-8")
-    (stub / "service.py").write_text(
-        "class MemoryService:\n    def __init__(self, *a, **k):\n        raise RuntimeError('stub cycle failure')\n",
-        encoding="utf-8")
+    package = tmp_path / "stub" / "memorymaster"
+    for rel, body in _STUBS.items():
+        target = package / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body.format(fail=fail), encoding="utf-8")
     root = tmp_path / "repo"
-    root.mkdir()
+    (root / "obsidian-vault" / "wiki").mkdir(parents=True)
     source = (REPO / "ops/windows-tasks/wrappers/steward-cycle.py").read_text(encoding="utf-8")
     script = tmp_path / "steward-cycle.py"
     script.write_text(source.replace("{REPO}", str(root)), encoding="utf-8")
     env = {**os.environ, "PYTHONPATH": str(tmp_path / "stub"), "HOME": str(tmp_path), "USERPROFILE": str(tmp_path),
-           "MEMORYMASTER_WIKI_ABSORB": "0"}
+           "MEMORYMASTER_WIKI_ABSORB": "1"}
     done = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=60)
-    assert "stub cycle failure" in done.stderr
-    assert done.returncode != 0, done.stdout + done.stderr
+    if fail:
+        assert f"stub failure: {fail}" in done.stderr, done.stderr
+    else:
+        assert done.stderr == "", done.stderr
+    assert (done.returncode == 0) is exit_ok, done.stdout + done.stderr
+
+
+@WINDOWS_ONLY
+def test_the_wheel_is_hashed_once_and_the_hash_is_case_insensitive(tmp_path, monkeypatch):
+    """Review of #356: the wheel was hashed up front and again at install; an uppercase digest must match."""
+    import hashlib
+
+    env, host = fresh_pc(tmp_path, MEMORYMASTER_MCP_HTTP_TOKEN="shared-secret-value",
+                         MEMORYMASTER_HERMES_MCP_HTTP_TOKEN="hermes-secret-value")
+    wheel = tmp_path / "w.whl"
+    wheel.write_bytes(b"x")
+    calls = []
+    real = hashlib.sha256
+    monkeypatch.setattr(wt.hashlib, "sha256", lambda *a, **k: calls.append(1) or real(*a, **k))
+    digest = real(b"x").hexdigest().upper()
+    code, output = run_cli(["--apply", "--wheel", str(wheel), "--wheel-sha256", digest], host, env)
+    assert code == 0, output
+    assert any("--force-reinstall" in cmd for cmd in host.commands)  # the install path really ran
+    assert len(calls) == 1

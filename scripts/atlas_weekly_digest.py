@@ -138,7 +138,7 @@ def deliver_telegram(text):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"text": msg}, f, ensure_ascii=False)
     cmd = (f"cat '{tmp}' | ssh -o BatchMode=yes {VM} "
-           f"'curl -sf -m30 -X POST http://localhost:8788/api/telegram/test-send "
+           f"'curl -sSf -m30 -X POST http://localhost:8788/api/telegram/test-send "
            f"-H \"content-type: application/json\" --data-binary @-'")
     r = subprocess.run([BASH, "-lc", cmd], capture_output=True, text=True, timeout=90)
     try:

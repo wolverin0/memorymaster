@@ -100,7 +100,7 @@ def test_a_failed_delivery_is_not_reported_as_success(digest, monkeypatch, tmp_p
     monkeypatch.setattr(digest.sys, "argv", ["digest"])
     monkeypatch.delenv("DIGEST_NO_SEND", raising=False)
     assert digest.main() != 0
-    assert "curl -sf" in seen["cmd"][-1]
+    assert "curl -sSf" in seen["cmd"][-1]
 
 
 def test_the_script_names_no_maintainer_address_or_home():
