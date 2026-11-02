@@ -4,8 +4,8 @@
 - **Base:** `origin/main` at `d0997c5`
 - **Branch:** `claude/T2070-audit-memorymaster`
 - **Scope:** injection, authz/ownership, secrets in tree, unsafe deserialization,
-  SSRF, dependency advisories. No product code was changed; only one test file
-  and this report were added.
+  SSRF, dependency advisories. The audit commit changed no product code; the
+  follow-up fix for F-1a/F-1b (see "Fix status") touches the dashboard only.
 
 Severity scale: **High** = a lower-privileged caller reads or changes data the
 design says it must not; **Medium** = real exposure that needs a non-default
@@ -16,8 +16,8 @@ config or an already-trusted caller; **Low** = defence-in-depth gap;
 
 | ID | Severity | Location | Summary | Evidence |
 |---|---|---|---|---|
-| F-1a | **High** (token mode) / Medium (legacy loopback) | `memorymaster/surfaces/dashboard_read_models.py:42-44`, reached from `memorymaster/surfaces/dashboard.py:944` | `/api/claims` hands `visibility="sensitive"` claims from **any scope and any author** to the **viewer** role. `claims_payload` calls `service.list_claims()` with no `scope_allowlist` and no `requesting_agent`, and its only filter, `is_sensitive_claim()` (`core/security.py:810`), scans text for secret patterns and never reads `claim.visibility`. MCP `list_claims` (`mcp_server.py:2508`) passes the workspace scope allowlist and the request principal, so the same claim is hidden there. | Reproduced live: a viewer-token GET with default params returned the seeded sensitive claim. Defect record: `test_viewer_claims_list_hides_sensitive_visibility_claims` |
-| F-1b | **High** (token mode) / Medium | `memorymaster/surfaces/dashboard.py:369-373`, `:917` | `/claim/<id>/lineage` loads any claim by id through `store.get_claim()` and renders its title/text with no visibility, scope, tenant or sensitivity check. Ids are sequential, so a viewer can walk them all. | Reproduced live. Defect record: `test_viewer_lineage_page_hides_sensitive_visibility_claim` |
+| F-1a | **High** (token mode) / Medium (legacy loopback) | `memorymaster/surfaces/dashboard_read_models.py:42-44`, reached from `memorymaster/surfaces/dashboard.py:944` | `/api/claims` hands `visibility="sensitive"` claims from **any scope and any author** to the **viewer** role. `claims_payload` calls `service.list_claims()` with no `scope_allowlist` and no `requesting_agent`, and its only filter, `is_sensitive_claim()` (`core/security.py:810`), scans text for secret patterns and never reads `claim.visibility`. MCP `list_claims` (`mcp_server.py:2508`) passes the workspace scope allowlist and the request principal, so the same claim is hidden there. | Reproduced live: a viewer-token GET with default params returned the seeded sensitive claim. Fixed; regression test: `test_viewer_never_receives_non_public_claims` |
+| F-1b | **High** (token mode) / Medium | `memorymaster/surfaces/dashboard.py:369-373`, `:917` | `/claim/<id>/lineage` loads any claim by id through `store.get_claim()` and renders its title/text with no visibility, scope, tenant or sensitivity check. Ids are sequential, so a viewer can walk them all. | Reproduced live. Fixed; regression test: `test_viewer_lineage_of_non_public_claim_is_404_without_content` |
 | F-1c | Medium | `memorymaster/surfaces/dashboard_read_models.py:43`; `dashboard.py:948`, `:992` | Dashboard `allow_sensitive=1` query flag widens results directly. It skips `resolve_allow_sensitive_access()` (`core/security.py:280`), which is the env/config gate (`MEMORYMASTER_ALLOW_SENSITIVE_BYPASS`) that MCP and the service layer enforce. Any viewer can set it. Stored secrets are already redacted at ingest, so this mostly exposes redacted rows and the existence of sensitive claims, not raw values. | Defect record: `test_claims_payload_allow_sensitive_requires_bypass_gate` |
 | F-2 | Medium | `pyproject.toml:40` (`capture` extra: `pypdf>=6.21.2`), used by `memorymaster/capture/adapters.py:410` | The declared floor admits 7 known pypdf advisories: CVE-2026-119203…119209, fixed in 6.21.3 and 6.21.4. The capture path parses inbox PDFs, so a malformed PDF reaches the vulnerable parser. Recommendation: raise the floor to `pypdf>=6.21.4`. I did not make that change here because it is a dependency/behaviour change outside this audit's scope. | `pip-audit --no-deps -r <floors>` against every declared minimum. Only pypdf was flagged. |
 | F-3 | Medium | `memorymaster/surfaces/mcp_path_policy.py:94`, `:125` | The MCP `db`/`workspace` allowlist fails **open**: with `MEMORYMASTER_MCP_DB_ALLOWLIST` unset (the default), a stdio or local-trusted HTTP caller can point any tool at any SQLite path the process can write, including creating new files. This is documented back-compat. Team mode is not affected: `_normalize_team_arguments` (`mcp_server.py:937`) pins db/workspace/scope to the authenticated context. Also, `fnmatch` `*` matches `/` (`:77`), so `/a/*/memorymaster.db` also allows deeper paths. | Code reading; existing coverage in `tests/test_mcp_path_policy.py` |
@@ -44,7 +44,7 @@ All tests are in `tests/test_t2070_security_audit.py` and use `tmp_path` databas
 
 **Regression locks.** These cover guards that work today but had no direct test, and must keep passing:
 
-- `test_viewer_service_gated_routes_do_not_leak_sensitive_claim` (×5): `/api/review-queue?allow_sensitive=1`, `/api/retrieval?...&allow_sensitive=1`, `/api/events`, `/api/timeline` and `/api/conflicts` do not leak a sensitive claim to a viewer.
+- `test_viewer_never_receives_non_public_claims` (x19 routes), `test_viewer_still_sees_public_claims`, `test_operator_and_legacy_mode_still_see_non_public_claims`, `test_viewer_lineage_of_non_public_claim_is_404_without_content`, `test_viewer_lineage_of_public_claim_omits_non_public_neighbours`, `test_lineage_refuses_claim_of_another_tenant`: the F-1a/F-1b regression tests. They were `xfail` defect records when the audit was written and are plain tests since the fix. The seed now covers every claim state a route reads (candidate, conflicted+pinned, confirmed, superseded chains); the original single `candidate` seed let `/api/retrieval`, `/api/conflicts` and `/api/review-queue` pass for the wrong reason.
 - `test_viewer_cannot_open_operator_stream`: the viewer gets 403 on the operator SSE route.
 - `test_viewer_cannot_post_to_routes_missing_from_operator_route_list` (×2): POSTs to routes absent from `POST_OPERATOR_ROUTES` are still operator-only.
 - `test_dashboard_rejects_foreign_host_header`: the DNS-rebinding guard works.
@@ -57,12 +57,10 @@ All tests are in `tests/test_t2070_security_audit.py` and use `tmp_path` databas
 
 **Defect records**, marked `xfail(strict=True)`. Each one asserts the *secure* behaviour for a confirmed finding. They xfail today. When someone fixes the defect, the test XPASSes, strict mode turns that into a failure, and that failure is the cue to remove the marker:
 
-- `test_viewer_claims_list_hides_sensitive_visibility_claims` (F-1a)
-- `test_viewer_lineage_page_hides_sensitive_visibility_claim` (F-1b)
 - `test_claims_payload_allow_sensitive_requires_bypass_gate` (F-1c)
 - `test_open_dashboard_refuses_non_loopback_host` (F-4)
 
-I ran all four with `--runxfail`, and each fails on its assertion, not on a setup error.
+I ran both remaining records with `--runxfail`, and each fails on its assertion, not on a setup error.
 
 ## How to run
 
@@ -75,7 +73,24 @@ ruff check tests/test_t2070_security_audit.py
 python scripts/bulk_check.py --fast             # fast merge gates; full suite: drop --fast
 ```
 
-Results on this branch:
+## Fix status (F-1a, F-1b)
+
+Both reproduced on unpatched code (19 of the new tests failed before the fix, all pass after). Root cause: the
+dashboard read paths called the service/store with no `requesting_agent`, so the per-agent visibility rule
+(`_filter_agent_visibility`: public, or authored by the requester) never ran, and the lineage page loaded by id
+through `store.get_claim` (no visibility, no tenant). The same gap existed on `/api/conflicts` (store-level read),
+`/api/review-queue`, `/api/v1/review-queue` (raw SQL), `/api/retrieval`, `/api/recall-analysis` and `/api/namespaces`.
+
+Fix: a token carries a role, not an identity. `dashboard_auth.requesting_agent_for()` maps the viewer role to the
+non-author principal `dashboard:viewer`, `_enforce_auth` stores it per request, and every claim read passes it through
+the existing visibility predicate. Operator and legacy (no-token) mode pass `None`, which is unchanged behaviour. An
+unauthorized lineage id returns the same 404 page as a missing id. The lineage loader now also enforces `tenant_id`
+for every role. Scope is deliberately not used as a viewer boundary: tokens have no scope grant and the dashboard is a
+whole-database view.
+
+Open: F-1c (`allow_sensitive` query flag) and F-4 remain defect records.
+
+Results on this branch (before the fix):
 
 - The new file: 20 passed, 4 xfailed.
 - The new file plus the neighbouring suites (`test_public_demo`, `test_dashboard_auth`, `test_dashboard_lineage`, `test_webhook*`, `test_mcp_helpers`, `test_steward_classifier`, `test_mcp_path_policy`, `test_mcp_http_entrypoint`): 152 passed, 2 skipped, 4 xfailed.

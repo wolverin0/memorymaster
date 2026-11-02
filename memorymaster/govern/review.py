@@ -114,6 +114,7 @@ def build_review_queue(
     include_conflicted: bool = True,
     include_sensitive: bool = False,
     flagged_claim_ids: set[int] | None = None,
+    requesting_agent: str | None = None,
 ) -> list[ReviewItem]:
     if limit <= 0:
         return []
@@ -126,6 +127,11 @@ def build_review_queue(
         include_conflicted=include_conflicted,
         flagged_claim_ids=flagged,
     )
+    # Same per-agent visibility predicate as every service read (T-2070): a caller
+    # that is not the author never sees private/sensitive claims.
+    from memorymaster.core.service import _filter_agent_visibility
+
+    claims = _filter_agent_visibility(claims, requesting_agent)
     now = datetime.now(timezone.utc)
     items: list[ReviewItem] = []
     seen: set[int] = set()

@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from memorymaster.core.security import is_sensitive_claim
+from memorymaster.core.service import _filter_agent_visibility
 from memorymaster.govern.review import build_review_queue, queue_to_dicts
 from memorymaster.govern.steward import list_steward_proposals
 
@@ -38,8 +39,12 @@ def claims_payload(
     include_archived: bool,
     allow_sensitive: bool,
     serialize: Serializer,
+    requesting_agent: str | None = None,
 ) -> dict[str, Any]:
-    claims = service.list_claims(status=status, limit=limit, include_archived=include_archived)
+    claims = service.list_claims(
+        status=status, limit=limit, include_archived=include_archived,
+        requesting_agent=requesting_agent,
+    )
     if not allow_sensitive:
         claims = [claim for claim in claims if not is_sensitive_claim(claim)]
     return {"ok": True, "rows": len(claims), "claims": [serialize(claim) for claim in claims]}
@@ -64,8 +69,12 @@ def conflicts_payload(
     limit: int,
     include_stale: bool,
     serialize: Serializer,
+    requesting_agent: str | None = None,
 ) -> dict[str, Any]:
-    conflicted = service.list_claims(status="conflicted", limit=limit, include_archived=False)
+    conflicted = service.list_claims(
+        status="conflicted", limit=limit, include_archived=False,
+        requesting_agent=requesting_agent,
+    )
     if not conflicted:
         return {"ok": True, "rows": 0, "groups": []}
     statuses = ["confirmed", "conflicted"] + (["stale"] if include_stale else [])
@@ -73,6 +82,8 @@ def conflicts_payload(
         limit=max(limit * 12, 200), status_in=statuses,
         include_archived=False, include_citations=True,
     )
+    # store-level read: bypasses the service, so apply the visibility rule here
+    active = _filter_agent_visibility(active, requesting_agent)
     grouped: dict[tuple[str, str, str], list[Any]] = {}
     for claim in conflicted:
         grouped.setdefault(_claim_key(claim), [])
@@ -109,6 +120,7 @@ def review_queue_payload(
     allow_sensitive: bool,
     exclude_reviewed: bool,
     exclude_suppressed: bool,
+    requesting_agent: str | None = None,
 ) -> dict[str, Any]:
     # Las propuestas se calculan ANTES de armar la cola: una claim confirmed
     # con propuesta pendiente ("flagged") pertenece a la cola aunque su status
@@ -117,7 +129,7 @@ def review_queue_payload(
     items = build_review_queue(
         service, limit=limit, include_stale=include_stale,
         include_conflicted=include_conflicted, include_sensitive=allow_sensitive,
-        flagged_claim_ids=set(proposals),
+        flagged_claim_ids=set(proposals), requesting_agent=requesting_agent,
     )
     flags = triage_flags(service, max(limit * 20, 200))
     out = _apply_triage_filters(queue_to_dicts(items), flags, exclude_reviewed, exclude_suppressed)
@@ -182,9 +194,14 @@ def _apply_triage_filters(
 
 
 def mobile_review_queue_payload(
-    service: Any, *, limit: int, scope: str | None, cursor: int | None
+    service: Any, *, limit: int, scope: str | None, cursor: int | None,
+    requesting_agent: str | None = None,
 ) -> dict[str, Any]:
     clauses, params = ["archived_at IS NULL"], []
+    if requesting_agent:
+        # raw SQL: same predicate as _filter_agent_visibility (public, or own)
+        clauses.append("(visibility = 'public' OR source_agent = ?)")
+        params.append(requesting_agent)
     if scope is not None:
         clauses.append("scope = ?")
         params.append(scope)
@@ -234,8 +251,8 @@ def audit_payload(service: Any, *, limit: int, serialize: Serializer) -> dict[st
     return {"ok": True, "rows": min(limit, len(rows)), "events": rows[:limit]}
 
 
-def namespaces_payload(service: Any, *, limit: int) -> dict[str, Any]:
-    claims = service.list_claims(limit=limit, include_archived=False)
+def namespaces_payload(service: Any, *, limit: int, requesting_agent: str | None = None) -> dict[str, Any]:
+    claims = service.list_claims(limit=limit, include_archived=False, requesting_agent=requesting_agent)
     buckets: dict[str, list[Any]] = {"facts": [], "decisions": [], "workflows": [], "project_overview": []}
     for claim in claims:
         bucket = _claim_namespace(claim)

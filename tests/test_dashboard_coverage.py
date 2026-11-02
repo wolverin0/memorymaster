@@ -99,8 +99,9 @@ class FakeService:
         status: str | None = None,
         limit: int = 50,
         include_archived: bool = False,
+        requesting_agent: str | None = None,
     ) -> list[FakeClaim]:
-        del include_archived
+        del include_archived, requesting_agent
         rows = [claim for claim in self.claims if status is None or claim.status == status]
         return rows[:limit]
 

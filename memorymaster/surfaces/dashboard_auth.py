@@ -38,6 +38,19 @@ class DashboardRole(str, Enum):
     OPERATOR = "operator"
 
 
+# A token carries a role, not an identity, so a viewer is a principal that
+# authored no claim: the service's per-agent visibility rule (public, or authored
+# by the requester) then leaves it with public claims only (T-2070 F-1).
+# shortcut: one shared viewer principal, no per-token identity; upgrade when
+# tokens gain an owner or a scope grant.
+VIEWER_PRINCIPAL = "dashboard:viewer"
+
+
+def requesting_agent_for(role: "DashboardRole | None") -> str | None:
+    """Principal to pass as ``requesting_agent``; ``None`` = unrestricted (operator/legacy)."""
+    return VIEWER_PRINCIPAL if role == DashboardRole.VIEWER else None
+
+
 # Routes that require operator role regardless of HTTP method. POST routes
 # always require operator role separately. This list captures GET routes that
 # are mutating-adjacent (start/stop operator control, stream that may carry

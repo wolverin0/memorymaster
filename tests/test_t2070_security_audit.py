@@ -25,6 +25,7 @@ from memorymaster.core.models import CitationInput
 VIEWER = {"Authorization": "Bearer t2070-viewer"}
 OPERATOR = {"Authorization": "Bearer t2070-operator"}
 MARKER = "T2070VISMARKER"
+PUBLIC_MARKER = "T2070PUBLICOK"
 
 
 @pytest.fixture(autouse=True)
@@ -49,18 +50,17 @@ def _clean_env(monkeypatch) -> Iterator[None]:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def dashboard(monkeypatch, tmp_path):
-    """Token-mode dashboard on an ephemeral loopback port.
+def _start_dashboard(monkeypatch, tmp_path, *, tokens: bool):
+    """Dashboard on an ephemeral loopback port, seeded with non-public claims.
 
-    Seeds one ``visibility="sensitive"`` claim authored by another agent in a
-    scope that is not the dashboard workspace's scope, plus one claim whose
-    subject/text carry HTML for the escaping lock.
+    Every hidden claim carries its own marker so a leak names the claim.
+    ``zebrafact`` is shared so text retrieval can match all of them.
     """
     from memorymaster.surfaces.dashboard import create_dashboard_server
 
-    monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_OPERATOR", "t2070-operator")
-    monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_VIEWER", "t2070-viewer")
+    if tokens:
+        monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_OPERATOR", "t2070-operator")
+        monkeypatch.setenv("MEMORYMASTER_DASHBOARD_TOKEN_VIEWER", "t2070-viewer")
     workspace = tmp_path / "ws"
     workspace.mkdir()
     server = create_dashboard_server(
@@ -70,32 +70,88 @@ def dashboard(monkeypatch, tmp_path):
         port=0,
         operator_log_jsonl=tmp_path / "op.jsonl",
     )
-    server.service.init_db()
-    sensitive = server.service.ingest(
-        f"{MARKER} payroll arrangement for the other team",
-        [CitationInput(source="test://t2070")],
-        scope="project:other-team",
-        visibility="sensitive",
-        source_agent="alice",
+    svc = server.service
+    svc.init_db()
+    cite = [CitationInput(source="test://t2070")]
+
+    def seed(text, *, status=None, pinned=False, **kw):
+        kw.setdefault("scope", "project:ws")
+        kw.setdefault("source_agent", "alice")
+        claim = svc.ingest(f"zebrafact {text}", cite, **kw)
+        with svc.store.connect() as conn:
+            conn.execute(
+                "UPDATE claims SET status = COALESCE(?, status), pinned = ? WHERE id = ?",
+                (status, int(pinned), claim.id),
+            )
+            conn.commit()
+        return claim.id
+
+    ids = {}
+    # F-1a: another team's sensitive claim (cross-scope), plus same-scope
+    # private/sensitive claims by another agent in every state a route reads.
+    ids["sensitive"] = seed(f"{MARKER} payroll", scope="project:other-team", visibility="sensitive")
+    ids["private_conflicted"] = seed(
+        f"{MARKER}PRIVCONF", visibility="private", status="conflicted", pinned=True,
+        subject=f"{MARKER}privsubject", predicate="has", object_value="privobj",
     )
-    html_claim = server.service.ingest(
+    ids["sensitive_confirmed"] = seed(
+        f"{MARKER}SENSCONF", visibility="sensitive", status="confirmed",
+        subject=f"{MARKER}senssubject", predicate="has", object_value="sensobj",
+    )
+    ids["public"] = seed(
+        f"{PUBLIC_MARKER} public control", status="confirmed", source_agent="tester",
+        subject=f"{PUBLIC_MARKER}pubsubject", predicate="has", object_value="pubobj",
+    )
+    # F-1b neighbours: a public claim superseded by a private one, and a
+    # private claim superseded by a public one (chains cross the boundary).
+    ids["public_head"] = seed(f"{PUBLIC_MARKER} chain head", status="confirmed", source_agent="tester")
+    ids["private_successor"] = seed(f"{MARKER}SUCC", visibility="private", status="confirmed")
+    ids["private_predecessor"] = seed(f"{MARKER}PRED", visibility="private", status="superseded")
+    ids["public_tail"] = seed(f"{PUBLIC_MARKER} chain tail", status="confirmed", source_agent="tester")
+    with svc.store.connect() as conn:
+        conn.executemany(
+            "UPDATE claims SET replaced_by_claim_id = ? WHERE id = ?",
+            [(ids["private_successor"], ids["public_head"]), (ids["public_tail"], ids["private_predecessor"])],
+        )
+        conn.commit()
+    ids["html"] = seed(
         "lineage <script>alert('t2070')</script> text",
-        [CitationInput(source="test://t2070")],
-        scope="project:ws",
-        subject="<img src=x onerror=alert(1)>",
-        predicate="has",
-        object_value="<b>bold</b>",
+        subject="<img src=x onerror=alert(1)>", predicate="has", object_value="<b>bold</b>",
         source_agent="tester",
     )
     host, port = server.server_address[:2]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
+    return server, thread, {
+        "host": host, "port": port, "ids": ids, "service": svc,
+        "sensitive_id": ids["sensitive"], "html_id": ids["html"],
+    }
+
+
+def _stop(server, thread) -> None:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=2)
+
+
+@pytest.fixture
+def dashboard(monkeypatch, tmp_path):
+    """Token-mode dashboard (viewer + operator roles)."""
+    server, thread, info = _start_dashboard(monkeypatch, tmp_path, tokens=True)
     try:
-        yield {"host": host, "port": port, "sensitive_id": sensitive.id, "html_id": html_claim.id}
+        yield info
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        _stop(server, thread)
+
+
+@pytest.fixture
+def legacy_dashboard(monkeypatch, tmp_path):
+    """Legacy loopback mode: no tokens configured, every caller is the operator."""
+    server, thread, info = _start_dashboard(monkeypatch, tmp_path, tokens=False)
+    try:
+        yield info
+    finally:
+        _stop(server, thread)
 
 
 def _request(d, method: str, path: str, headers: dict | None = None, body: bytes | None = None):
@@ -108,26 +164,108 @@ def _request(d, method: str, path: str, headers: dict | None = None, body: bytes
         conn.close()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="AUDIT-T2070 F-1a: /api/claims returns visibility=sensitive claims from other "
-    "scopes/agents to the viewer role (no scope_allowlist, no requesting_agent, "
-    "is_sensitive_claim() only scans text).",
-)
-def test_viewer_claims_list_hides_sensitive_visibility_claims(dashboard):
-    status, body = _request(dashboard, "GET", "/api/claims", VIEWER)
+# Every dashboard GET route that can carry claim content. Query strings widen the
+# result as far as a viewer can (allow_sensitive, include_*, viewer-chosen scopes).
+_CLAIM_ROUTES = [
+    "/api/claims",
+    "/api/claims?status=confirmed&limit=500",
+    "/api/claims?allow_sensitive=1&include_archived=1&limit=500",
+    "/api/conflicts?include_stale=1",
+    "/api/review-queue?allow_sensitive=1&include_stale=1",
+    "/api/v1/review-queue",
+    "/api/retrieval?query=zebrafact&mode=legacy&allow_sensitive=1&include_stale=1&include_conflicted=1",
+    "/api/retrieval?query=zebrafact&mode=legacy&scope_allowlist=project:other-team,project:ws",
+    "/api/recall-analysis?query=zebrafact&mode=legacy&allow_sensitive=1&scope_allowlist=project:other-team,project:ws",
+    "/api/namespaces",
+    "/api/provenance",
+    "/api/events",
+    "/api/timeline",
+    "/api/audit",
+    "/api/decision-summary",
+    "/api/observability",
+    "/api/session-stats",
+    "/api/graph-observations",
+    "/api/capture-inbox",
+]
+
+
+@pytest.mark.parametrize("path", _CLAIM_ROUTES)
+def test_viewer_never_receives_non_public_claims(dashboard, path):
+    """F-1a: private/sensitive claims of other agents stay out of every viewer read.
+
+    The hidden claims cover cross-scope candidate, and same-scope
+    conflicted+pinned (review queue, conflicts) and confirmed (retrieval,
+    namespaces) states, so no route passes only because its status filter
+    excluded the seed.
+    """
+    status, body = _request(dashboard, "GET", path, VIEWER)
     assert status == 200
     assert MARKER.encode() not in body
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="AUDIT-T2070 F-1b: /claim/<id>/lineage renders any claim by id with no "
-    "visibility, scope or sensitivity check.",
+def test_viewer_still_sees_public_claims(dashboard):
+    """Positive control: the viewer is filtered, not blanked."""
+    for path in (
+        "/api/claims",
+        "/api/retrieval?query=zebrafact&mode=legacy",
+        "/api/namespaces",
+    ):
+        status, body = _request(dashboard, "GET", path, VIEWER)
+        assert status == 200
+        assert PUBLIC_MARKER.encode() in body, path
+    status, body = _request(dashboard, "GET", f"/claim/{dashboard['ids']['public']}/lineage", VIEWER)
+    assert status == 200
+    assert PUBLIC_MARKER.encode() in body
+
+
+@pytest.mark.parametrize("fixture_name,headers", [("dashboard", OPERATOR), ("legacy_dashboard", {})])
+def test_operator_and_legacy_mode_still_see_non_public_claims(request, fixture_name, headers):
+    """Local (legacy) and operator behaviour is unchanged."""
+    d = request.getfixturevalue(fixture_name)
+    status, body = _request(d, "GET", "/api/claims?limit=500", headers)
+    assert status == 200
+    assert body.count(MARKER.encode()) >= 4
+    status, body = _request(d, "GET", f"/claim/{d['ids']['sensitive']}/lineage", headers)
+    assert status == 200
+    assert MARKER.encode() in body
+
+
+@pytest.mark.parametrize(
+    "claim_key",
+    ["sensitive", "private_conflicted", "sensitive_confirmed", "private_successor", "private_predecessor"],
 )
-def test_viewer_lineage_page_hides_sensitive_visibility_claim(dashboard):
-    status, body = _request(dashboard, "GET", f"/claim/{dashboard['sensitive_id']}/lineage", VIEWER)
-    assert MARKER.encode() not in body or status in (403, 404)
+def test_viewer_lineage_of_non_public_claim_is_404_without_content(dashboard, claim_key):
+    """F-1b: unauthorized lineage is indistinguishable from a missing claim."""
+    cid = dashboard["ids"][claim_key]
+    status, body = _request(dashboard, "GET", f"/claim/{cid}/lineage", VIEWER)
+    assert status == 404
+    assert MARKER.encode() not in body
+    missing_status, missing_body = _request(dashboard, "GET", "/claim/999999/lineage", VIEWER)
+    assert missing_status == 404
+    # Same page shape as a missing id (only the number differs): no existence oracle.
+    assert body.replace(f"#{cid} ".encode(), b"#N ") == missing_body.replace(b"#999999 ", b"#N ")
+
+
+@pytest.mark.parametrize("claim_key", ["public_head", "public_tail"])
+def test_viewer_lineage_of_public_claim_omits_non_public_neighbours(dashboard, claim_key):
+    """F-1b: a lineage chain that crosses the visibility boundary is cut there."""
+    cid = dashboard["ids"][claim_key]
+    status, body = _request(dashboard, "GET", f"/claim/{cid}/lineage", VIEWER)
+    assert status == 200
+    assert PUBLIC_MARKER.encode() in body
+    assert MARKER.encode() not in body
+
+
+def test_lineage_refuses_claim_of_another_tenant(dashboard):
+    """F-1b: store.get_claim ignores tenant_id; the dashboard must not."""
+    svc = dashboard["service"]
+    svc.tenant_id = "tenant-a"
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET tenant_id = 'tenant-b' WHERE id = ?", (dashboard["ids"]["public"],))
+        conn.commit()
+    status, body = _request(dashboard, "GET", f"/claim/{dashboard['ids']['public']}/lineage", OPERATOR)
+    assert status == 404
+    assert PUBLIC_MARKER.encode() not in body
 
 
 @dataclass
@@ -169,23 +307,6 @@ def test_claims_payload_allow_sensitive_requires_bypass_gate():
     out = claims_payload(service, status=None, limit=10, include_archived=False,
                          allow_sensitive=True, serialize=lambda c: {"id": c.id})
     assert out["claims"] == []
-
-
-@pytest.mark.parametrize(
-    "path",
-    [
-        "/api/review-queue?allow_sensitive=1",
-        f"/api/retrieval?q={MARKER}+payroll&allow_sensitive=1",
-        "/api/events",
-        "/api/timeline",
-        "/api/conflicts",
-    ],
-)
-def test_viewer_service_gated_routes_do_not_leak_sensitive_claim(dashboard, path):
-    """Lock: routes that go through the service query gate stay clean."""
-    status, body = _request(dashboard, "GET", path, VIEWER)
-    assert status == 200
-    assert MARKER.encode() not in body
 
 
 def test_viewer_cannot_open_operator_stream(dashboard):
