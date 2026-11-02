@@ -69,7 +69,12 @@ pytest "tests/test_[r-z]*.py" -m "not ml"
 
 All tests must pass before submitting a PR. There is no hosted CI: run
 `python scripts/bulk_check.py` (fast gates plus `pytest tests/ -m "not ml"` in
-parallel) on the branch; it must exit 0.
+parallel) on the branch; it must exit 0. The full suite refuses to start unless it
+runs under the host's heavy-job semaphore (parallel workers exhaust RAM next to
+other heavy jobs): `node "<Py Apps>/wezbridge/scripts/heavy-slot.cjs" run --label
+bulk-check -- env MEMORYMASTER_HEAVY_SLOT=1 python scripts/bulk_check.py`. On a
+machine without that semaphore set `MEMORYMASTER_BULK_NO_SLOT=1` instead
+(`--fast` needs neither).
 
 ## Code Style
 
