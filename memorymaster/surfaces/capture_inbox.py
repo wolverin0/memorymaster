@@ -16,6 +16,7 @@ from urllib.parse import parse_qs
 
 from memorymaster.capture.coverage import capture_coverage
 from memorymaster.core.service import authorize_claims
+from memorymaster.surfaces import dashboard_auth
 
 
 CAPTURE_INBOX_SECTION_HTML = """<section class="wide">
@@ -234,7 +235,7 @@ def write_capture_inbox_response(handler: Any, query_string: str) -> None:
     if limit < 1 or limit > 100:
         raise ValueError("Expected integer in range [1, 100]")
     handler._write_json(capture_inbox_payload(
-        handler._server.service, limit=limit, requesting_agent=handler._requesting_agent,
+        handler._server.service, limit=limit, requesting_agent=dashboard_auth.principal_of(handler),
     ))
 
 

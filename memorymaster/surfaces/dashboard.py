@@ -961,7 +961,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _handle_claim_lineage(self, claim_id: int) -> None:
-        target = _get_lineage_claim(self._server.service, claim_id, self._requesting_agent)
+        target = _get_lineage_claim(self._server.service, claim_id, dashboard_auth.principal_of(self))
         if target is None:
             self._write_html(
                 "<!doctype html><html><head><title>Claim not found</title></head>"
@@ -969,7 +969,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 status=HTTPStatus.NOT_FOUND,
             )
             return
-        nodes, edges = _build_claim_lineage(self._server.service, target, self._requesting_agent)
+        nodes, edges = _build_claim_lineage(self._server.service, target, dashboard_auth.principal_of(self))
         self._write_html(_render_claim_lineage_html(target, nodes, edges))
 
     def _write_dashboard(self) -> None:
@@ -996,7 +996,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self._write_json(claims_payload(
             self._server.service, status=status, limit=limit,
             include_archived=include_archived, allow_sensitive=allow_sensitive,
-            serialize=_claim_to_dict, requesting_agent=self._requesting_agent,
+            serialize=_claim_to_dict, requesting_agent=dashboard_auth.principal_of(self),
         ))
 
     def _handle_events(self, query_string: str) -> None:
@@ -1027,7 +1027,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         include_stale = _parse_bool(_first_query_value(query, "include_stale"), default=False)
         self._write_json(conflicts_payload(
             self._server.service, limit=limit, include_stale=include_stale,
-            serialize=_claim_to_dict, requesting_agent=self._requesting_agent,
+            serialize=_claim_to_dict, requesting_agent=dashboard_auth.principal_of(self),
         ))
 
     def _handle_review_queue(self, query_string: str) -> None:
@@ -1042,7 +1042,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._server.service, limit=limit, include_stale=include_stale,
             include_conflicted=include_conflicted, allow_sensitive=allow_sensitive,
             exclude_reviewed=exclude_reviewed, exclude_suppressed=exclude_suppressed,
-            requesting_agent=self._requesting_agent,
+            requesting_agent=dashboard_auth.principal_of(self),
         ))
 
     def _handle_mobile_review_queue(self, query_string: str) -> None:
@@ -1052,7 +1052,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         cursor = _parse_review_queue_cursor(_first_query_value(query, "cursor"))
         self._write_json(mobile_review_queue_payload(
             self._server.service, limit=limit, scope=scope, cursor=cursor,
-            requesting_agent=self._requesting_agent,
+            requesting_agent=dashboard_auth.principal_of(self),
         ))
 
     def _handle_action_proposals(self, query_string: str) -> None:
@@ -1081,7 +1081,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         include_stale = params["include_stale"]
         include_conflicted = params["include_conflicted"]
         allow_sensitive = effective_allow_sensitive(
-            params["allow_sensitive"], self._requesting_agent, "dashboard.retrieval",
+            params["allow_sensitive"], dashboard_auth.principal_of(self), "dashboard.retrieval",
         )
         scope_allowlist = params["scope_allowlist"]
 
@@ -1097,9 +1097,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         # of silently retrying unrestricted. Both MemoryService methods take it, and
         # authorize while paging, so private rows cannot use up the limit.
         def bind(method: Any) -> Any:
-            if self._requesting_agent is None:
+            if dashboard_auth.principal_of(self) is None:
                 return method
-            return functools.partial(method, requesting_agent=self._requesting_agent)
+            return functools.partial(method, requesting_agent=dashboard_auth.principal_of(self))
 
         if callable(query_rows_fn):
             rows_data = _call_retrieval_method_with_fallback(bind(query_rows_fn), text, attempts_with_scope)
@@ -1109,7 +1109,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 bind(self._server.service.query), text, attempts_with_scope,
             )
         # Defence in depth only; the service already applied the rule before its limit.
-        claims = _filter_agent_visibility(claims, self._requesting_agent)
+        claims = _filter_agent_visibility(claims, dashboard_auth.principal_of(self))
         if scope_allowlist:
             claims = [claim for claim in claims if claim.scope in scope_allowlist]
         triage_flags = self._triage_flags(max(limit * 30, 200))
@@ -1145,10 +1145,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             include_conflicted=params["include_conflicted"],
             include_candidates=include_candidates,
             allow_sensitive=effective_allow_sensitive(
-                params["allow_sensitive"], self._requesting_agent, "dashboard.recall_analysis",
+                params["allow_sensitive"], dashboard_auth.principal_of(self), "dashboard.recall_analysis",
             ),
             scope_allowlist=params["scope_allowlist"] or None,
-            requesting_agent=self._requesting_agent,
+            requesting_agent=dashboard_auth.principal_of(self),
         )
         self._write_json({"ok": True, **analysis})
 
@@ -1161,7 +1161,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=200, minimum=1, maximum=5000)
         self._write_json(namespaces_payload(
-            self._server.service, limit=limit, requesting_agent=self._requesting_agent,
+            self._server.service, limit=limit, requesting_agent=dashboard_auth.principal_of(self),
         ))
 
     def _handle_provenance(self, query_string: str) -> None:
@@ -1236,7 +1236,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             include_stale=True,
             include_conflicted=True,
             include_sensitive=False,
-            requesting_agent=self._requesting_agent,
+            requesting_agent=dashboard_auth.principal_of(self),
         )
         triage_flags = self._triage_flags(max(queue_limit * 20, 200))
         status_counts: Counter[str] = Counter()
