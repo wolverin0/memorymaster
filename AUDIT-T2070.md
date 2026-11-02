@@ -102,7 +102,11 @@ Known limit of the fix: `query_rows` runs `require_permission("dashboard:viewer"
 
 The POST-rejection tests print a harmless `BrokenPipeError` from `socketserver` on stderr. That happens because the server answers 403 without draining the request body.
 
+Review round (head after 032b7d9): non-public rows used to be dropped after the store applied its limit, so a flood of private claims could leave a viewer with fewer or zero public rows. `MemoryService.list_claims` (for a restricted caller), the review-queue builder, the conflict groups (which also gained the missing tenant filter) and the lineage candidate read now page with `page_authorized_lexical`, the same window-growing helper the lexical recall path uses. `/api/capture-inbox` lists derived claims by id and now applies the same rule. A missing or unknown role maps to the restricted principal (only the operator role is unrestricted), and the principal checks use `is not None`.
+
 ## What I did not check
+
+- `/api/graph-observations` reads system-generated observation claims straight from SQL and is not covered by a test: seeding it needs the graph pipeline. `/api/provenance` returns per-agent counts (agent names included), not claim content. The raw capture evidence payloads on `/api/capture-inbox` are governed by source sensitivity, not by claim visibility, and were not changed.
 
 - The PostgreSQL store and its RLS migrations against a live database. I only read them for SQL construction.
 - Qdrant, Kuzu and the embedding providers at runtime.

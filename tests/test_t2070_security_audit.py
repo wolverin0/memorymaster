@@ -125,7 +125,31 @@ def _start_dashboard(monkeypatch, tmp_path, *, tokens: bool):
     return server, thread, {
         "host": host, "port": port, "ids": ids, "service": svc,
         "sensitive_id": ids["sensitive"], "html_id": ids["html"],
+        "db": tmp_path / "dash.db", "workspace": workspace,
     }
+
+
+def _seed_many(d, count, text, *, status=None, pinned=False, confidence=0.99, **kw):
+    """Bulk-seed claims that outrank every base seed (confidence DESC ordering)."""
+    svc = d["service"]
+    kw.setdefault("scope", "project:ws")
+    kw.setdefault("visibility", "private")
+    # One author per row: a non-public confirmed (agent, subject, predicate, scope)
+    # tuple is unique, and many authors is also the realistic flood.
+    ids = [
+        svc.ingest(
+            f"zebrafact {text} {i}", [CitationInput(source="test://t2070")],
+            source_agent=f"flood{i}", **kw,
+        ).id
+        for i in range(count)
+    ]
+    with svc.store.connect() as conn:
+        conn.executemany(
+            "UPDATE claims SET status = COALESCE(?, status), pinned = ?, confidence = ? WHERE id = ?",
+            [(status, int(pinned), confidence, cid) for cid in ids],
+        )
+        conn.commit()
+    return ids
 
 
 def _stop(server, thread) -> None:
@@ -184,8 +208,10 @@ _CLAIM_ROUTES = [
     "/api/decision-summary",
     "/api/observability",
     "/api/session-stats",
-    "/api/graph-observations",
     "/api/capture-inbox",
+    # /api/graph-observations is not swept: it reads system-generated observation
+    # claims whose seeding needs the graph pipeline, so a sweep entry would be
+    # vacuous. See AUDIT-T2070.md "What I did not check".
 ]
 
 
@@ -266,6 +292,162 @@ def test_lineage_refuses_claim_of_another_tenant(dashboard):
     status, body = _request(dashboard, "GET", f"/claim/{dashboard['ids']['public']}/lineage", OPERATOR)
     assert status == 404
     assert PUBLIC_MARKER.encode() not in body
+
+
+CONFLICT_KW = {"subject": "csubj", "predicate": "has", "scope": "project:ws"}
+
+
+def _conflict_pair(d):
+    """Two public claims that conflict (same subject/predicate/scope), plus a
+    private conflicted and a private confirmed claim on the same key."""
+    svc = d["service"]
+    cite = [CitationInput(source="test://t2070")]
+    ids = {}
+    for name, value, vis, agent, status in (
+        ("pub_a", f"{PUBLIC_MARKER}CA", "public", "tester", "conflicted"),
+        ("pub_b", f"{PUBLIC_MARKER}CB", "public", "tester", "confirmed"),
+        ("priv_a", f"{MARKER}CPRIVA", "private", "alice", "conflicted"),
+        ("priv_b", f"{MARKER}CPRIVB", "private", "alice", "confirmed"),
+    ):
+        ids[name] = svc.ingest(
+            f"zebrafact conflict {value}", cite, object_value=value, visibility=vis,
+            source_agent=agent, **CONFLICT_KW,
+        ).id
+        with svc.store.connect() as conn:
+            conn.execute("UPDATE claims SET status = ? WHERE id = ?", (status, ids[name]))
+            conn.commit()
+    return ids
+
+
+def test_viewer_conflict_group_keeps_public_pair_and_drops_private_rows(dashboard):
+    """Two public claims conflict next to private ones: the group is the public pair.
+
+    The base seed has no conflicting pair, so /api/conflicts used to return before
+    the visibility filter on the grouped rows ran at all.
+    """
+    _conflict_pair(dashboard)
+    status, body = _request(dashboard, "GET", "/api/conflicts?include_stale=1", VIEWER)
+    assert status == 200
+    assert f"{PUBLIC_MARKER}CA".encode() in body and f"{PUBLIC_MARKER}CB".encode() in body
+    assert MARKER.encode() not in body
+    status, body = _request(dashboard, "GET", "/api/conflicts?include_stale=1", OPERATOR)
+    assert f"{MARKER}CPRIVB".encode() in body
+
+
+def test_conflict_groups_stay_inside_the_service_tenant(dashboard):
+    """The grouped rows come from a store-level read: it must carry the tenant filter."""
+    svc = dashboard["service"]
+    ids = _conflict_pair(dashboard)
+    svc.tenant_id = "tenant-a"
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET tenant_id = 'tenant-a' WHERE id = ?", (ids["pub_a"],))
+        conn.execute("UPDATE claims SET tenant_id = 'tenant-b' WHERE id = ?", (ids["pub_b"],))
+        conn.commit()
+    status, body = _request(dashboard, "GET", "/api/conflicts?include_stale=1", OPERATOR)
+    assert status == 200
+    assert f"{PUBLIC_MARKER}CA".encode() in body
+    assert f"{PUBLIC_MARKER}CB".encode() not in body
+
+
+def test_private_conflicted_rows_cannot_fill_the_conflict_limit(dashboard):
+    """Truncation: newer high-confidence private conflicts must not hide the public one."""
+    _conflict_pair(dashboard)
+    _seed_many(dashboard, 5, "flood", status="conflicted", subject="floodsubj", predicate="has")
+    status, body = _request(dashboard, "GET", "/api/conflicts?limit=2&include_stale=1", VIEWER)
+    assert status == 200
+    assert f"{PUBLIC_MARKER}CA".encode() in body
+    assert MARKER.encode() not in body
+
+
+def test_private_rows_cannot_fill_the_conflict_group_window(dashboard):
+    """Truncation of the grouped read (window max(limit*12, 200)): 205 private
+    confirmed rows on the same key must not push the public peer out."""
+    _conflict_pair(dashboard)
+    _seed_many(dashboard, 205, "window", status="confirmed", **CONFLICT_KW)
+    status, body = _request(dashboard, "GET", "/api/conflicts?limit=1", VIEWER)
+    assert status == 200
+    assert f"{PUBLIC_MARKER}CB".encode() in body
+    assert MARKER.encode() not in body
+
+
+def test_private_rows_cannot_fill_the_claims_limit(dashboard):
+    _seed_many(dashboard, 5, "flood", status="confirmed", subject=f"{MARKER}flood", predicate="has")
+    status, body = _request(dashboard, "GET", "/api/claims?limit=3", VIEWER)
+    assert status == 200
+    assert PUBLIC_MARKER.encode() in body
+    assert MARKER.encode() not in body
+    # namespaces carries structured fields only: the window must still be filled.
+    status, body = _request(dashboard, "GET", "/api/namespaces?limit=3", VIEWER)
+    assert status == 200
+    assert b'"rows": 3' in body
+    assert MARKER.encode() not in body
+
+
+def test_private_rows_cannot_fill_the_review_queue_limit(dashboard):
+    svc = dashboard["service"]
+    pub = svc.ingest(
+        "zebrafact reviewable public", [CitationInput(source="test://t2070")], scope="project:ws",
+        source_agent="tester", subject=f"{PUBLIC_MARKER}RQ", predicate="has", object_value="x",
+    ).id
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET status = 'conflicted', pinned = 1, confidence = 0.1 WHERE id = ?", (pub,))
+        conn.commit()
+    _seed_many(dashboard, 5, "flood", status="conflicted", pinned=True, subject=f"{MARKER}rq", predicate="has")
+    status, body = _request(dashboard, "GET", "/api/review-queue?limit=3", VIEWER)
+    assert status == 200
+    assert f"{PUBLIC_MARKER}RQ".encode() in body
+    assert MARKER.encode() not in body
+
+
+def test_viewer_capture_inbox_hides_private_claims_and_keeps_public(dashboard):
+    """Capture lineage lists derived claims by id; it must apply the same rule."""
+    from memorymaster import remember
+    from memorymaster.capture import CaptureRepository
+
+    receipt = remember(
+        text="capture control", scope="project:ws", db=dashboard["db"], workspace=dashboard["workspace"],
+    )
+    repo = CaptureRepository(dashboard["service"].store)
+    for key in ("public", "private_conflicted"):
+        repo.link_claim_evidence(claim_id=dashboard["ids"][key], evidence_item_id=int(receipt.evidence["id"]))
+    status, body = _request(dashboard, "GET", "/api/capture-inbox", VIEWER)
+    assert status == 200
+    assert PUBLIC_MARKER.encode() in body
+    assert MARKER.encode() not in body
+    status, body = _request(dashboard, "GET", "/api/capture-inbox", OPERATOR)
+    assert MARKER.encode() in body
+
+
+def test_viewer_provenance_is_aggregate_only(dashboard):
+    """Positive control: /api/provenance carries per-agent counts, never claim text."""
+    status, body = _request(dashboard, "GET", "/api/provenance", VIEWER)
+    assert status == 200
+    assert b"tester" in body
+    assert MARKER.encode() not in body and PUBLIC_MARKER.encode() not in body
+
+
+def test_unknown_or_missing_role_maps_to_the_restricted_principal():
+    """Fail closed: only the operator role is unrestricted."""
+    from memorymaster.surfaces.dashboard import DashboardRequestHandler
+    from memorymaster.surfaces.dashboard_auth import VIEWER_PRINCIPAL, DashboardRole, requesting_agent_for
+
+    assert requesting_agent_for(DashboardRole.OPERATOR) is None
+    assert requesting_agent_for(DashboardRole.VIEWER) == VIEWER_PRINCIPAL
+    assert requesting_agent_for(None) == VIEWER_PRINCIPAL
+    assert requesting_agent_for("root") == VIEWER_PRINCIPAL  # type: ignore[arg-type]
+    # A handler that never reached _enforce_auth starts restricted, not unrestricted.
+    assert DashboardRequestHandler._requesting_agent == VIEWER_PRINCIPAL
+
+
+def test_mobile_queue_restricts_on_an_empty_string_principal(dashboard):
+    """`is not None`, not truthiness: an empty principal is still a principal."""
+    from memorymaster.surfaces.dashboard_read_models import mobile_review_queue_payload
+
+    restricted = mobile_review_queue_payload(
+        dashboard["service"], limit=100, scope=None, cursor=None, requesting_agent="",
+    )
+    everything = mobile_review_queue_payload(dashboard["service"], limit=100, scope=None, cursor=None)
+    assert len(restricted["queue"]) < len(everything["queue"])
 
 
 @dataclass

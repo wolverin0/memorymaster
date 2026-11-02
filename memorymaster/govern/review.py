@@ -67,7 +67,15 @@ def _build_reason(status: str, *, flagged: bool = False) -> str:
     return ",".join(parts)
 
 
-def _reviewable_claims(service, *, limit: int, include_stale: bool, include_conflicted: bool, flagged_claim_ids: set[int]) -> list:
+def _reviewable_claims(
+    service,
+    *,
+    limit: int,
+    include_stale: bool,
+    include_conflicted: bool,
+    flagged_claim_ids: set[int],
+    requesting_agent: str | None = None,
+) -> list:
     """Solo lo que NECESITA revision humana: stale, conflicted, o con propuesta.
 
     La version anterior tenia el filtro INVERTIDO: escaneaba los primeros N
@@ -79,20 +87,35 @@ def _reviewable_claims(service, *, limit: int, include_stale: bool, include_conf
     los items no dicen por que estan es la misma familia que la senal verde
     que no ejerce su camino: entrena a ignorar la cola.
     """
+    from memorymaster.core.service import _filter_agent_visibility
+    from memorymaster.recall.candidate_pool import page_authorized_lexical
+
     store = getattr(service, "store", None)
     finder = getattr(store, "find_by_status", None)
     gathered: list = []
+
+    def visible(claims: list) -> list:
+        return _filter_agent_visibility(claims, requesting_agent)
+
+    def gather(status: str) -> list:
+        # Another agent's private rows must not use up the limit window (T-2070).
+        def fetch(window: int) -> tuple[list, bool]:
+            rows = finder(status, limit=window, include_citations=True)
+            return rows, len(rows) < window
+
+        return page_authorized_lexical(fetch, limit, visible)
+
     if finder is not None:
         if include_stale:
-            gathered.extend(finder("stale", limit=limit, include_citations=True))
+            gathered.extend(gather("stale"))
         if include_conflicted:
-            gathered.extend(finder("conflicted", limit=limit, include_citations=True))
+            gathered.extend(gather("conflicted"))
         getter = getattr(store, "get_claim", None)
         if getter is not None:
             present = {claim.id for claim in gathered}
             for claim_id in sorted(flagged_claim_ids - present)[:limit]:
                 claim = getter(claim_id, include_citations=True)
-                if claim is not None:
+                if claim is not None and visible([claim]):
                     gathered.append(claim)
         return gathered
     # Respaldo para dobles de test sin store: el escaneo viejo, pero FILTRANDO.
@@ -101,7 +124,9 @@ def _reviewable_claims(service, *, limit: int, include_stale: bool, include_conf
         wanted.add("conflicted")
     return [
         claim
-        for claim in service.list_claims(include_archived=False, limit=limit, allow_sensitive=True)
+        for claim in service.list_claims(
+            include_archived=False, limit=limit, allow_sensitive=True, requesting_agent=requesting_agent,
+        )
         if claim.status in wanted or claim.id in flagged_claim_ids
     ]
 
@@ -126,12 +151,8 @@ def build_review_queue(
         include_stale=include_stale,
         include_conflicted=include_conflicted,
         flagged_claim_ids=flagged,
+        requesting_agent=requesting_agent,
     )
-    # Same per-agent visibility predicate as every service read (T-2070): a caller
-    # that is not the author never sees private/sensitive claims.
-    from memorymaster.core.service import _filter_agent_visibility
-
-    claims = _filter_agent_visibility(claims, requesting_agent)
     now = datetime.now(timezone.utc)
     items: list[ReviewItem] = []
     seen: set[int] = set()

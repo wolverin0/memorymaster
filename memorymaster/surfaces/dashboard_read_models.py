@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from memorymaster.core.security import is_sensitive_claim
 from memorymaster.core.service import _filter_agent_visibility
+from memorymaster.recall.candidate_pool import page_authorized_lexical
 from memorymaster.govern.review import build_review_queue, queue_to_dicts
 from memorymaster.govern.steward import list_steward_proposals
 
@@ -78,12 +79,21 @@ def conflicts_payload(
     if not conflicted:
         return {"ok": True, "rows": 0, "groups": []}
     statuses = ["confirmed", "conflicted"] + (["stale"] if include_stale else [])
-    active = service.store.list_claims(
-        limit=max(limit * 12, 200), status_in=statuses,
-        include_archived=False, include_citations=True,
+    window = max(limit * 12, 200)
+
+    def fetch(size: int) -> tuple[list[Any], bool]:
+        rows = service.store.list_claims(
+            limit=size, status_in=statuses, include_archived=False, include_citations=True,
+            tenant_id=getattr(service, "tenant_id", None),
+        )
+        return rows, len(rows) < size
+
+    # Store-level read: it bypasses the service, so the tenant filter is passed in
+    # the query and the visibility rule is applied while paging, so another
+    # agent's private rows cannot use up the window.
+    active = page_authorized_lexical(
+        fetch, window, lambda rows: _filter_agent_visibility(rows, requesting_agent),
     )
-    # store-level read: bypasses the service, so apply the visibility rule here
-    active = _filter_agent_visibility(active, requesting_agent)
     grouped: dict[tuple[str, str, str], list[Any]] = {}
     for claim in conflicted:
         grouped.setdefault(_claim_key(claim), [])
@@ -198,7 +208,7 @@ def mobile_review_queue_payload(
     requesting_agent: str | None = None,
 ) -> dict[str, Any]:
     clauses, params = ["archived_at IS NULL"], []
-    if requesting_agent:
+    if requesting_agent is not None:
         # raw SQL: same predicate as _filter_agent_visibility (public, or own)
         clauses.append("(visibility = 'public' OR source_agent = ?)")
         params.append(requesting_agent)

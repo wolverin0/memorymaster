@@ -2145,20 +2145,29 @@ class MemoryService(IntegrationService):
             context="service.list_claims",
             deny_mode="filter",
         )
-        claims = self.store.list_claims(
-            status=status,
-            limit=limit,
-            include_archived=include_archived,
-            include_citations=True,
-            scope_allowlist=scope_allowlist,
-            tenant_id=self.tenant_id,
-            holder=holder,
-            ids=ids,
-        )
-        claims = _filter_agent_visibility(claims, requesting_agent)
-        if not include_sensitive:
-            claims = [claim for claim in claims if not is_sensitive_claim(claim)]
-        return claims
+        def fetch(window: int) -> tuple[list[Claim], bool]:
+            rows = self.store.list_claims(
+                status=status,
+                limit=window,
+                include_archived=include_archived,
+                include_citations=True,
+                scope_allowlist=scope_allowlist,
+                tenant_id=self.tenant_id,
+                holder=holder,
+                ids=ids,
+            )
+            return rows, len(rows) < window
+
+        def authorize(rows: list[Claim]) -> list[Claim]:
+            rows = _filter_agent_visibility(rows, requesting_agent)
+            if not include_sensitive:
+                rows = [claim for claim in rows if not is_sensitive_claim(claim)]
+            return rows
+
+        if not requesting_agent:
+            return authorize(fetch(limit)[0])
+        # Another agent's private rows must not use up the limit window (T-2070).
+        return page_authorized_lexical(fetch, limit, authorize)
 
     def list_claims_page(
         self,

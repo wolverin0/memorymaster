@@ -47,8 +47,12 @@ VIEWER_PRINCIPAL = "dashboard:viewer"
 
 
 def requesting_agent_for(role: "DashboardRole | None") -> str | None:
-    """Principal to pass as ``requesting_agent``; ``None`` = unrestricted (operator/legacy)."""
-    return VIEWER_PRINCIPAL if role == DashboardRole.VIEWER else None
+    """Principal to pass as ``requesting_agent``; ``None`` = unrestricted.
+
+    Fails closed: only the operator role (which legacy no-token mode also yields)
+    is unrestricted; a missing or unknown role gets the restricted principal.
+    """
+    return None if role == DashboardRole.OPERATOR else VIEWER_PRINCIPAL
 
 
 # Routes that require operator role regardless of HTTP method. POST routes

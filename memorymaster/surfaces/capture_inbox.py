@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from memorymaster.capture.coverage import capture_coverage
+from memorymaster.core.service import _filter_agent_visibility
 
 
 CAPTURE_INBOX_SECTION_HTML = """<section class="wide">
@@ -90,7 +91,9 @@ def _job_rows(conn: Any, postgres: bool, source_id: int) -> list[dict[str, Any]]
     return [_row_dict(row) for row in rows]
 
 
-def _claim_rows(service: Any, conn: Any, postgres: bool, source_id: int) -> list[dict[str, Any]]:
+def _claim_rows(
+    service: Any, conn: Any, postgres: bool, source_id: int, requesting_agent: str | None = None
+) -> list[dict[str, Any]]:
     rows = _execute(
         conn,
         postgres,
@@ -103,7 +106,7 @@ def _claim_rows(service: Any, conn: Any, postgres: bool, source_id: int) -> list
     output = []
     for row in rows:
         claim = service.store.get_claim(int(row["id"]), include_citations=True)
-        if claim is None:
+        if claim is None or not _filter_agent_visibility([claim], requesting_agent):
             continue
         sensitive = claim.visibility in {"high", "redacted", "sensitive"}
         output.append(
@@ -141,10 +144,12 @@ def _relationship_rows(
     return [_row_dict(row) for row in rows]
 
 
-def _source_row(service: Any, conn: Any, postgres: bool, row: Any) -> dict[str, Any]:
+def _source_row(
+    service: Any, conn: Any, postgres: bool, row: Any, requesting_agent: str | None = None
+) -> dict[str, Any]:
     source = _row_dict(row)
     source_id = int(source["id"])
-    claims = _claim_rows(service, conn, postgres, source_id)
+    claims = _claim_rows(service, conn, postgres, source_id, requesting_agent)
     return {
         **source,
         "payload": _safe_payload(source.pop("payload_json", None)),
@@ -157,7 +162,9 @@ def _source_row(service: Any, conn: Any, postgres: bool, row: Any) -> dict[str, 
     }
 
 
-def capture_inbox_payload(service: Any, *, limit: int = 50) -> dict[str, Any]:
+def capture_inbox_payload(
+    service: Any, *, limit: int = 50, requesting_agent: str | None = None
+) -> dict[str, Any]:
     """Return newest capture sources with their complete governed lineage."""
     store = service.store
     postgres = hasattr(store, "dsn")
@@ -174,7 +181,7 @@ def capture_inbox_payload(service: Any, *, limit: int = 50) -> dict[str, Any]:
                ORDER BY s.id DESC LIMIT ?""",
             (min(max(limit, 1), 100),),
         ).fetchall()
-        items = [_source_row(service, conn, postgres, row) for row in rows]
+        items = [_source_row(service, conn, postgres, row, requesting_agent) for row in rows]
     return {
         "ok": True,
         "rows": len(items),
@@ -206,7 +213,9 @@ def write_capture_inbox_response(handler: Any, query_string: str) -> None:
     limit = int(raw_limit or "50")
     if limit < 1 or limit > 100:
         raise ValueError("Expected integer in range [1, 100]")
-    handler._write_json(capture_inbox_payload(handler._server.service, limit=limit))
+    handler._write_json(capture_inbox_payload(
+        handler._server.service, limit=limit, requesting_agent=handler._requesting_agent,
+    ))
 
 
 def write_capture_retirement_response(handler: Any, payload: dict[str, Any]) -> None:

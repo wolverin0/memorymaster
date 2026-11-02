@@ -22,6 +22,7 @@ from memorymaster.surfaces import capture_inbox as capture_inbox_surface, cohort
 from memorymaster.core.config import get_config
 from memorymaster.govern.review import build_review_queue
 from memorymaster.core.service import MemoryService, _filter_agent_visibility
+from memorymaster.recall.candidate_pool import page_authorized_lexical
 from memorymaster.recall.qdrant_transport import QdrantTransportConfig
 from memorymaster.surfaces.dashboard_commands import (
     apply_triage_action,
@@ -396,14 +397,22 @@ def _lineage_candidate_claims(service: Any, requesting_agent: str | None = None)
     list_claims = getattr(store, "list_claims", None) or getattr(service, "list_claims", None)
     if not callable(list_claims):
         return []
-    try:
-        claims = list_claims(limit=5000, include_archived=True, include_citations=False)
-    except TypeError:
-        claims = list_claims(limit=5000, include_archived=True)
     tenant_id = getattr(service, "tenant_id", None)
-    if tenant_id is not None:
-        claims = [c for c in claims if getattr(c, "tenant_id", None) == tenant_id]
-    return _filter_agent_visibility(claims, requesting_agent)
+
+    def fetch(window: int) -> tuple[list[Any], bool]:
+        try:
+            rows = list_claims(limit=window, include_archived=True, include_citations=False)
+        except TypeError:
+            rows = list_claims(limit=window, include_archived=True)
+        return rows, len(rows) < window
+
+    def authorize(rows: list[Any]) -> list[Any]:
+        if tenant_id is not None:
+            rows = [c for c in rows if getattr(c, "tenant_id", None) == tenant_id]
+        return _filter_agent_visibility(rows, requesting_agent)
+
+    # Paged so another agent's private rows do not use up the 5000-claim window.
+    return page_authorized_lexical(fetch, 5000, authorize)
 
 
 def _collect_reverse_lineage(claim_id: int, by_replacement: dict[int, list[Any]], seen: set[int]) -> list[Any]:
@@ -805,7 +814,8 @@ class DashboardHTTPServer(ThreadingHTTPServer):
 class DashboardRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     # Set per request by _enforce_auth; None = unrestricted (operator / legacy mode).
-    _requesting_agent: str | None = None
+    # Starts restricted so a path that skips _enforce_auth fails closed.
+    _requesting_agent: str | None = dashboard_auth.VIEWER_PRINCIPAL
 
     def log_message(self, fmt: str, *args: object) -> None:
         return
@@ -831,7 +841,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         decision = dashboard_auth.authenticate(self.headers)
         decision = dashboard_auth.authorize(decision, method=method, route=route)
-        self._requesting_agent = dashboard_auth.requesting_agent_for(decision.role) if decision.ok else None
+        self._requesting_agent = dashboard_auth.requesting_agent_for(decision.role)
         if not decision.ok:
             self._write_json(
                 {"ok": False, "error": decision.reason},
@@ -1068,7 +1078,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         claims: list[Any] = []
         scored_by_claim_id: dict[int, dict[str, Any]] = {}
         if callable(query_rows_fn):
-            if self._requesting_agent:
+            if self._requesting_agent is not None:
+                # Bound outside the fallback attempts on purpose: a query_rows without
+                # requesting_agent raises TypeError for a restricted caller (500)
+                # instead of silently retrying unrestricted. MemoryService has it.
                 query_rows_fn = functools.partial(query_rows_fn, requesting_agent=self._requesting_agent)
             rows_data = _call_retrieval_method_with_fallback(query_rows_fn, text, attempts_with_scope)
             claims, scored_by_claim_id = _extract_claims_from_rows(rows_data)
