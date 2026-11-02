@@ -1,4 +1,4 @@
-<!-- doc-head: sole roadmap; explicit MCP authors restored, client telemetry separated; deployment and live acceptance pending -->
+<!-- doc-head: lane backlog tracker at the top (2026-11-02); sole roadmap; explicit MCP authors restored, client telemetry separated; deployment and live acceptance pending -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger, memory delivery/evaluation, OpenCode hooks, context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -6,6 +6,37 @@
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
 <!-- /doc-head -->
+
+## Lane backlog tracker (updated 2026-11-02)
+
+Living checklist of what the memorymaster lane still has to land, with target dates. When every box is ticked and nothing new arrived from Fleet or the operator, the lane is done for the cycle. Older sections below are dated history, not open work.
+
+### Integrate (verified, waiting on the one-at-a-time gate under heavy-slot)
+- [ ] #354 T-2072: bulk_check refuses the full suite outside the wezbridge heavy-slot (target 2026-11-02)
+- [ ] #355 T-2070: dashboard viewer authorization (cloud audit F-1a, F-1b, F-1c and three Argon rounds) (target 2026-11-02)
+- [ ] #356 T-2077a: windows-tasks, digest and steward-wrapper review findings (target 2026-11-02)
+- [ ] #357 T-2077b: dreaming reopen, recall tokenizer, transcript index and steward review findings (target 2026-11-02)
+- [ ] After #356: run `memorymaster-setup windows-tasks --apply` so the live tasks drop the Gemini model on the Claude extractor (target 2026-11-02)
+
+### Gemini dense plan (operator chose the Gemini API)
+- [ ] Re-probe latency with connection reuse and 768 dims; if p95 stays above 450 ms, take the hook-latency choice to the operator (target 2026-11-03)
+- [ ] #352 Gemini embed client: merge after the probe settles the request shape (target 2026-11-03)
+- [ ] S3-S7: dense service with the API encoder, evaluation, cutover, deletions (target 2026-11-07)
+
+### Measurements and parked work
+- [ ] T-1805 extractor before/after evaluation, now that the Gemini cap has reset (target 2026-11-04)
+- [ ] Scheduled measurements: transcript-fallback-7d (2026-11-04), ao0-ab-header (2026-11-05), t2067-beat-fallback-7d (2026-11-07), ao0-ab-gated (2026-11-12)
+- [ ] #350 guard thresholds: on hold until the beat's effect on prompt latency is measured
+- [ ] T-1871: in review, verify after the merges above
+
+### Waiting on the operator
+- [ ] Rotate the wezbridge voice Google client secret
+- [ ] Decide whether to disable the Obsidian-Cockpit-Sync task
+
+### Done this cycle
+- [x] #349 windows-tasks installer, merged and deployed (2026-11-01)
+- [x] #351 no implicit Gemini or hash embeddings, merged and deployed (2026-11-02)
+- [x] #353 T-2067 consolidation-latency split and fallback guard, merged (2026-11-02)
 
 ## T-1807 — preserve explicit MCP claim authors (2026-10-26)
 
