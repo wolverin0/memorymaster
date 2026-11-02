@@ -783,6 +783,19 @@ def test_dream_extractor_factory_selects_configured_provider(monkeypatch) -> Non
         create_dream_extractor()
 
 
+@pytest.mark.parametrize("provider", ["gemini", "google", "opencode", "openai", "claude", "claude_cli", "claude-cli"])
+def test_every_factory_extractor_has_a_consolidation_fallback(monkeypatch, provider) -> None:
+    """T-2067: a provider the factory can return but the fallback does not know silently reopens the breaker."""
+    from memorymaster.dreaming.providers import consolidation_fallback
+
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", provider)
+    monkeypatch.setenv("GEMINI_API_KEY", "fixture")
+    monkeypatch.setenv("MEMORYMASTER_OPENCODE_COMMAND", "opencode-fixture")
+    monkeypatch.delenv("MEMORYMASTER_DREAM_EXTRACT_MAX_OUTPUT_TOKENS", raising=False)
+
+    assert consolidation_fallback(create_dream_extractor()) is not None
+
+
 def test_glm_prompt_rejects_transient_execution_metadata() -> None:
     prompt = consolidation_prompt([], [], "global")
 
