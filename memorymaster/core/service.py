@@ -216,6 +216,27 @@ def _filter_agent_visibility(claims: list[Claim], requesting_agent: str | None) 
     ]
 
 
+def authorize_claims(
+    claims: list[Claim],
+    *,
+    requesting_agent: str | None = None,
+    tenant_id: str | None = None,
+    include_sensitive: bool = False,
+) -> list[Claim]:
+    """The one "authorized for this caller" predicate for claim list reads.
+
+    Tenant boundary, per-agent visibility, then the sensitivity filter. Every
+    list read that bypasses ``list_claims`` (store-level reads, reads by id)
+    must go through this so the policy lives in one place (T-2070).
+    """
+    if tenant_id is not None:
+        claims = [c for c in claims if getattr(c, "tenant_id", None) == tenant_id]
+    claims = _filter_agent_visibility(claims, requesting_agent)
+    if not include_sensitive:
+        claims = [c for c in claims if not is_sensitive_claim(c)]
+    return claims
+
+
 def _is_cross_scope_sensitive(claim: Claim, current_scope: str | None) -> bool:
     visibility = (getattr(claim, "visibility", "public") or "public").strip().lower()
     if visibility != "sensitive":
@@ -1040,6 +1061,7 @@ class MemoryService(IntegrationService):
         scope_allowlist: list[str] | None = None,
         query_type: str | None = None,
         trust_mode: str | None = None,
+        requesting_agent: str | None = None,
     ) -> list[Claim]:
         resolved_trust = trust_mode or (
             "exploratory"
@@ -1057,6 +1079,7 @@ class MemoryService(IntegrationService):
             retrieval_profile=retrieval_profile,
             allow_sensitive=allow_sensitive,
             scope_allowlist=tuple(scope_allowlist) if scope_allowlist else None,
+            requesting_agent=requesting_agent,
             query_type=query_type,
         ), vector_hook=vector_hook)
         return [row["claim"] for row in result.rows]
@@ -2145,20 +2168,27 @@ class MemoryService(IntegrationService):
             context="service.list_claims",
             deny_mode="filter",
         )
-        claims = self.store.list_claims(
-            status=status,
-            limit=limit,
-            include_archived=include_archived,
-            include_citations=True,
-            scope_allowlist=scope_allowlist,
-            tenant_id=self.tenant_id,
-            holder=holder,
-            ids=ids,
-        )
-        claims = _filter_agent_visibility(claims, requesting_agent)
-        if not include_sensitive:
-            claims = [claim for claim in claims if not is_sensitive_claim(claim)]
-        return claims
+        def fetch(window: int) -> tuple[list[Claim], bool]:
+            rows = self.store.list_claims(
+                status=status,
+                limit=window,
+                include_archived=include_archived,
+                include_citations=True,
+                scope_allowlist=scope_allowlist,
+                tenant_id=self.tenant_id,
+                holder=holder,
+                ids=ids,
+            )
+            return rows, len(rows) < window
+
+        def authorize(rows: list[Claim]) -> list[Claim]:
+            return authorize_claims(
+                rows, requesting_agent=requesting_agent, include_sensitive=include_sensitive,
+            )
+
+        # Rows the filters drop (another agent's private claims, redacted text)
+        # must not use up the limit window (T-2070): page until it is filled.
+        return page_authorized_lexical(fetch, limit, authorize)
 
     def list_claims_page(
         self,
