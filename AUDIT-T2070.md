@@ -5,7 +5,7 @@
 - **Branch:** `claude/T2070-audit-memorymaster`
 - **Scope:** injection, authz/ownership, secrets in tree, unsafe deserialization,
   SSRF, dependency advisories. The audit commit changed no product code; the
-  follow-up fix for F-1a/F-1b (see "Fix status") touches the dashboard only.
+  follow-up fix for F-1a/F-1b (see "Fix status") touches the dashboard and the shared review-queue builder.
 
 Severity scale: **High** = a lower-privileged caller reads or changes data the
 design says it must not; **Medium** = real exposure that needs a non-default
@@ -68,7 +68,7 @@ I ran both remaining records with `--runxfail`, and each fails on its assertion,
 pip install -e ".[dev,mcp]" joblib              # joblib only for the classifier lock
 python -m pytest tests/test_public_demo.py -q   # disposable lifecycle first (AGENTS.md)
 python -m pytest tests/test_t2070_security_audit.py -q -rxX
-python -m pytest tests/test_t2070_security_audit.py -q --runxfail   # shows the 4 open defects failing
+python -m pytest tests/test_t2070_security_audit.py -q --runxfail   # shows the 2 open defects failing
 ruff check tests/test_t2070_security_audit.py
 python scripts/bulk_check.py --fast             # fast merge gates; full suite: drop --fast
 ```
@@ -90,11 +90,15 @@ whole-database view.
 
 Open: F-1c (`allow_sensitive` query flag) and F-4 remain defect records.
 
-Results on this branch (before the fix):
+Results on this branch. Audit commit, before the fix:
 
 - The new file: 20 passed, 4 xfailed.
 - The new file plus the neighbouring suites (`test_public_demo`, `test_dashboard_auth`, `test_dashboard_lineage`, `test_webhook*`, `test_mcp_helpers`, `test_steward_classifier`, `test_mcp_path_policy`, `test_mcp_http_entrypoint`): 152 passed, 2 skipped, 4 xfailed.
 - Ruff: clean.
+
+After the fix (rebased on `origin/main`): 19 of the new tests failed on unpatched code. The PR file plus `test_dashboard*`, `test_review*`, `test_service_runtime_authority`, `test_security_patterns`, `test_public_demo`, `test_architecture_budgets`, `test_mcp_helpers`, `test_webhook*`, `test_mcp_path_policy` and `test_steward_classifier` give 356 passed, 1 skipped, 2 xfailed; ruff clean.
+
+Known limit of the fix: `query_rows` runs `require_permission("dashboard:viewer", "query")`, which passes because unknown agents default to the WRITER role. A roles config that denies `query` to unknown agents would make the viewer fail on `/api/retrieval`. A public claim in another project's scope stays visible to a viewer.
 
 The POST-rejection tests print a harmless `BrokenPipeError` from `socketserver` on stderr. That happens because the server answers 403 without draining the request body.
 
