@@ -61,7 +61,7 @@ class WindowsTasksError(Exception):
 # --------------------------------------------------------------------------- variables
 
 def find_repo(explicit: str | None = None) -> Path:
-    candidates = [Path(explicit)] if explicit else [Path(__file__).resolve().parents[2], Path.cwd()]
+    candidates = [Path(explicit).resolve()] if explicit else [Path(__file__).resolve().parents[2], Path.cwd()]
     for candidate in candidates:
         if (candidate / MANIFEST_RELPATH).is_file():
             return candidate
@@ -86,7 +86,12 @@ def render(text: str, values: dict[str, str], declared: set[str] | None = None) 
             )
         return match.group(0)
 
-    return _TOKEN.sub(sub, text)
+    for _ in range(4):  # a value may itself embed a declared variable (a default built from a required one)
+        rendered = _TOKEN.sub(sub, text)
+        if rendered == text:
+            break
+        text = rendered
+    return text
 
 
 def _render_json(node: Any, values: dict[str, str], declared: set[str]) -> Any:
@@ -440,6 +445,10 @@ class Reconciler:
     # ---- orchestration
     def run(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
+        if self.wheel is not None:  # checked up front: a same-version runtime never reaches _get_wheel
+            if not self.wheel.is_file():
+                raise WindowsTasksError(f"wheel not found: {self.wheel.name}")
+            self._verify_wheel(self.wheel)
         for task in self.tasks:
             if task["name"] in self.blocked:
                 items.append(_item("task", task["name"], BLOCKED, self.blocked[task["name"]]))
@@ -479,12 +488,15 @@ class Reconciler:
             if wheel is None:
                 out = Path(tempfile.mkdtemp(prefix="mm-wheel-"))
                 wheel = self.host.build_wheel(self.fill("{PYTHON}"), self.repo, out)
-            if self.wheel_sha256:
-                digest = hashlib.sha256(Path(wheel).read_bytes()).hexdigest()
-                if digest != self.wheel_sha256:
-                    raise WindowsTasksError(f"wheel hash mismatch: {Path(wheel).name} is not the reviewed build")
+            self._verify_wheel(Path(wheel))
             self._wheel_ready = Path(wheel)
         return self._wheel_ready
+
+    def _verify_wheel(self, wheel: Path) -> None:
+        if self.wheel_sha256:
+            digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
+            if digest != self.wheel_sha256:
+                raise WindowsTasksError(f"wheel hash mismatch: {wheel.name} is not the reviewed build")
 
     def runtime_items(self) -> list[dict[str, Any]]:
         items = []

@@ -45,8 +45,10 @@ def capture_llm_overrides() -> dict[str, str]:
     model = (
         os.environ.get("MEMORYMASTER_CAPTURE_LLM_MODEL", "").strip()
         or os.environ.get("MEMORYMASTER_LLM_MODEL", "").strip()
-        or os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "").strip()
     )
+    if not model and provider.lower() != "claude_cli":
+        # The dream extract model names a Gemini/OpenCode model; `claude --model` would reject it.
+        model = os.environ.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "").strip()
     effort = (
         os.environ.get("MEMORYMASTER_CAPTURE_LLM_REASONING_EFFORT", "").strip()
         or os.environ.get("MEMORYMASTER_LLM_REASONING_EFFORT", "").strip()

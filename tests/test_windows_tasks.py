@@ -308,3 +308,107 @@ def test_setup_surface_routes_the_windows_tasks_subcommand(monkeypatch):
     monkeypatch.setattr(wt, "main", lambda argv=None, **kw: seen.append(argv) or 0)
     assert setup_hooks.main(["windows-tasks", "--check"]) == 0
     assert seen == [["--check"]]
+
+
+# --------------------------------------------------------------------------- T-2077a review findings
+
+def test_user_env_never_pairs_the_claude_cli_with_a_gemini_model(manifest, monkeypatch):
+    """M5: DREAM_EXTRACT_PROVIDER=claude plus a Gemini model made capture run `claude --model gemini-...`."""
+    from memorymaster.capture.worker import capture_llm_overrides
+
+    for name in ("MEMORYMASTER_CAPTURE_LLM_PROVIDER", "MEMORYMASTER_LLM_PROVIDER",
+                 "MEMORYMASTER_CAPTURE_LLM_MODEL", "MEMORYMASTER_LLM_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in manifest["user_env"].items():
+        monkeypatch.setenv(name, value)
+    overrides = capture_llm_overrides()
+    assert overrides.get("MEMORYMASTER_LLM_PROVIDER") == "claude_cli"
+    assert "gemini" not in overrides.get("MEMORYMASTER_LLM_MODEL", "").lower()
+
+
+def test_manifest_user_env_does_not_set_a_gemini_model_for_the_claude_provider(manifest):
+    env = manifest["user_env"]
+    if env.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER") == "claude":
+        assert "gemini" not in env.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "").lower()
+
+
+def test_capture_ignores_a_gemini_dream_model_when_the_provider_is_the_claude_cli(monkeypatch):
+    """M5, live shape: the registry already holds claude + a Gemini model; the code must not forward it."""
+    from memorymaster.capture.worker import capture_llm_overrides
+
+    for name in ("MEMORYMASTER_CAPTURE_LLM_PROVIDER", "MEMORYMASTER_LLM_PROVIDER",
+                 "MEMORYMASTER_CAPTURE_LLM_MODEL", "MEMORYMASTER_LLM_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "claude")
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_MODEL", "gemini-3.5-flash-lite")
+    overrides = capture_llm_overrides()
+    assert overrides["MEMORYMASTER_LLM_PROVIDER"] == "claude_cli"
+    assert "MEMORYMASTER_LLM_MODEL" not in overrides
+    monkeypatch.setenv("MEMORYMASTER_CAPTURE_LLM_MODEL", "sonnet")  # an explicit capture model still wins
+    assert capture_llm_overrides()["MEMORYMASTER_LLM_MODEL"] == "sonnet"
+
+
+@WINDOWS_ONLY
+def test_an_explicit_wheel_hash_is_checked_even_when_the_installed_version_matches(tmp_path, capsys):
+    """M6: same installed version used to skip the wheel entirely, so a bad --wheel-sha256 went unnoticed."""
+    env, host = fresh_pc(tmp_path)
+    python = Path(env["LOCALAPPDATA"]) / "Programs" / "Python" / "Python312" / "python.exe"
+    host.versions[str(python)] = wt.repo_version(REPO)
+    wheel = tmp_path / "w.whl"
+    wheel.write_bytes(b"x")
+    for mode in ([], ["--apply"]):
+        code, output = run_cli([*mode, "--wheel", str(wheel), "--wheel-sha256", "0" * 64], host, env)
+        assert code == 2 and "hash mismatch" in output + capsys.readouterr().err, (mode, output)
+    assert host.registered == []
+
+
+def test_a_default_that_embeds_a_required_variable_does_not_leak_the_token(manifest, tmp_path):
+    """L25: a default built from a required variable that has no value must raise, not render literally."""
+    broken = copy.deepcopy(manifest)
+    broken["variables"]["defaults"]["RELAY"] = "http://{HERMES_HOST}:8788"
+    task = copy.deepcopy(next(t for t in broken["tasks"] if t["name"] == "MemoryMaster-Beat"))
+    task["action"]["arguments"] += " --relay {RELAY}"
+    env = make_env(tmp_path)
+    env.pop(f"{wt.ENV_PREFIX}HERMES_HOST")
+    values, declared = wt.build_vars(broken, REPO, env, {})
+    with pytest.raises(wt.WindowsTasksError, match="HERMES_HOST"):
+        wt.task_xml(broken, task, values, declared)
+    values, declared = wt.build_vars(broken, REPO, make_env(tmp_path), {})
+    assert f"--relay http://{HERMES}:8788" in wt.task_xml(broken, task, values, declared)
+
+
+def test_a_relative_repo_is_resolved_to_an_absolute_path(monkeypatch):
+    """L26: find_repo(--repo .) baked a relative path into registered tasks."""
+    monkeypatch.chdir(REPO.parent)
+    found = wt.find_repo(REPO.name)
+    assert found.is_absolute() and found == REPO
+
+
+def test_the_digest_cmdline_argument_is_quoted(manifest, tmp_path):
+    """L24: every other path is quoted; a HOME with spaces split this one."""
+    values, declared = wt.build_vars(manifest, REPO, make_env(tmp_path), {})
+    digest = next(t for t in manifest["tasks"] if t["name"] == "MemoryMasterWeeklyDigest")
+    xml = wt.task_xml(manifest, digest, values, declared)
+    assert re.search(r'MemoryMasterWeeklyDigest\.cmdline(&quot;|")</Arguments>', xml), xml
+
+
+def test_the_steward_wrapper_exits_nonzero_when_the_cycle_fails(tmp_path):
+    """L23: a failed MemoryService/run_cycle was printed and the task still ended with exit 0."""
+    import subprocess
+
+    stub = tmp_path / "stub" / "memorymaster"
+    stub.mkdir(parents=True)
+    (stub / "__init__.py").write_text("", encoding="utf-8")
+    (stub / "service.py").write_text(
+        "class MemoryService:\n    def __init__(self, *a, **k):\n        raise RuntimeError('stub cycle failure')\n",
+        encoding="utf-8")
+    root = tmp_path / "repo"
+    root.mkdir()
+    source = (REPO / "ops/windows-tasks/wrappers/steward-cycle.py").read_text(encoding="utf-8")
+    script = tmp_path / "steward-cycle.py"
+    script.write_text(source.replace("{REPO}", str(root)), encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(tmp_path / "stub"), "HOME": str(tmp_path), "USERPROFILE": str(tmp_path),
+           "MEMORYMASTER_WIKI_ABSORB": "0"}
+    done = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=60)
+    assert "stub cycle failure" in done.stderr
+    assert done.returncode != 0, done.stdout + done.stderr

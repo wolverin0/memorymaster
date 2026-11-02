@@ -27,6 +27,9 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # run from a bare checkout too
+from memorymaster.core.llm_provider import gemini_thinking_fields  # noqa: E402
+
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
@@ -104,10 +107,7 @@ def synthesize(rows):
     prompt = build_prompt(rows, time.strftime("%d/%m/%Y"))
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={_load_gemini_key()}"
     gen = {"temperature": 0.4, "maxOutputTokens": 1400}
-    if "gemini-2.5" in MODEL:
-        gen["thinkingConfig"] = {"thinkingBudget": 0}
-    elif MODEL.startswith("gemini-flash"):  # -latest aliases resolve to 3.x
-        gen["thinkingConfig"] = {"thinkingLevel": "minimal"}
+    gen.update(gemini_thinking_fields(MODEL))
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen}).encode()
     last = None
     for attempt in range(5):
@@ -138,14 +138,14 @@ def deliver_telegram(text):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"text": msg}, f, ensure_ascii=False)
     cmd = (f"cat '{tmp}' | ssh -o BatchMode=yes {VM} "
-           f"'curl -s -m30 -X POST http://localhost:8788/api/telegram/test-send "
+           f"'curl -sf -m30 -X POST http://localhost:8788/api/telegram/test-send "
            f"-H \"content-type: application/json\" --data-binary @-'")
     r = subprocess.run([BASH, "-lc", cmd], capture_output=True, text=True, timeout=90)
     try:
         os.remove(tmp)
     except Exception:
         pass
-    return (r.stdout or r.stderr).strip()[:200]
+    return r.returncode == 0, (r.stdout or r.stderr).strip()[:200]
 
 
 def curation_tally() -> str:
@@ -187,10 +187,12 @@ def main():
     print(f"digest saved -> {path}", flush=True)
     if "--no-send" in sys.argv or os.environ.get("DIGEST_NO_SEND"):
         print("(no-send mode — telegram skipped)", flush=True)
+        delivered = True
     else:
-        print(f"telegram delivery -> {deliver_telegram(digest)}", flush=True)
+        delivered, detail = deliver_telegram(digest)
+        print(f"telegram delivery {'ok' if delivered else 'FAILED'} -> {detail}", flush=True)
     print("\n--- DIGEST ---\n" + re.sub(r"<[^>]+>", "", digest))
-    return 0
+    return 0 if delivered else 1
 
 
 if __name__ == "__main__":

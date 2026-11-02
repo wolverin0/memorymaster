@@ -39,6 +39,8 @@ os.environ["MEMORYMASTER_DEDUPE_SHADOW"] = "0"
 os.environ["MEMORYMASTER_DEDUPE_JACCARD_HIGH"] = "0.85"
 os.chdir(PROJECT_ROOT)
 
+cycle_failed = False  # a failed cycle must end the task non-zero so Task Scheduler records it
+
 try:
     from memorymaster.service import MemoryService
     from pathlib import Path
@@ -60,6 +62,7 @@ try:
     result = svc.run_cycle(batch_limit=2000)
     print(f"[MemoryMaster] steward cycle: {result}")
 except Exception as e:
+    cycle_failed = True
     print(f"[MemoryMaster] steward error: {e}", file=sys.stderr)
 
 # S1 REVALIDATE (4.9.0): Jev re-confirms stale claims that are still right and
@@ -172,7 +175,7 @@ except Exception as e:
 if os.environ.get("MEMORYMASTER_WIKI_ABSORB", "0").strip().lower() not in ("1", "true", "yes"):
     print("[MemoryMaster] wiki absorb/cleanup/breakdown DISABLED "
           "(set MEMORYMASTER_WIKI_ABSORB=1 to re-enable the Obsidian markdown view)")
-    sys.exit(0)
+    sys.exit(1 if cycle_failed else 0)
 
 # Wiki absorb (compiled truth + timeline articles)
 try:
@@ -231,3 +234,5 @@ try:
             print(f"[MemoryMaster] wiki breakdown error ({canonical}): {e}", file=sys.stderr)
 except Exception as e:
     print(f"[MemoryMaster] wiki rotation error: {e}", file=sys.stderr)
+
+sys.exit(1 if cycle_failed else 0)
