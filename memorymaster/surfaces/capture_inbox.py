@@ -15,7 +15,7 @@ from typing import Any
 from urllib.parse import parse_qs
 
 from memorymaster.capture.coverage import capture_coverage
-from memorymaster.core.service import _filter_agent_visibility
+from memorymaster.core.service import authorize_claims
 
 
 CAPTURE_INBOX_SECTION_HTML = """<section class="wide">
@@ -106,7 +106,13 @@ def _claim_rows(
     output = []
     for row in rows:
         claim = service.store.get_claim(int(row["id"]), include_citations=True)
-        if claim is None or not _filter_agent_visibility([claim], requesting_agent):
+        # The operator view keeps redacted claims (shown masked below); a
+        # restricted caller gets the service's full policy.
+        if claim is None or not authorize_claims(
+            [claim], requesting_agent=requesting_agent,
+            tenant_id=getattr(service, "tenant_id", None),
+            include_sensitive=requesting_agent is None,
+        ):
             continue
         sensitive = claim.visibility in {"high", "redacted", "sensitive"}
         output.append(

@@ -216,6 +216,27 @@ def _filter_agent_visibility(claims: list[Claim], requesting_agent: str | None) 
     ]
 
 
+def authorize_claims(
+    claims: list[Claim],
+    *,
+    requesting_agent: str | None = None,
+    tenant_id: str | None = None,
+    include_sensitive: bool = False,
+) -> list[Claim]:
+    """The one "authorized for this caller" predicate for claim list reads.
+
+    Tenant boundary, per-agent visibility, then the sensitivity filter. Every
+    list read that bypasses ``list_claims`` (store-level reads, reads by id)
+    must go through this so the policy lives in one place (T-2070).
+    """
+    if tenant_id is not None:
+        claims = [c for c in claims if getattr(c, "tenant_id", None) == tenant_id]
+    claims = _filter_agent_visibility(claims, requesting_agent)
+    if not include_sensitive:
+        claims = [c for c in claims if not is_sensitive_claim(c)]
+    return claims
+
+
 def _is_cross_scope_sensitive(claim: Claim, current_scope: str | None) -> bool:
     visibility = (getattr(claim, "visibility", "public") or "public").strip().lower()
     if visibility != "sensitive":
@@ -2159,14 +2180,12 @@ class MemoryService(IntegrationService):
             return rows, len(rows) < window
 
         def authorize(rows: list[Claim]) -> list[Claim]:
-            rows = _filter_agent_visibility(rows, requesting_agent)
-            if not include_sensitive:
-                rows = [claim for claim in rows if not is_sensitive_claim(claim)]
-            return rows
+            return authorize_claims(
+                rows, requesting_agent=requesting_agent, include_sensitive=include_sensitive,
+            )
 
-        if not requesting_agent:
-            return authorize(fetch(limit)[0])
-        # Another agent's private rows must not use up the limit window (T-2070).
+        # Rows the filters drop (another agent's private claims, redacted text)
+        # must not use up the limit window (T-2070): page until it is filled.
         return page_authorized_lexical(fetch, limit, authorize)
 
     def list_claims_page(

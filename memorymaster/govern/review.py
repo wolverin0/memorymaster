@@ -75,6 +75,7 @@ def _reviewable_claims(
     include_conflicted: bool,
     flagged_claim_ids: set[int],
     requesting_agent: str | None = None,
+    include_sensitive: bool = True,
 ) -> list:
     """Solo lo que NECESITA revision humana: stale, conflicted, o con propuesta.
 
@@ -87,7 +88,7 @@ def _reviewable_claims(
     los items no dicen por que estan es la misma familia que la senal verde
     que no ejerce su camino: entrena a ignorar la cola.
     """
-    from memorymaster.core.service import _filter_agent_visibility
+    from memorymaster.core.service import authorize_claims
     from memorymaster.recall.candidate_pool import page_authorized_lexical
 
     store = getattr(service, "store", None)
@@ -95,7 +96,11 @@ def _reviewable_claims(
     gathered: list = []
 
     def visible(claims: list) -> list:
-        return _filter_agent_visibility(claims, requesting_agent)
+        # store.find_by_status / get_claim bypass the service's tenant boundary
+        return authorize_claims(
+            claims, requesting_agent=requesting_agent,
+            tenant_id=getattr(service, "tenant_id", None), include_sensitive=include_sensitive,
+        )
 
     def gather(status: str) -> list:
         # Another agent's private rows must not use up the limit window (T-2070).
@@ -113,10 +118,16 @@ def _reviewable_claims(
         getter = getattr(store, "get_claim", None)
         if getter is not None:
             present = {claim.id for claim in gathered}
-            for claim_id in sorted(flagged_claim_ids - present)[:limit]:
+            taken = 0
+            # Authorize BEFORE counting toward the limit: unauthorized flagged
+            # claims must not starve the slice.
+            for claim_id in sorted(flagged_claim_ids - present):
+                if taken >= limit:
+                    break
                 claim = getter(claim_id, include_citations=True)
                 if claim is not None and visible([claim]):
                     gathered.append(claim)
+                    taken += 1
         return gathered
     # Respaldo para dobles de test sin store: el escaneo viejo, pero FILTRANDO.
     wanted = {"stale"} if include_stale else set()
@@ -152,6 +163,7 @@ def build_review_queue(
         include_conflicted=include_conflicted,
         flagged_claim_ids=flagged,
         requesting_agent=requesting_agent,
+        include_sensitive=include_sensitive,
     )
     now = datetime.now(timezone.utc)
     items: list[ReviewItem] = []

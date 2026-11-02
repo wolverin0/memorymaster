@@ -21,7 +21,7 @@ from urllib.parse import parse_qs, urlparse
 from memorymaster.surfaces import capture_inbox as capture_inbox_surface, cohort_review_template, dashboard_auth, dashboard_summary, dashboard_template, graph_observations_dashboard as graph_observations_surface, jev_dashboard, session_scope as session_scope_surface
 from memorymaster.core.config import get_config
 from memorymaster.govern.review import build_review_queue
-from memorymaster.core.service import MemoryService, _filter_agent_visibility
+from memorymaster.core.service import MemoryService, _filter_agent_visibility, authorize_claims
 from memorymaster.recall.candidate_pool import page_authorized_lexical
 from memorymaster.recall.qdrant_transport import QdrantTransportConfig
 from memorymaster.surfaces.dashboard_commands import (
@@ -386,10 +386,17 @@ def _get_lineage_claim(service: Any, claim_id: int, requesting_agent: str | None
         )
     if claim is None:
         return None
-    tenant_id = getattr(service, "tenant_id", None)
-    if tenant_id is not None and getattr(claim, "tenant_id", None) != tenant_id:
-        return None
-    return claim if _filter_agent_visibility([claim], requesting_agent) else None
+    return claim if _authorized_lineage([claim], service, requesting_agent) else None
+
+
+def _authorized_lineage(claims: list[Any], service: Any, requesting_agent: str | None) -> list[Any]:
+    # Operator keeps the full view (redacted claims included); a restricted caller
+    # gets the service's whole policy.
+    return authorize_claims(
+        claims, requesting_agent=requesting_agent,
+        tenant_id=getattr(service, "tenant_id", None),
+        include_sensitive=requesting_agent is None,
+    )
 
 
 def _lineage_candidate_claims(service: Any, requesting_agent: str | None = None) -> list[Any]:
@@ -397,7 +404,6 @@ def _lineage_candidate_claims(service: Any, requesting_agent: str | None = None)
     list_claims = getattr(store, "list_claims", None) or getattr(service, "list_claims", None)
     if not callable(list_claims):
         return []
-    tenant_id = getattr(service, "tenant_id", None)
 
     def fetch(window: int) -> tuple[list[Any], bool]:
         try:
@@ -406,13 +412,10 @@ def _lineage_candidate_claims(service: Any, requesting_agent: str | None = None)
             rows = list_claims(limit=window, include_archived=True)
         return rows, len(rows) < window
 
-    def authorize(rows: list[Any]) -> list[Any]:
-        if tenant_id is not None:
-            rows = [c for c in rows if getattr(c, "tenant_id", None) == tenant_id]
-        return _filter_agent_visibility(rows, requesting_agent)
-
     # Paged so another agent's private rows do not use up the 5000-claim window.
-    return page_authorized_lexical(fetch, 5000, authorize)
+    return page_authorized_lexical(
+        fetch, 5000, lambda rows: _authorized_lineage(rows, service, requesting_agent),
+    )
 
 
 def _collect_reverse_lineage(claim_id: int, by_replacement: dict[int, list[Any]], seen: set[int]) -> list[Any]:

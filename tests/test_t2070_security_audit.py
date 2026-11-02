@@ -450,6 +450,111 @@ def test_mobile_queue_restricts_on_an_empty_string_principal(dashboard):
     assert len(restricted["queue"]) < len(everything["queue"])
 
 
+@pytest.mark.parametrize("principal", [None, ""])
+def test_redacted_rows_cannot_fill_the_service_list_limit(dashboard, principal):
+    """Unrestricted callers too: rows the sensitivity filter drops must not use up the window."""
+    svc = dashboard["service"]
+    _seed_many(dashboard, 5, "flood [REDACTED:api_key]", visibility="public", status="confirmed")
+    rows = svc.list_claims(limit=3, requesting_agent=principal)
+    assert len(rows) == 3
+    assert all("[REDACTED:" not in row.text for row in rows)
+
+
+def test_private_flagged_claims_cannot_starve_the_review_queue_slice(dashboard):
+    """flagged ids are sorted and sliced to the limit: private ones must be dropped first."""
+    from memorymaster.govern.review import _reviewable_claims
+
+    svc = dashboard["service"]
+    private_ids = _seed_many(dashboard, 5, "flagged", status="confirmed")
+    public_id = svc.ingest(
+        "zebrafact flagged public", [CitationInput(source="test://t2070")], scope="project:ws",
+        source_agent="tester",
+    ).id
+    rows = _reviewable_claims(
+        svc, limit=2, include_stale=False, include_conflicted=False,
+        flagged_claim_ids={*private_ids, public_id}, requesting_agent="dashboard:viewer",
+    )
+    assert [claim.id for claim in rows] == [public_id]
+
+
+def test_flagged_claims_of_another_tenant_stay_out_of_the_review_queue(dashboard):
+    from memorymaster.govern.review import _reviewable_claims
+
+    svc = dashboard["service"]
+    ids = _conflict_pair(dashboard)
+    svc.tenant_id = "tenant-a"
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET tenant_id = 'tenant-a' WHERE id = ?", (ids["pub_a"],))
+        conn.execute("UPDATE claims SET tenant_id = 'tenant-b' WHERE id = ?", (ids["pub_b"],))
+        conn.commit()
+    rows = _reviewable_claims(
+        svc, limit=10, include_stale=False, include_conflicted=False,
+        flagged_claim_ids={ids["pub_a"], ids["pub_b"]},
+    )
+    assert [claim.id for claim in rows] == [ids["pub_a"]]
+
+
+def test_conflict_peers_follow_the_same_sensitivity_policy_as_the_service(dashboard):
+    """`conflicted` goes through service.list_claims (drops redacted rows); the peer
+    read must apply the same rule, for the operator as well."""
+    svc = dashboard["service"]
+    ids = _conflict_pair(dashboard)
+    with svc.store.connect() as conn:
+        conn.execute(
+            "UPDATE claims SET object_value = ? WHERE id = ?",
+            (f"{PUBLIC_MARKER}CSENS [REDACTED:api_key]", ids["pub_b"]),
+        )
+        conn.commit()
+    status, body = _request(dashboard, "GET", "/api/conflicts?include_stale=1", OPERATOR)
+    assert status == 200
+    assert f"{PUBLIC_MARKER}CA".encode() in body
+    assert f"{PUBLIC_MARKER}CSENS".encode() not in body
+
+
+def _link_capture(d, claim_ids):
+    from memorymaster import remember
+    from memorymaster.capture import CaptureRepository
+
+    receipt = remember(
+        text="capture policy", scope="project:ws", db=d["db"], workspace=d["workspace"],
+    )
+    repo = CaptureRepository(d["service"].store)
+    for cid in claim_ids:
+        repo.link_claim_evidence(claim_id=cid, evidence_item_id=int(receipt.evidence["id"]))
+
+
+def test_capture_inbox_applies_tenant_to_derived_claims(dashboard):
+    svc = dashboard["service"]
+    ids = _conflict_pair(dashboard)
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET tenant_id = 'tenant-a' WHERE id = ?", (ids["pub_a"],))
+        conn.execute("UPDATE claims SET tenant_id = 'tenant-b' WHERE id = ?", (ids["pub_b"],))
+        conn.commit()
+    svc.tenant_id = "tenant-a"
+    _link_capture(dashboard, [ids["pub_a"], ids["pub_b"]])
+    status, body = _request(dashboard, "GET", "/api/capture-inbox", OPERATOR)
+    assert status == 200
+    assert f"{PUBLIC_MARKER}CA".encode() in body
+    assert f"{PUBLIC_MARKER}CB".encode() not in body
+
+
+def test_viewer_capture_inbox_drops_redacted_claims_but_operator_keeps_them(dashboard):
+    svc = dashboard["service"]
+    ids = _conflict_pair(dashboard)
+    with svc.store.connect() as conn:
+        conn.execute(
+            "UPDATE claims SET text = ? WHERE id = ?",
+            (f"{PUBLIC_MARKER}CSENS [REDACTED:api_key]", ids["pub_a"]),
+        )
+        conn.commit()
+    _link_capture(dashboard, [ids["pub_a"], ids["pub_b"]])
+    _, viewer_body = _request(dashboard, "GET", "/api/capture-inbox", VIEWER)
+    assert f"{PUBLIC_MARKER}CB".encode() in viewer_body
+    assert b"CSENS" not in viewer_body
+    _, operator_body = _request(dashboard, "GET", "/api/capture-inbox", OPERATOR)
+    assert b"CSENS" in operator_body  # local/operator behaviour is unchanged
+
+
 @dataclass
 class _FakeClaim:
     id: int

@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from memorymaster.core.security import is_sensitive_claim
-from memorymaster.core.service import _filter_agent_visibility
+from memorymaster.core.service import authorize_claims
 from memorymaster.recall.candidate_pool import page_authorized_lexical
 from memorymaster.govern.review import build_review_queue, queue_to_dicts
 from memorymaster.govern.steward import list_steward_proposals
@@ -88,11 +88,13 @@ def conflicts_payload(
         )
         return rows, len(rows) < size
 
-    # Store-level read: it bypasses the service, so the tenant filter is passed in
-    # the query and the visibility rule is applied while paging, so another
-    # agent's private rows cannot use up the window.
+    # Store-level read: it bypasses the service, so apply the service's policy
+    # (tenant, visibility, sensitivity) while paging, as for `conflicted` above.
     active = page_authorized_lexical(
-        fetch, window, lambda rows: _filter_agent_visibility(rows, requesting_agent),
+        fetch, window,
+        lambda rows: authorize_claims(
+            rows, requesting_agent=requesting_agent, tenant_id=getattr(service, "tenant_id", None),
+        ),
     )
     grouped: dict[tuple[str, str, str], list[Any]] = {}
     for claim in conflicted:
