@@ -706,7 +706,6 @@ class _LifecycleMixin:
         ]
         if not stale:
             return 0
-        requested_model = provider.model
         batch = getattr(provider, "embed_batch", None)
         embeddings = (
             batch([texts[claim.id] for claim in stale])
@@ -715,13 +714,6 @@ class _LifecycleMixin:
         )
         if len(embeddings) != len(stale):
             raise ValueError("embedding provider returned an incomplete batch")
-        if provider.model != requested_model:
-            stale = list(claims)
-            embeddings = (
-                batch([texts[claim.id] for claim in stale])
-                if callable(batch)
-                else [provider.embed(texts[claim.id]) for claim in stale]
-            )
         now = utc_now()
         rows = [
             (claim.id, provider.model, hashes[claim.id], json.dumps(embedding), now)

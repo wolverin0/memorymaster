@@ -33,7 +33,7 @@ from typing import Any
 from memorymaster.core import llm_provider
 from memorymaster.core import llm_budget
 from memorymaster.stores._storage_shared import open_conn
-from memorymaster.recall.embeddings import EmbeddingProvider, cosine_similarity, create_best_provider
+from memorymaster.recall.embeddings import EmbeddingProvider, EncoderUnavailable, cosine_similarity, create_best_provider
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.models import Claim, normalize_identity_part, tuple_key
 from memorymaster.core.security import redact_text
@@ -349,6 +349,7 @@ def run_probe(
         "contradictions": 0,
         "flagged_conflicted": 0,
         "aborted_reason": None,
+        "skipped_reason": None,
         "rate": 0.0,
         "rate_ci": [0.0, 0.0],
         "found": [],
@@ -357,7 +358,13 @@ def run_probe(
     claims = service.store.list_claims(limit=limit or 1000, include_citations=False)
     stats["claims_scanned"] = len(claims)
     prov = provider or create_best_provider()
-    pairs = sample_candidate_pairs(claims, prov, sim_low=sim_low, sim_high=sim_high, limit=sample)
+    try:
+        pairs = sample_candidate_pairs(claims, prov, sim_low=sim_low, sim_high=sim_high, limit=sample)
+    except EncoderUnavailable as exc:
+        # No encoder (provider auto without a local model): skip, judge and write nothing.
+        stats["skipped_reason"] = f"encoder unavailable: {exc}"
+        logger.warning("Contradiction probe skipped: %s", stats["skipped_reason"])
+        return stats
     stats["candidate_pairs"] = len(pairs)
     if not pairs:
         return stats

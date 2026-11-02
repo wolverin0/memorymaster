@@ -13,9 +13,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Gemini batch embedding rejects more than 100 requests per call (HTTP 400).
+GEMINI_MAX_BATCH = 100
+
 
 class EncoderUnavailable(RuntimeError):
-    """The embedding model child failed to start or died mid-request (T-2004)."""
+    """No embedding backend can answer: the model child died (T-2004), the provider is
+    unavailable, or a remote embedding call failed. Callers rank lexically instead."""
 
 
 @dataclass(slots=True)
@@ -23,27 +27,10 @@ class EmbeddingProvider:
     model: str = "hash-v1"
     dims: int = 1536
     _transformer: Any = field(default=None, repr=False)
-    # Set True the moment a semantic backend (e.g. Gemini) fails at runtime and
-    # we fall back to hash embeddings. ``model`` also flips to ``hash-v1`` on
-    # downgrade, but this flag preserves the *intent* ("was supposed to be
-    # semantic") so callers can distinguish a genuine hash provider from a
-    # degraded one and recompute their semantic-vector filter accordingly.
-    degraded: bool = field(default=False, repr=True)
 
     @property
     def is_semantic(self) -> bool:
-        """Return True if this provider produces real semantic embeddings.
-
-        Returns False once :attr:`degraded` is set, even before ``model`` is
-        inspected, so a provider that silently fell back to hash mid-flight is
-        never reported as semantic. Callers that captured ``is_semantic``
-        BEFORE the first :meth:`embed` should re-read it AFTER embedding (the
-        Gemini downgrade happens lazily on first call) to keep any
-        ``semantic_vectors`` retrieval filter from staying on a lenient
-        vector-only path against non-semantic hash vectors.
-        """
-        if self.degraded:
-            return False
+        """True if this provider produces real semantic embeddings (not hash-v1)."""
         return not self.model.startswith("hash")
 
     def embed(self, text: str) -> list[float]:
@@ -74,77 +61,67 @@ class EmbeddingProvider:
         self.dims = len(embedding)
         return embedding.tolist()
 
-    def _gemini_embed(self, text: str) -> list[float]:
-        if self._transformer is None:
-            self._transformer = _load_gemini_client()
-        gemini_model = self.model.split(":", 1)[1]
+    def _gemini_call(self, contents: Any, units: int) -> Any:
+        """One Gemini embed_content request; any failure is EncoderUnavailable, never hash vectors."""
         usage = None
         try:
+            if self._transformer is None:
+                self._transformer = _load_gemini_client()
             from memorymaster.core.usage_ledger import reserve_configured
 
             usage = reserve_configured(
-                operation="embedding", provider="gemini", actor="account"
+                operation="embedding", provider="gemini", actor="account", units=units
             )
-            result = self._transformer.models.embed_content(
-                model=gemini_model,
-                contents=text,
+            return self._transformer.models.embed_content(
+                model=self.model.split(":", 1)[1],
+                contents=contents,
             )
-        except Exception as exc:
-            # Common runtime failures: 404 (model deprecated/renamed), 503
-            # (high demand), timeout, quota exhausted. Fall back to hash-v1
-            # so the retrieval pipeline degrades gracefully to BM25-only
-            # rather than blowing up. Downgrade permanently for this
-            # provider instance so we don't retry per-call.
-            logger.warning(
-                "Gemini embed_content failed (%s); falling back to hash-v1 for this provider",
-                exc,
-            )
-            self.model = "hash-v1"
-            self.dims = 1536
-            self.degraded = True
-            return hash_embed(text, dims=self.dims)
+        except Exception as exc:  # incl. UsageQuotaExceeded, 4xx/5xx, timeout, missing client
+            raise EncoderUnavailable(f"Gemini embedding failed ({type(exc).__name__}: {str(exc)[:200]})") from exc
         finally:
             if usage is not None:
                 usage[0].finish(usage[1], outcome="attempted")
-        vec = result.embeddings[0].values
+
+    def _gemini_embed(self, text: str) -> list[float]:
+        vec = self._gemini_call(text, units=1).embeddings[0].values
         self.dims = len(vec)
         return normalize(list(vec))
 
     def _gemini_embed_batch(self, texts: list[str]) -> list[list[float]]:
-        if self._transformer is None:
-            self._transformer = _load_gemini_client()
-        gemini_model = self.model.split(":", 1)[1]
-        usage = None
-        try:
-            from memorymaster.core.usage_ledger import reserve_configured
-
-            usage = reserve_configured(
-                operation="embedding",
-                provider="gemini",
-                actor="account",
-                units=len(texts),
-            )
-            result = self._transformer.models.embed_content(
-                model=gemini_model,
-                contents=texts,
-            )
-        except Exception as exc:
-            logger.warning(
-                "Gemini batch embedding failed (%s); falling back to hash-v1",
-                exc,
-            )
-            self.model = "hash-v1"
-            self.dims = 1536
-            self.degraded = True
-            return [hash_embed(text, dims=self.dims) for text in texts]
-        finally:
-            if usage is not None:
-                usage[0].finish(usage[1], outcome="attempted")
-        vectors = [normalize(list(item.values)) for item in result.embeddings]
-        if len(vectors) != len(texts):
-            raise ValueError("embedding provider returned an incomplete batch")
+        if not texts:
+            return []
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), GEMINI_MAX_BATCH):
+            chunk = texts[start : start + GEMINI_MAX_BATCH]
+            result = self._gemini_call(chunk, units=len(chunk))
+            part = [normalize(list(item.values)) for item in result.embeddings]
+            if len(part) != len(chunk):
+                raise ValueError("embedding provider returned an incomplete batch")
+            vectors.extend(part)
         self.dims = len(vectors[0])
         return vectors
+
+
+@dataclass(slots=True)
+class UnavailableProvider(EmbeddingProvider):
+    """Stand-in when no embedding backend was selected or could load.
+
+    Every embed call raises :class:`EncoderUnavailable`, so ``query_rows`` ranks lexically and
+    steward jobs skip, instead of silently producing hash vectors or sending text anywhere.
+    """
+
+    model: str = "unavailable"
+    reason: str = "no embedding backend is available"
+
+    @property
+    def is_semantic(self) -> bool:
+        return False
+
+    def embed(self, text: str) -> list[float]:
+        raise EncoderUnavailable(self.reason)
+
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        raise EncoderUnavailable(self.reason)
 
 
 def create_semantic_provider(model: str = "all-MiniLM-L6-v2") -> EmbeddingProvider:
@@ -194,56 +171,52 @@ _PROVIDER_ALIASES = {
 def configured_embedding_provider() -> str:
     """Operator-selected provider: auto, sentence-transformers, gemini or hash.
 
-    ``auto`` (default, also for unknown values) keeps the historical priority.
+    Unknown values read as ``auto``.
     """
     raw = os.environ.get(ENV_EMBEDDING_PROVIDER, "auto").strip().lower()
     return _PROVIDER_ALIASES.get(raw, "auto")
 
 
 def create_best_provider() -> EmbeddingProvider:
-    """Auto-detect the best available embedding provider.
+    """Pick the embedding provider the operator asked for; never egress or fake vectors implicitly.
 
-    Priority:
-      1. sentence-transformers (all-MiniLM-L6-v2) -- local, fast, 384-dim
-      2. Gemini embedding API -- requires API key, 768-dim
-      3. hash-v1 fallback -- deterministic, no semantic understanding
+    * ``auto`` (default): local sentence-transformers if it loads, else an
+      :class:`UnavailableProvider`. It never selects Gemini (that sends claim text and queries
+      to Google) and never selects hash.
+    * ``sentence-transformers``: the same, explicitly.
+    * ``gemini``: the Gemini embedding API; the only way to send text to Google. Needs a key
+      and google-genai, else unavailable.
+    * ``hash``: deterministic hash-v1 vectors, the only way to get them (tests).
 
-    ``MEMORYMASTER_EMBEDDING_PROVIDER`` narrows the chain: ``hash`` skips
-    both semantic backends, ``gemini`` skips sentence-transformers and
-    ``sentence-transformers`` skips Gemini; each still falls back to hash.
-
-    Returns the best available provider without raising errors.
+    Never raises; an unusable choice yields an :class:`UnavailableProvider`
+    (embed -> EncoderUnavailable).
     """
     choice = configured_embedding_provider()
     if choice == "hash":
         return EmbeddingProvider(model="hash-v1", dims=1536)
 
-    # 1. Try sentence-transformers
-    if choice in {"auto", "sentence-transformers"}:
-        try:
-            provider = create_semantic_provider("all-MiniLM-L6-v2")
-            logger.info("Using sentence-transformers (all-MiniLM-L6-v2) for embeddings")
-            return provider
-        except ImportError:
-            logger.debug("sentence-transformers not installed, trying Gemini API")
-        except Exception as exc:
-            logger.warning("sentence-transformers failed to load: %s", exc)
-
-    # 2. Try Gemini API
-    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if gemini_key and choice in {"auto", "gemini"}:
+    if choice == "gemini":
+        gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+        if not gemini_key:
+            return UnavailableProvider(reason="Gemini embeddings selected but no API key is set")
         try:
             provider = create_gemini_provider(api_key=gemini_key)
-            logger.info("Using Gemini embedding API for embeddings")
-            return provider
-        except ImportError:
-            logger.debug("google-genai not installed, falling back to hash embeddings")
-        except Exception as exc:
-            logger.warning("Gemini embedding API failed: %s", exc)
+        except Exception as exc:  # ImportError: google-genai missing; others: client setup
+            logger.warning("Gemini embedding API unavailable: %s", type(exc).__name__)
+            return UnavailableProvider(reason=f"Gemini embeddings unavailable ({type(exc).__name__})")
+        logger.info("Using Gemini embedding API for embeddings (explicitly configured)")
+        return provider
 
-    # 3. Fallback
-    logger.info("Using hash-v1 fallback embeddings (no semantic understanding)")
-    return EmbeddingProvider(model="hash-v1", dims=1536)
+    try:
+        provider = create_semantic_provider("all-MiniLM-L6-v2")
+    except ImportError as exc:
+        logger.info("sentence-transformers not installed; embeddings unavailable (lexical ranking)")
+        return UnavailableProvider(reason=f"sentence-transformers is not installed: {exc}")
+    except Exception as exc:
+        logger.warning("sentence-transformers failed to load: %s", exc)
+        return UnavailableProvider(reason=f"sentence-transformers failed to load ({type(exc).__name__})")
+    logger.info("Using sentence-transformers (all-MiniLM-L6-v2) for embeddings")
+    return provider
 
 
 # One loaded model per process: the shared HTTP server builds a service per
@@ -282,7 +255,7 @@ def _load_transformer(model: str) -> Any:
         raise ImportError(
             "sentence-transformers is required for semantic embeddings. "
             "Install with: pip install sentence-transformers\n"
-            "Or use the default hash-v1 model (no dependencies, but not semantic)."
+            "Without it, hybrid recall ranks lexically (or set MEMORYMASTER_EMBEDDING_PROVIDER=hash for tests)."
         ) from e
     with _TRANSFORMERS_LOCK:
         transformer = _TRANSFORMERS.get(model)

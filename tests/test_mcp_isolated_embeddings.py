@@ -73,12 +73,12 @@ def test_a_hybrid_embedding_goes_through_the_child_not_this_process(monkeypatch)
             transformer.close()
 
 
-def test_a_dead_child_falls_back_like_a_missing_model(monkeypatch):
+def test_a_dead_child_is_an_unavailable_provider_not_hash(monkeypatch):
     _isolate(monkeypatch, [sys.executable, "-c", "raise SystemExit(3)"])
     monkeypatch.setenv("MEMORYMASTER_EMBEDDING_PROVIDER", "sentence-transformers")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    assert embeddings.create_best_provider().model == "hash-v1"
+    assert isinstance(embeddings.create_best_provider(), embeddings.UnavailableProvider)
 
 
 def test_without_the_package_the_isolated_path_raises_import_error(monkeypatch):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from memorymaster.recall.embeddings import EmbeddingProvider
+from memorymaster.recall.embeddings import EmbeddingProvider, UnavailableProvider
 from memorymaster.govern.jobs.dedup import (
     _pick_survivor,
     _subject_predicate_match,
@@ -246,6 +246,20 @@ class TestRunIntegration:
         claims = service.list_claims(include_archived=True)
         archived = [c for c in claims if c.status == "archived"]
         assert len(archived) == 0
+
+    def test_unavailable_encoder_skips_and_writes_nothing(self, service, caplog):
+        self._ingest(service, "Python version is 3.12")
+        self._ingest(service, "Python version is 3.12")
+        service.embedding_provider = UnavailableProvider(reason="no local encoder")
+        with caplog.at_level("WARNING", logger="memorymaster.govern.jobs.dedup"):
+            result = service.dedup(dry_run=False)
+        assert result["skipped_reason"] == "encoder unavailable: no local encoder"
+        assert result["duplicates_found"] == 0
+        assert result["claims_archived"] == 0
+        assert result["pairs"] == []
+        assert "Dedup skipped" in caplog.text
+        assert not [c for c in service.list_claims(include_archived=True) if c.status == "archived"]
+        assert not [e for e in service.list_events(limit=50) if e.event_type == "dedup_run"]
 
     def test_dedup_archives_duplicate(self, service):
         self._ingest(service, "Python version is 3.12")

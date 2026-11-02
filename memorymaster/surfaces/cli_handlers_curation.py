@@ -435,6 +435,8 @@ def _handle_detect_contradictions(args: argparse.Namespace, service, parser: arg
     else:
         ci = result["rate_ci"]
         abort = f", ABORTED ({result['aborted_reason']})" if result.get("aborted_reason") else ""
+        if result.get("skipped_reason"):
+            abort += f", SKIPPED ({result['skipped_reason']})"
         print(
             f"Contradictions: {result['contradictions']}/{result['judged']} judged "
             f"(rate={result['rate']:.2f} CI95=[{ci[0]:.2f},{ci[1]:.2f}]) from "

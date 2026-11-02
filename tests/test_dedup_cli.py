@@ -118,3 +118,31 @@ def test_dedup_scope_skips_claims_from_other_scopes(monkeypatch):
     assert rc == 0
     assert fake_service.provider is not None
     assert fake_service.provider.texts == ["claim 1", "claim 2", "claim 3"]
+
+
+def _unavailable_service(monkeypatch):
+    import memorymaster.surfaces.cli as cli
+    from memorymaster.core.service import MemoryService
+    from memorymaster.recall.embeddings import UnavailableProvider
+
+    class UnavailableService(MemoryService):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.embedding_provider = UnavailableProvider(reason="no local encoder")
+
+    monkeypatch.setattr(cli, "MemoryService", UnavailableService)
+    return cli
+
+
+def test_dedup_text_output_reports_skipped_when_no_encoder(tmp_path, monkeypatch, capsys):
+    cli = _unavailable_service(monkeypatch)
+    db = str(tmp_path / "skip.db")
+    assert cli.main(["--db", db, "init-db"]) == 0
+    for text in ("skip claim alpha", "skip claim beta"):
+        assert cli.main(["--db", db, "ingest", "--text", text, "--source", "s1"]) == 0
+    capsys.readouterr()
+
+    rc = cli.main(["--db", db, "dedup", "--dry-run"])
+
+    assert rc == 0
+    assert " SKIPPED (encoder unavailable: no local encoder)" in capsys.readouterr().out

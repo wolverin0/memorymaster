@@ -16,6 +16,7 @@ from memorymaster.govern import contradiction_probe
 from memorymaster.core.config import reset_config
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService
+from memorymaster.recall.embeddings import UnavailableProvider
 
 
 class _FakeProvider:
@@ -95,6 +96,19 @@ def test_probe_finds_planted_contradiction(env):
     assert found["reason"]
     # CI must bracket the point rate.
     assert stats["rate_ci"][0] <= stats["rate"] <= stats["rate_ci"][1]
+
+
+def test_probe_skips_cleanly_when_the_encoder_is_unavailable(env, caplog):
+    db, svc, holder, _prov = env
+    prov = UnavailableProvider(reason="no local encoder")
+    with caplog.at_level("WARNING", logger="memorymaster.govern.contradiction_probe"):
+        stats = contradiction_probe.run_probe(db, svc, provider=prov, apply=True)
+    assert stats["skipped_reason"] == "encoder unavailable: no local encoder"
+    assert stats["claims_scanned"] == 3
+    assert stats["candidate_pairs"] == 0
+    assert stats["judged"] == 0 and stats["flagged_conflicted"] == 0
+    assert holder["calls"] == 0
+    assert "Contradiction probe skipped" in caplog.text
 
 
 def test_probe_skip_rule_uses_the_persisted_tuple_identity():
@@ -401,3 +415,17 @@ def test_ensure_verdict_table_runs_ddl_once_per_db(env, monkeypatch):
     assert ddl_runs["n"] == 1, f"DDL issued {ddl_runs['n']} times, expected 1"
     # And the guard now records this DB as ensured.
     assert str(db) in cp._ensured_verdict_dbs
+
+
+def test_detect_contradictions_text_output_reports_skipped_when_no_encoder(env, monkeypatch, capsys):
+    from memorymaster.surfaces import cli
+
+    db, _svc, _holder, _prov = env
+    monkeypatch.setattr(
+        contradiction_probe, "create_best_provider", lambda: UnavailableProvider(reason="no local encoder")
+    )
+
+    rc = cli.main(["--db", db, "detect-contradictions"])
+
+    assert rc == 0
+    assert " SKIPPED (encoder unavailable: no local encoder)" in capsys.readouterr().out

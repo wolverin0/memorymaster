@@ -1306,7 +1306,8 @@ def _handle_dedup(args: argparse.Namespace, service, parser: argparse.ArgumentPa
         print(_json_envelope(result, query_ms=elapsed_ms))
     else:
         print(f"dedup [{'DRY RUN' if result['dry_run'] else 'APPLIED'}] scanned={result['scanned']} "
-              f"duplicates={result['duplicates_found']} archived={result['claims_archived']} threshold={result['threshold']}")
+              f"duplicates={result['duplicates_found']} archived={result['claims_archived']} threshold={result['threshold']}"
+              + (f" SKIPPED ({result['skipped_reason']})" if result.get("skipped_reason") else ""))
         for pair in result["pairs"]:
             print(f"  dup: keep={pair['keep_id']} archive={pair['archive_id']} sim={pair['similarity']:.4f} overlap={pair['text_overlap']:.4f}\n"
                   f"    keep:    {pair['keep_text'][:80]}\n    archive: {pair['archive_text'][:80]}")

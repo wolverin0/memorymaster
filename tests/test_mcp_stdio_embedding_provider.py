@@ -71,7 +71,7 @@ def test_hash_provider_config_never_loads_sentence_transformers(monkeypatch):
     assert provider.model == "hash-v1"
 
 
-def test_gemini_provider_config_falls_back_to_hash_not_sentence_transformers(monkeypatch):
+def test_gemini_provider_config_without_a_key_is_unavailable_not_hash(monkeypatch):
     monkeypatch.setenv("MEMORYMASTER_EMBEDDING_PROVIDER", "gemini")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
@@ -79,7 +79,7 @@ def test_gemini_provider_config_falls_back_to_hash_not_sentence_transformers(mon
         embeddings, "create_semantic_provider",
         lambda *a, **k: pytest.fail("gemini configuration loaded sentence-transformers"),
     )
-    assert embeddings.create_best_provider().model == "hash-v1"
+    assert isinstance(embeddings.create_best_provider(), embeddings.UnavailableProvider)
 
 
 def test_unknown_provider_value_keeps_auto_behaviour(monkeypatch):
