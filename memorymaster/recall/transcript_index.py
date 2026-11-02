@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS files (
     mtime_ns INTEGER NOT NULL,
     offset INTEGER NOT NULL,
     lines INTEGER NOT NULL,
-    prefix_sha TEXT NOT NULL
+    prefix_sha TEXT NOT NULL,
+    automated INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS fragments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,6 +147,12 @@ def _connect(index_path: Path) -> tuple[sqlite3.Connection, bool]:
         conn.execute("VACUUM")
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         rebuilt = True
+    elif has_tables and "automated" not in {r[1] for r in conn.execute("PRAGMA table_info(files)")}:
+        # T-2077 L28: additive, so a current-format index is not made unservable. Sessions that stored no
+        # fragment are treated as skipped-automated once (a tool-only session just gets re-parsed, harmlessly).
+        conn.execute("ALTER TABLE files ADD COLUMN automated INTEGER NOT NULL DEFAULT 0")
+        conn.execute("UPDATE files SET automated = 1 WHERE session_id NOT IN (SELECT DISTINCT session_id FROM fragments)")
+        conn.commit()
     conn.executescript(_SCHEMA)
     conn.execute(f"PRAGMA user_version = {int(FORMAT_VERSION)}")
     return conn, rebuilt
@@ -254,8 +261,7 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, 
     carries the headless-session entrypoint; the caller records the file as seen.
 
     Fragments are ``(scope, date, first_line, last_line, text)``; scope comes from each record's own ``cwd``
-    and a fragment never spans two scopes.  An unterminated trailing line that is not valid JSON is left for
-    the next run.
+    and a fragment never spans two scopes.  An unterminated trailing line is left for the next run.
     """
     fragments: list[tuple[str, str, int, int, str]] = []
     buf: list[str] = []
@@ -273,13 +279,12 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, 
     with path.open("rb") as fh:
         fh.seek(offset)
         for raw in fh:
-            complete = raw.endswith(b"\n")
+            if not raw.endswith(b"\n"):
+                break  # unterminated (even if it parses): re-read next time, so line numbers stay put
             try:
                 record = json.loads(raw)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 record = None
-                if not complete:
-                    break  # partial write: re-read next time
             offset += len(raw)
             hasher.update(raw)
             this_line = line_no
@@ -365,12 +370,17 @@ def index_transcripts(
             rel = path.relative_to(root).as_posix()
             sid = session_id_for(root, path)
             row = conn.execute("SELECT * FROM files WHERE rel = ?", (rel,)).fetchone()
-            if row and row["size"] == st.st_size and row["mtime_ns"] == st.st_mtime_ns:
+            # a session skipped as automated stored no fragments: --include-automated must re-parse it, and an
+            # appended one is re-read from the start (its marker is in the head, not the tail)
+            was_automated = bool(row and row["automated"])
+            if (row and row["size"] == st.st_size and row["mtime_ns"] == st.st_mtime_ns
+                    and not (was_automated and include_automated)):
                 stats["files_skipped"] += 1
                 continue
             offset, line_no = 0, 0
             try:
-                hasher = _verified_prefix(path, row["offset"], row["prefix_sha"]) if row and st.st_size >= row["offset"] else None
+                resumable = row and st.st_size >= row["offset"] and not was_automated
+                hasher = _verified_prefix(path, row["offset"], row["prefix_sha"]) if resumable else None
                 if hasher is not None:
                     offset, line_no = row["offset"], row["lines"]
                 else:
@@ -393,9 +403,10 @@ def index_transcripts(
                     )
                     conn.execute("INSERT INTO fragments_fts(rowid, text) VALUES (?, ?)", (cur.lastrowid, text))
                 conn.execute(
-                    "INSERT OR REPLACE INTO files(rel, session_id, size, mtime_ns, offset, lines, prefix_sha) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (rel, sid, st.st_size, st.st_mtime_ns, new_offset, new_lines, hasher.hexdigest()),
+                    "INSERT OR REPLACE INTO files(rel, session_id, size, mtime_ns, offset, lines, prefix_sha, automated) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (rel, sid, st.st_size, st.st_mtime_ns, new_offset, new_lines, hasher.hexdigest(),
+                     int(automated)),
                 )
             if automated:
                 stats["files_automated"] += 1

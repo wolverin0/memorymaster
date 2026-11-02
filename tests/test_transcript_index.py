@@ -361,3 +361,69 @@ def test_cli_search_tells_the_operator_to_rebuild_an_outdated_index(tmp_path, ca
     monkeypatch.chdir(tmp_path)
     assert cli_main(["transcript-search", "zebra gateway", "--index", str(idx)]) == 0
     assert "memorymaster transcript-index" in capsys.readouterr().out
+
+
+def _automated_pair(root: Path) -> Path:
+    path = root / "p" / "auto.jsonl"
+    _write(path, [
+        _rec("user", "Answer only from the supplied context about the ocelot gateway.", "2026-05-01T00:00:00Z",
+             entrypoint="sdk-cli"),
+    ])
+    return path
+
+
+def test_t2077_l28_include_automated_reindexes_a_session_skipped_earlier(tmp_path):
+    root = tmp_path / "projects"
+    _automated_pair(root)
+    idx = tmp_path / "t.db"
+    assert ti.index_transcripts(root, idx)["files_automated"] == 1
+    assert ti.search("ocelot gateway", idx) == []
+    # same sidecar, same untouched file: the flag must make --include-automated parse it
+    stats = ti.index_transcripts(root, idx, include_automated=True)
+    assert stats["files_indexed"] == 1 and stats["files_skipped"] == 0
+    assert len(ti.search("ocelot gateway", idx)) == 1
+
+
+def test_t2077_l28_an_appended_automated_session_is_not_indexed_from_its_tail(tmp_path):
+    root = tmp_path / "projects"
+    path = _automated_pair(root)
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    with path.open("a", encoding="utf-8") as fh:  # tail carries no automated marker of its own
+        fh.write(_rec("assistant", "A later ocelot gateway note without the headless marker.", "2026-05-02T00:00:00Z") + "\n")
+    stats = ti.index_transcripts(root, idx)
+    assert stats["files_automated"] == 1 and stats["fragments_added"] == 0
+    assert ti.search("ocelot gateway", idx) == []
+
+
+def test_t2077_l29_an_unterminated_valid_json_line_keeps_line_numbers(tmp_path):
+    root = tmp_path / "projects"
+    path = root / "p" / "s.jsonl"
+    first = _rec("user", "First message about the capybara gateway budget.", "2026-02-02T00:00:00Z")
+    second = _rec("assistant", "Second message about the capybara gateway budget.", "2026-02-02T00:00:01Z")
+    path.parent.mkdir(parents=True)
+    path.write_text(first + "\n" + second, encoding="utf-8")  # valid JSON, no trailing newline yet
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    path.write_text(first + "\n" + second + "\n" + _rec(
+        "user", "Third message about the capybara gateway budget.", "2026-02-02T00:00:02Z") + "\n", encoding="utf-8")
+    ti.index_transcripts(root, idx)
+    with sqlite3.connect(idx) as con:
+        spans = sorted(tuple(r) for r in con.execute("SELECT first_line, last_line FROM fragments"))
+    covered = {n for a, b in spans for n in range(a, b + 1)}
+    assert covered == {0, 1, 2}
+
+
+def test_t2077_l28_a_current_format_index_without_the_flag_is_migrated_not_dropped(tmp_path):
+    root = tmp_path / "projects"
+    _automated_pair(root)
+    _write(root / "p" / "human.jsonl", [
+        _rec("user", "Interactive question about the ocelot gateway timeout.", "2026-05-02T00:00:00Z")])
+    idx = tmp_path / "t.db"
+    ti.index_transcripts(root, idx)
+    with sqlite3.connect(idx) as con:  # shape of an index built before the flag existed
+        con.execute("ALTER TABLE files DROP COLUMN automated")
+    assert ti.index_status(idx) == "ok"
+    stats = ti.index_transcripts(root, idx, include_automated=True)
+    assert stats["rebuilt"] == 0 and stats["files_indexed"] == 1 and stats["files_skipped"] == 1
+    assert len(ti.search("ocelot gateway", idx)) == 2  # the skipped session is back, the human one kept

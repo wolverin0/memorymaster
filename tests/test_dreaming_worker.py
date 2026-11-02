@@ -1866,3 +1866,24 @@ def test_claude_extractor_is_not_blocked_by_the_daily_extract_caps(tmp_path: Pat
     assert result["deferred_extract_budget"] == 0
     assert result["extracted"] == 1
     assert ledger.get_capture(capture_id)["state"] != "captured"
+
+
+def test_t2077_m7_a_budget_deferral_reopens_released_and_never_held_candidates():
+    def cand(cid, status=None):
+        payload = {"candidate_id": cid}
+        if status:
+            payload["jev_ingest"] = {"status": status}
+        return payload
+
+    row = {
+        "deferred_reason": "consolidate_budget",
+        "extraction": [cand("a", "released"), cand("b"), cand("c", "held"), cand("d", "released"), cand("e")],
+        "decisions": [{"candidate_id": "d", "action": "ignore"}, {"candidate_id": "e", "action": "ignore"}],
+    }
+    reopened = DreamWorker._reopened(row)
+    assert [p["candidate_id"] for p in reopened["released"]] == ["a", "b"]  # released-undecided AND never-held
+    assert reopened["decisions"] is None and reopened["base_decisions"] == row["decisions"]
+
+    # without a budget deferral only the released-undecided candidates reopen
+    plain = DreamWorker._reopened({**row, "deferred_reason": None})
+    assert [p["candidate_id"] for p in plain["released"]] == ["a"]

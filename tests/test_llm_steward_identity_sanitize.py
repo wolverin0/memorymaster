@@ -168,3 +168,33 @@ def test_duplicate_lookup_still_merges_within_one_identity(db, monkeypatch):
     _candidate(db, visibility="private", source_agent="alice")
     _run(db, monkeypatch, [{"subject": "first", "predicate": "p", "object_value": "NEW", "confidence": 0.9}])
     assert _rows(db, "SELECT object_value FROM claims WHERE id=?", (twin,))[0]["object_value"] == "NEW"
+
+
+def test_t2077_l31_a_sensitive_extra_new_row_is_counted_once(db, monkeypatch):
+    from memorymaster.core import observability
+
+    observability.reset_metrics()
+    _candidate(db)
+    _run(db, monkeypatch, [
+        {"subject": "first", "predicate": "p", "object_value": "ok", "confidence": 0.8},
+        {"subject": "extra-b", "predicate": f"p {SECRET}", "object_value": "ok", "confidence": 0.8},
+    ])
+    total = sum(count for (name, _labels), count in observability._COUNTERS.items()
+                if name == "claims_filtered_total")
+    assert total == 1
+
+
+def test_t2077_l30_extra_insert_carries_the_identity_columns(db, monkeypatch):
+    from memorymaster.core.models import tuple_key
+    from memorymaster.stores.claim_identity import content_fingerprint
+
+    _candidate(db)
+    _run(db, monkeypatch, [
+        {"subject": "first", "predicate": "p", "object_value": "v1", "confidence": 0.8},
+        {"subject": "Extra-B", "predicate": "p", "object_value": "v2", "confidence": 0.8},
+    ])
+    row = _rows(db, "SELECT text, content_fingerprint, tuple_key, last_evidence_at FROM claims "
+                    "WHERE subject='Extra-B'")[0]
+    assert row["content_fingerprint"] == content_fingerprint(row["text"])
+    assert row["tuple_key"] == tuple_key("Extra-B", "p")
+    assert row["last_evidence_at"]
