@@ -629,11 +629,12 @@ class DreamWorker:
         """S3: consolidate released candidates of a decided capture, keeping its decisions."""
         if row.get("decisions") is None:
             return row
-        released = held.released_undecided(row.get("extraction"), row.get("decisions"))
-        if not released and row.get("deferred_reason") == "consolidate_budget":
+        if row.get("deferred_reason") == "consolidate_budget":
             # A budget deferral that kept the decisions of its completed batches (T-1877, review N4):
-            # only the candidates without a decision still need a call.
+            # every candidate without a decision still needs a call, released or never held (T-2077 M7).
             released = held.undecided(row.get("extraction"), row.get("decisions"))
+        else:
+            released = held.released_undecided(row.get("extraction"), row.get("decisions"))
         if not released:
             return row
         return {**row, "decisions": None, "base_decisions": list(row["decisions"]), "released": released}

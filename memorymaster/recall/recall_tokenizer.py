@@ -371,14 +371,15 @@ def _score_tokens(resolved, total_docs, df, aliases, idents: frozenset[str]) -> 
         score = idf
         if best_form in aliases:
             score += 2.0
-        if best_form in idents or source in idents:
+        is_ident = best_form in idents or source in idents
+        if is_ident:
             score += 1.5  # an identifier the author quoted or shaped (`fstrim`, a_b, v2): never crowded out
         if best_form in _TECH_TERMS:
             # Technical abbreviations always escape the df=0 penalty
             # and get a small boost on top of IDF so short but real
             # terms like "llm" or "mcp" surface.
             score += 1.5
-        elif total_docs > 0 and freq == 0:
+        elif total_docs > 0 and freq == 0 and not is_ident:  # identifiers may live only in transcripts (T-2077 L27)
             # df=0 tokens cannot match any document: demote hard.
             score -= _DF_ZERO_PENALTY
         if len(best_form) >= 6:
