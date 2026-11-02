@@ -56,6 +56,53 @@ def test_sending_without_a_relay_host_fails_loudly_instead_of_guessing_one(diges
         digest.deliver_telegram("hola")
 
 
+@pytest.mark.parametrize("model,expected", [
+    ("gemini-3.1-flash-lite", {"thinkingLevel": "minimal"}),  # the model the scheduled wrapper sets
+    ("gemini-flash-latest", None),  # the non-lite alias answers HTTP 400 to MINIMAL
+])
+def test_synthesize_uses_the_shared_thinking_guard(digest, monkeypatch, model, expected):
+    """L21: the inline guard missed the versioned lite model and sent MINIMAL to the non-lite alias."""
+    import json
+
+    sent = {}
+
+    class _Resp:
+        def read(self):
+            return b'{"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}'
+
+    def fake_urlopen(req, timeout=0):
+        sent["gen"] = json.loads(req.data)["generationConfig"]
+        return _Resp()
+
+    monkeypatch.setattr(digest, "MODEL", model)
+    monkeypatch.setattr(digest, "_load_gemini_key", lambda: "k")
+    monkeypatch.setattr(digest.urllib.request, "urlopen", fake_urlopen)
+    digest.synthesize([])
+    assert sent["gen"].get("thinkingConfig") == expected
+
+
+def test_a_failed_delivery_is_not_reported_as_success(digest, monkeypatch, tmp_path):
+    """L22: returncode was ignored and curl ran without -f, so a hidden task looked fine."""
+    import subprocess
+
+    seen = {}
+
+    def fake_run(cmd, **kwargs):
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 22, "", "curl: (22) HTTP 500")
+
+    monkeypatch.setattr(digest, "VM", "relay-host")
+    monkeypatch.setattr(digest, "OUTDIR", str(tmp_path))
+    monkeypatch.setattr(digest.subprocess, "run", fake_run)
+    monkeypatch.setattr(digest, "recent_claims", lambda: [("event", "s", "t", None)])
+    monkeypatch.setattr(digest, "synthesize", lambda rows: "digest")
+    monkeypatch.setattr(digest, "curation_tally", lambda: "")
+    monkeypatch.setattr(digest.sys, "argv", ["digest"])
+    monkeypatch.delenv("DIGEST_NO_SEND", raising=False)
+    assert digest.main() != 0
+    assert "curl -sSf" in seen["cmd"][-1]
+
+
 def test_the_script_names_no_maintainer_address_or_home():
     source = SCRIPT.read_text(encoding="utf-8")
     assert "192.168." not in source and "_OneDrive" not in source and "pauol" not in source
