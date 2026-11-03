@@ -50,6 +50,36 @@ def _actor_hash(actor: str) -> str:
     return hashlib.sha256((actor or "unknown").encode("utf-8")).hexdigest()
 
 
+# Embedding API spend partitions (units = estimated tokens). A reindex draws on the
+# document partition so it cannot starve prompt-time queries. Worst case
+# 2.5 M estimated tokens/day is under USD 0.6/day at USD 0.20 per M tokens.
+EMBED_QUERY_OPERATION = "embedding_query_tokens"
+EMBED_DOC_OPERATION = "embedding_doc_tokens"
+_EMBED_LIMITS: dict[str, tuple[str, int]] = {
+    EMBED_QUERY_OPERATION: ("MEMORYMASTER_MAX_EMBED_QUERY_TOKENS_PER_DAY", 1_000_000),
+    EMBED_DOC_OPERATION: ("MEMORYMASTER_MAX_EMBED_DOC_TOKENS_PER_DAY", 1_500_000),
+}
+
+
+def default_ledger_path() -> Path:
+    configured = os.environ.get("MEMORYMASTER_USAGE_LEDGER_DB", "").strip()
+    return Path(configured) if configured else Path.home() / ".memorymaster" / "usage-ledger.db"
+
+
+def embed_token_limit(operation: str) -> int:
+    """Daily token cap for an embedding partition. Unlike the other caps, a literal 0
+    is a zero budget (everything capped), not "unlimited"; unparseable values fall
+    back to the default."""
+    name, default = _EMBED_LIMITS[operation]
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return default
+
+
 def _env_int(name: str) -> int:
     try:
         return max(0, int(os.environ.get(name, "0")))
@@ -121,6 +151,18 @@ class UsageLedger:
         finally:
             conn.close()
 
+    def total(self, operation: str, *, window_key: str | None = None) -> int:
+        """Units reserved in ``operation`` for the window (default: today, UTC)."""
+        window = window_key or datetime.now(timezone.utc).date().isoformat()
+        with open_conn(self.db_path) as conn:
+            return int(
+                conn.execute(
+                    "SELECT COALESCE(SUM(units), 0) FROM usage_reservations "
+                    "WHERE window_key=? AND operation=?",
+                    (window, operation),
+                ).fetchone()[0]
+            )
+
     def finish(self, reservation: UsageReservation, *, outcome: str) -> None:
         with open_conn(self.db_path) as conn:
             conn.execute(
@@ -145,8 +187,7 @@ def configured_ledger() -> UsageLedger | None:
     )
     if not configured and not any(_env_int(name) for name in cap_names):
         return None
-    path = Path(configured) if configured else Path.home() / ".memorymaster" / "usage-ledger.db"
-    return UsageLedger(path)
+    return UsageLedger(default_ledger_path())
 
 
 def reserve_configured(

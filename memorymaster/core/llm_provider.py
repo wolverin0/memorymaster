@@ -619,7 +619,7 @@ def _http_post(
         )
         record_provider_failure(provider, f"http_{exc.code}", detail=f"HTTP {exc.code}")
         if rotator is not None and rotator_label and exc.code in (429, 403):
-            retry_after = _parse_retry_after(body, exc.headers)
+            retry_after = parse_retry_after(body, exc.headers)
             status = _extract_google_status(body)
             if status in ("PERMISSION_DENIED", "UNAUTHENTICATED") or exc.code == 403:
                 rotator.mark_banned(rotator_label, reason=f"HTTP {exc.code} {status}")
@@ -632,7 +632,7 @@ def _http_post(
         return ""
 
 
-def _parse_retry_after(body: str, headers: Any) -> float | None:
+def parse_retry_after(body: str, headers: Any) -> float | None:
     """Extract seconds-to-retry from Google's 429 body or Retry-After header."""
     if headers is not None:
         h_val = dict(headers).get("Retry-After") if hasattr(headers, "get") else None
@@ -648,6 +648,9 @@ def _parse_retry_after(body: str, headers: Any) -> float | None:
         except ValueError:
             pass
     return None
+
+
+_parse_retry_after = parse_retry_after  # old private name, kept for existing callers/tests
 
 
 def _extract_google_status(body: str) -> str:

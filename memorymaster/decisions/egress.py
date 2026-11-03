@@ -32,6 +32,9 @@ TRUNCATED_MARKER = "[REDACTED:truncated_value]"
 _PRIVACY_FINDINGS = frozenset({"home_path_windows", "home_path_unix", "private_ip_port"})
 CREDENTIAL_FINDINGS: frozenset[str] = frozenset(name for name, _ in _SECRET_PATTERNS) - _PRIVACY_FINDINGS
 
+# _RULES entries that redact credentials rather than privacy classes.
+_CREDENTIAL_RULE_LABELS = frozenset({"url_userinfo", "url_secret"})
+
 _Replacement = Callable[[re.Match[str]], str] | str
 
 # A closing parenthesis, bracket, brace or backtick ends a user name: "(/mnt/c/Users/alice)"
@@ -429,8 +432,17 @@ def _surviving_credentials(text: str) -> list[str]:
     return sorted(findings & CREDENTIAL_FINDINGS)
 
 
-def prepare_egress(text: object, *, max_chars: int = MAX_FIELD_CHARS) -> EgressText:
-    """Redact one field for egress; ``blocked`` means the request must not be sent."""
+def prepare_egress(
+    text: object, *, max_chars: int = MAX_FIELD_CHARS, secrets_only: bool = False
+) -> EgressText:
+    """Redact one field for egress; ``blocked`` means the request must not be sent.
+
+    ``secrets_only`` (operator decision 2026-11-01 for the embedding API) keeps the
+    credential classes (vendor keys, tokens, passwords, connection strings, private
+    keys, URL userinfo and URL query secrets, short credentials, opaque tokens, the
+    surviving-credential block) and leaves the privacy classes (private IPs, emails,
+    phones, home paths, internal hostnames) untouched.
+    """
     raw = "" if text is None else text if isinstance(text, str) else str(text)
     limit = max(int(max_chars), 0)
     # Only the head can be sent; scanning a bounded window (with slack so a secret
@@ -450,8 +462,10 @@ def prepare_egress(text: object, *, max_chars: int = MAX_FIELD_CHARS) -> EgressT
             return EgressText(TRUNCATED_MARKER, {"truncated_value": 1}, False, None, True)
         raw = head[:cut]
     counts: Counter[str] = Counter()
-    out = _redact_encoded_home_paths(raw, counts)
+    out = raw if secrets_only else _redact_encoded_home_paths(raw, counts)
     for label, pattern, replacement in _RULES:
+        if secrets_only and label not in _CREDENTIAL_RULE_LABELS:
+            continue
         before_rule = out
         out, n = pattern.subn(replacement, out)
         if n and label == "phone":  # a candidate with the wrong digit count is kept, not counted
@@ -459,7 +473,9 @@ def prepare_egress(text: object, *, max_chars: int = MAX_FIELD_CHARS) -> EgressT
         if n:
             counts[label] += n
     before_core = out
-    out, core_findings = redact_text(before_core)
+    out, core_findings = redact_text(
+        before_core, skip=_PRIVACY_FINDINGS if secrets_only else frozenset()
+    )
     for name in core_findings:
         added = out.count(f"[REDACTED:{name}]") - before_core.count(f"[REDACTED:{name}]")
         counts[name] += max(added, 1)

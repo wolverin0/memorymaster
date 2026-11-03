@@ -169,14 +169,15 @@ _CLAIM_ONLY_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 # separate from this RFC1918-specific intake rule.
 
 
-def redact_text(text: str) -> tuple[str, list[str]]:
+def redact_text(text: str, *, skip: frozenset[str] = frozenset()) -> tuple[str, list[str]]:
     """Public API: redact secrets from arbitrary text.
 
     Returns (redacted_text, list_of_finding_names). Use this instead of
     defining local regexes in downstream modules — the patterns here are
-    the single source of truth.
+    the single source of truth. ``skip`` names patterns to leave out (the
+    egress secrets-only mode skips the privacy-class ones).
     """
-    return _redact(text)
+    return _redact(text, skip)
 
 _ENCRYPTION_ENV_VAR = "MEMORYMASTER_ENCRYPTION_KEY"
 _SENSITIVE_BYPASS_ENV_VAR = "MEMORYMASTER_ALLOW_SENSITIVE_BYPASS"
@@ -357,10 +358,12 @@ def _match_is_suppressed(name: str, match: re.Match[str]) -> bool:
     return False
 
 
-def _redact(text: str) -> tuple[str, list[str]]:
+def _redact(text: str, skip: frozenset[str] = frozenset()) -> tuple[str, list[str]]:
     findings: list[str] = []
     out = text
     for name, pattern in _SECRET_PATTERNS:
+        if name in skip:
+            continue
         matches = list(pattern.finditer(out))
         if not matches:
             continue
