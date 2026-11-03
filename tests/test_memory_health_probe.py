@@ -27,7 +27,7 @@ probe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(probe)
 
 NOW = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
-CFG = {**probe.CONFIG, "services": {}}
+CFG = {**probe.CONFIG, "services": {}, "dense_url": "http://127.0.0.1:9/health", "service_timeout_s": 1.0}  # port 9: nothing listens
 
 
 @contextlib.contextmanager
@@ -65,8 +65,6 @@ class World:
             for agent in ("claude-session", "llm-stop-hook", "dream-worker"):
                 add_claim(conn, agent, 1)
             cid = add_claim(conn, "claude-session", 2)
-            for row in conn.execute("SELECT id FROM claims").fetchall():
-                conn.execute("INSERT INTO claim_embeddings (claim_id, model, embedding_json, updated_at) VALUES (?, 'm', '[]', ?)", (row[0], iso(1)))
             self.claim_id = cid
         with edit(self.transcripts) as conn:
             conn.execute("CREATE TABLE files (rel TEXT PRIMARY KEY, mtime_ns INTEGER NOT NULL)")
@@ -110,7 +108,7 @@ def test_fresh_stores_pass_every_ingest_check(world):
     checks = world.ingest_checks()
     assert {c["status"] for c in checks.values()} == {"PASS"}, checks
     assert {"ingest.verbatim", "ingest.transcripts", "ingest.claims.session", "ingest.claims.hook",
-            "ingest.claims.dream-worker", "ingest.embeddings", "ingest.embedding_coverage", "ingest.capture_queue"} <= set(checks)
+            "ingest.claims.dream-worker", "ingest.capture_queue"} <= set(checks)
 
 
 def test_a_stale_verbatim_store_fails(world):
@@ -135,17 +133,6 @@ def test_a_silent_claim_source_family_fails(world, agent, check):
     assert [n for n, c in checks.items() if n.startswith("ingest.claims") and c["status"] == "FAIL"] == [check]
 
 
-def test_stale_embeddings_and_poor_coverage_fail_separately(world):
-    with world.rw() as conn:
-        conn.execute("UPDATE claim_embeddings SET updated_at=?", (iso(24 * 20),))
-    checks = world.ingest_checks()
-    assert checks["ingest.embeddings"]["status"] == "FAIL" and checks["ingest.embedding_coverage"]["status"] == "PASS"
-    with world.rw() as conn:
-        for _ in range(20):
-            add_claim(conn, "claude-session", 1, status="candidate")
-    assert world.ingest_checks()["ingest.embedding_coverage"]["status"] == "FAIL"
-
-
 def test_capture_queue_fails_on_backlog_size_and_on_age(world):
     with edit(world.capture) as conn:
         conn.execute("UPDATE dream_captures SET captured_at=?", (iso(24 * 30),))
@@ -160,13 +147,12 @@ def test_capture_queue_fails_on_backlog_size_and_on_age(world):
 
 
 def test_one_unreadable_store_does_not_hide_the_others(world):
-    with world.rw() as conn:
-        conn.execute("DROP TABLE claim_embeddings")  # the DB opens; only the embeddings reads raise
+    with edit(world.transcripts) as conn:
+        conn.execute("DROP TABLE files")  # the file opens; only the transcripts read raises
     checks = world.ingest_checks()
-    assert checks["ingest.embeddings"]["status"] == "FAIL" and "could not run" in checks["ingest.embeddings"]["detail"]
-    assert checks["ingest.embedding_coverage"]["status"] == "FAIL"
+    assert checks["ingest.transcripts"]["status"] == "FAIL" and "could not run" in checks["ingest.transcripts"]["detail"]
     for healthy in ("ingest.verbatim", "ingest.claims.session", "ingest.claims.hook", "ingest.claims.dream-worker",
-                    "ingest.transcripts", "ingest.capture_queue"):
+                    "ingest.capture_queue"):
         assert checks[healthy]["status"] == "PASS", healthy
 
 
@@ -272,6 +258,56 @@ def test_services_pass_only_on_a_healthy_answer(server):
     assert by == {"service.up": "PASS", "service.flag_off": "FAIL", "service.error": "FAIL", "service.down": "FAIL"}
 
 
+# --------------------------------------------------------------------------- dense recall service
+
+@pytest.fixture
+def dense(world):
+    """A fake dense /health; `state` is edited per test. The world has 4 confirmed claims."""
+    state = {"body": {"ok": True, "indexed": 4, "last_sync": NOW.timestamp() - 30, "sync_errors": 0}, "code": 200}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(state["code"])
+            self.end_headers()
+            self.wfile.write(json.dumps(state["body"]).encode())
+
+        def log_message(self, *a):
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    cfg = {**CFG, "dense_url": f"http://127.0.0.1:{httpd.server_port}/health"}
+    yield state, lambda: {c["name"]: c for c in probe.check_dense(world.db, NOW, cfg)}
+    httpd.shutdown()
+
+
+def test_a_healthy_dense_service_passes_all_three_checks(dense):
+    _state, run = dense
+    checks = run()
+    assert {n: c["status"] for n, c in checks.items()} == {"dense.indexed": "PASS", "dense.sync_fresh": "PASS", "dense.sync_errors": "PASS"}
+
+
+@pytest.mark.parametrize("change,failing", [
+    ({"indexed": 1}, "dense.indexed"),  # 1 of 4 confirmed claims
+    ({"last_sync": NOW.timestamp() - 3600}, "dense.sync_fresh"),
+    ({"last_sync": None}, "dense.sync_fresh"),
+    ({"sync_errors": 3}, "dense.sync_errors"),
+])
+def test_each_dense_symptom_fails_only_its_own_check(dense, change, failing):
+    state, run = dense
+    state["body"] = {**state["body"], **change}
+    assert [n for n, c in run().items() if c["status"] == "FAIL"] == [failing]
+
+
+def test_a_dense_service_that_does_not_answer_fails_with_a_clear_reason(dense, world):
+    state, run = dense
+    state["body"] = {"ok": False}
+    flagged = run()
+    assert list(flagged) == ["dense.service"] and flagged["dense.service"]["status"] == "FAIL"
+    down = probe.check_dense(world.db, NOW, CFG)  # CFG points at a port nobody listens on
+    assert down[0]["name"] == "dense.service" and down[0]["status"] == "FAIL" and "did not answer" in down[0]["detail"]
+
+
 # --------------------------------------------------------------------------- read-only guarantee
 
 def test_the_probe_never_writes_the_database(world, monkeypatch):
@@ -286,8 +322,7 @@ def test_the_probe_never_writes_the_database(world, monkeypatch):
     def digest():
         with edit(f"file:{world.db.as_posix()}?mode=ro", uri=True) as conn:
             return [conn.execute("SELECT COUNT(*), COALESCE(SUM(access_count),0) FROM claims").fetchone(),
-                    conn.execute("SELECT COUNT(*) FROM verbatim_memories").fetchone(),
-                    conn.execute("SELECT COUNT(*) FROM claim_embeddings").fetchone()]
+                    conn.execute("SELECT COUNT(*) FROM verbatim_memories").fetchone()]
 
     before_file = hashlib.sha256(world.db.read_bytes()).hexdigest()
     before_rows = digest()

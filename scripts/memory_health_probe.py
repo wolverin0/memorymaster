@@ -48,13 +48,15 @@ CONFIG: dict = {
         "hook": {"max_age_h": 72, "agents": ["llm-stop-hook", "agy-deterministic-hook", "precompact-residual"]},
         "dream-worker": {"max_age_h": 48, "agents": ["dream-worker"]},
     },
-    "embeddings_max_age_h": 72,
-    "embeddings_min_coverage": 0.90,  # share of confirmed+candidate claims that have an embedding
+    # The live dense index is the embeddinggemma service (claim_embeddings is only a cache of the opt-in hybrid path).
+    "dense_url": "http://127.0.0.1:8767/health",
+    "dense_min_indexed_ratio": 0.95,  # indexed / confirmed claims
+    "dense_max_sync_age_s": 600,  # the service syncs every 60 s
     "capture_backlog_max": 1000,  # dream_captures still in state 'captured'
     "capture_backlog_max_age_h": 168,  # age of the oldest one
     "canary_min_hit_rate": {"hook": 0.6, "mcp": 0.6},  # hit@5 per recall path
     "core_freshness_min": 1e-3,  # median freshness_score of core confirmed claims the canaries return
-    "services": {"mcp_http": "http://127.0.0.1:8766/healthz", "dense": "http://127.0.0.1:8767/health"},
+    "services": {"mcp_http": "http://127.0.0.1:8766/healthz"},
     "service_timeout_s": 4.0,
 }
 
@@ -112,8 +114,6 @@ def check_ingest(db: Path, transcripts_db: Path, capture_db: Path, now: datetime
     out = _guard("ingest.verbatim", _check_verbatim, db, now, cfg)
     for family, spec in cfg["claim_families"].items():
         out += _guard(f"ingest.claims.{family}", _check_claim_family, db, family, spec, now)
-    out += _guard("ingest.embeddings", _check_embeddings, db, now, cfg)
-    out += _guard("ingest.embedding_coverage", _check_embedding_coverage, db, cfg)
     out += _guard("ingest.transcripts", _check_transcripts, transcripts_db, now, cfg)
     out += _guard("ingest.capture_queue", _check_capture_queue, capture_db, now, cfg)
     return out
@@ -138,23 +138,6 @@ def _check_claim_family(db: Path, family: str, spec: dict, now: datetime) -> lis
             if ts and (newest is None or ts > newest):
                 newest = ts
     return [_fresh(f"ingest.claims.{family}", newest, spec["max_age_h"], now, f"claims from {family} sources")]
-
-
-def _check_embeddings(db: Path, now: datetime, cfg: dict) -> list[dict]:
-    with contextlib.closing(ro_connect(db)) as conn:
-        emb = conn.execute("SELECT MAX(updated_at) FROM claim_embeddings").fetchone()[0]
-    return [_fresh("ingest.embeddings", parse_ts(emb), cfg["embeddings_max_age_h"], now, "claim_embeddings")]
-
-
-def _check_embedding_coverage(db: Path, cfg: dict) -> list[dict]:
-    with contextlib.closing(ro_connect(db)) as conn:
-        active, embedded = conn.execute(
-            "SELECT COUNT(*), SUM(EXISTS(SELECT 1 FROM claim_embeddings e WHERE e.claim_id=c.id)) "
-            "FROM claims c WHERE c.status IN ('confirmed','candidate')").fetchone()
-    coverage = (embedded or 0) / active if active else 0.0
-    return [_result("ingest.embedding_coverage", coverage >= cfg["embeddings_min_coverage"],
-                    f"{embedded or 0}/{active} active claims embedded ({coverage:.0%}, min {cfg['embeddings_min_coverage']:.0%})",
-                    active=active, embedded=embedded or 0, coverage=round(coverage, 3))]
 
 
 def _check_transcripts(path: Path, now: datetime, cfg: dict) -> list[dict]:
@@ -320,6 +303,32 @@ def check_services(cfg: dict) -> list[dict]:
     return out
 
 
+def check_dense(db: Path, now: datetime, cfg: dict) -> list[dict]:
+    """The dense recall service: index size vs confirmed claims, last sync age, sync errors."""
+    try:
+        with urllib.request.urlopen(cfg["dense_url"], timeout=cfg["service_timeout_s"]) as resp:  # noqa: S310 - loopback URL from CONFIG
+            body = json.loads(resp.read().decode("utf-8") or "{}")
+        if resp.status != 200 or body.get("ok") is False:
+            raise RuntimeError(f"HTTP {resp.status}, ok={body.get('ok')}")
+    except Exception as exc:  # noqa: BLE001
+        return [_result("dense.service", False, f"dense service did not answer at {cfg['dense_url']}: {type(exc).__name__}: {str(exc)[:100]}")]
+    with contextlib.closing(ro_connect(db)) as conn:
+        confirmed = conn.execute("SELECT COUNT(*) FROM claims WHERE status='confirmed'").fetchone()[0]
+    indexed = int(body.get("indexed") or 0)
+    ratio = indexed / confirmed if confirmed else 0.0
+    last_sync = body.get("last_sync")
+    age = None if last_sync is None else round(now.timestamp() - float(last_sync))
+    errors = int(body.get("sync_errors") or 0)
+    return [
+        _result("dense.indexed", ratio >= cfg["dense_min_indexed_ratio"],
+                f"{indexed}/{confirmed} confirmed claims indexed ({ratio:.0%}, min {cfg['dense_min_indexed_ratio']:.0%})",
+                indexed=indexed, confirmed=confirmed, ratio=round(ratio, 3)),
+        _result("dense.sync_fresh", age is not None and age <= cfg["dense_max_sync_age_s"],
+                f"last index sync {age if age is not None else 'never'}s ago (max {cfg['dense_max_sync_age_s']}s)", age_s=age),
+        _result("dense.sync_errors", errors == 0, f"{errors} sync errors since the service started", sync_errors=errors),
+    ]
+
+
 # --------------------------------------------------------------------------- orchestration
 
 def run_probe(db: Path, *, workspace: Path, canaries_path: Path, transcripts_db: Path, capture_db: Path,
@@ -334,6 +343,7 @@ def run_probe(db: Path, *, workspace: Path, canaries_path: Path, transcripts_db:
     checks += canary_checks + check_ranking(mcp_hits, cfg)
     checks += _guard("retention.within_bounds", check_retention, db)
     checks += check_services(cfg)
+    checks += _guard("dense.service", check_dense, db, now, cfg)
     failures = [c["name"] for c in checks if c["status"] == FAIL]
     return {
         "schema": 1,
