@@ -70,8 +70,10 @@ class World:
             conn.execute("CREATE TABLE files (rel TEXT PRIMARY KEY, mtime_ns INTEGER NOT NULL)")
             conn.execute("INSERT INTO files VALUES ('a', ?)", (int((NOW - timedelta(hours=1)).timestamp() * 1e9),))
         with edit(self.capture) as conn:
-            conn.execute("CREATE TABLE dream_captures (id INTEGER PRIMARY KEY, state TEXT, captured_at TEXT)")
-            conn.execute("INSERT INTO dream_captures (state, captured_at) VALUES ('captured', ?)", (iso(2),))
+            conn.execute("CREATE TABLE dream_captures (id INTEGER PRIMARY KEY, state TEXT, captured_at TEXT, "
+                         "last_activity_at TEXT, turn_count INTEGER)")
+            conn.execute("INSERT INTO dream_captures (state, captured_at, last_activity_at, turn_count) "
+                         "VALUES ('captured', ?, ?, 3)", (iso(2), iso(2)))
 
     @contextlib.contextmanager
     def rw(self):
@@ -135,15 +137,31 @@ def test_a_silent_claim_source_family_fails(world, agent, check):
 
 def test_capture_queue_fails_on_backlog_size_and_on_age(world):
     with edit(world.capture) as conn:
-        conn.execute("UPDATE dream_captures SET captured_at=?", (iso(24 * 30),))
+        conn.execute("UPDATE dream_captures SET last_activity_at=?", (iso(24 * 30),))
     assert world.ingest_checks()["ingest.capture_queue"]["status"] == "FAIL"  # one very old capture
     with edit(world.capture) as conn:
-        conn.execute("UPDATE dream_captures SET captured_at=?", (iso(1),))
-        conn.executemany("INSERT INTO dream_captures (state, captured_at) VALUES ('captured', ?)", [(iso(1),)] * 1100)
+        conn.execute("UPDATE dream_captures SET last_activity_at=?", (iso(1),))
+        conn.executemany("INSERT INTO dream_captures (state, captured_at, last_activity_at, turn_count) "
+                         "VALUES ('captured', ?, ?, 2)", [(iso(1), iso(1))] * 1100)
     assert world.ingest_checks()["ingest.capture_queue"]["status"] == "FAIL"  # many fresh ones
     with edit(world.capture) as conn:
         conn.execute("UPDATE dream_captures SET state='applied'")
     assert world.ingest_checks()["ingest.capture_queue"]["status"] == "PASS"
+
+
+def test_capture_queue_counts_only_what_the_worker_can_still_pick_up(world):
+    """ledger.eligible() needs turn_count >= 2 and state captured/retryable (operational_review counts the same):
+    single-turn captures are never scheduled and never retired, so they must not trip the alarm (T-2123)."""
+    with edit(world.capture) as conn:
+        conn.executemany("INSERT INTO dream_captures (state, captured_at, last_activity_at, turn_count) "
+                         "VALUES ('captured', ?, ?, 1)", [(iso(24 * 100), iso(24 * 100))] * 1500)
+    check = world.ingest_checks()["ingest.capture_queue"]
+    assert check["status"] == "PASS" and check["data"]["waiting"] == 1, check
+    with edit(world.capture) as conn:  # a retryable multi-turn capture still waits; its age is the last write
+        conn.execute("INSERT INTO dream_captures (state, captured_at, last_activity_at, turn_count) "
+                     "VALUES ('retryable', ?, ?, 4)", (iso(24 * 100), iso(24 * 9)))
+    check = world.ingest_checks()["ingest.capture_queue"]
+    assert check["status"] == "FAIL" and check["data"]["waiting"] == 2 and check["data"]["oldest_age_h"] == 216, check
 
 
 def test_one_unreadable_store_does_not_hide_the_others(world):

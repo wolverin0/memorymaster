@@ -149,7 +149,11 @@ def _check_transcripts(path: Path, now: datetime, cfg: dict) -> list[dict]:
 
 def _check_capture_queue(path: Path, now: datetime, cfg: dict) -> list[dict]:
     with contextlib.closing(ro_connect(path)) as conn:
-        count, oldest = conn.execute("SELECT COUNT(*), MIN(captured_at) FROM dream_captures WHERE state='captured'").fetchone()
+        # Same definition as ledger.eligible() and operational_review: below two turns a capture is never scheduled
+        # (and never retired), so counting it would raise a permanent alarm no drain can clear (T-2123).
+        count, oldest = conn.execute(
+            "SELECT COUNT(*), MIN(last_activity_at) FROM dream_captures "
+            "WHERE state IN ('captured','retryable') AND turn_count >= 2").fetchone()
     age = _age_h(parse_ts(oldest), now)
     ok = count <= cfg["capture_backlog_max"] and (age is None or age <= cfg["capture_backlog_max_age_h"])
     return [_result("ingest.capture_queue", ok,
