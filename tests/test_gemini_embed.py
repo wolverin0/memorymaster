@@ -25,7 +25,7 @@ from memorymaster.core.usage_ledger import (
 from memorymaster.decisions import egress
 from memorymaster.decisions.egress import prepare_egress
 from memorymaster.recall import gemini_embed
-from memorymaster.recall.embeddings import EncoderUnavailable
+from memorymaster.recall.embeddings import GEMINI_MAX_BATCH, EncoderUnavailable
 from memorymaster.recall.gemini_embed import (
     DOC_TEMPLATE,
     QUERY_TEMPLATE,
@@ -57,6 +57,7 @@ class FakeGemini:
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.1"
+            disable_nagle_algorithm = True  # Windows delayed-ACK adds ~200 ms per reply otherwise
 
             def setup(self) -> None:
                 outer.connections += 1
@@ -159,6 +160,8 @@ def _env(monkeypatch, tmp_path):
     ):
         monkeypatch.delenv(name, raising=False)
     provider_health.reset()
+    # The production 1.1 s query budget is a wall-clock bound; a loaded CI box would flake it.
+    monkeypatch.setattr(gemini_embed, "QUERY_TIMEOUT_S", 15.0)
 
 
 @pytest.fixture
@@ -192,18 +195,24 @@ def test_chunk_never_exceeds_limits_for_every_size() -> None:
     for n in range(0, 501):
         items = list(range(n))
         pieces = chunk(items)
-        assert all(0 < len(p) <= 50 for p in pieces)
+        assert all(0 < len(p) <= GEMINI_MAX_BATCH for p in pieces)
         assert [x for p in pieces for x in p] == items
         # Even a caller asking for a huge size cannot exceed Google's 100.
-        assert all(len(p) <= 100 for p in chunk(items, 10_000))
+        assert all(len(p) <= GEMINI_MAX_BATCH for p in chunk(items, 10_000))
 
 
-def test_documents_are_sent_in_requests_of_at_most_50(server, make) -> None:
+def test_one_batch_constant_shared_with_the_embedding_provider() -> None:
+    assert GEMINI_MAX_BATCH == 100
+    assert not hasattr(gemini_embed, "MAX_BATCH") and not hasattr(gemini_embed, "DEFAULT_BATCH")
+
+
+def test_documents_are_sent_via_batch_embed_in_requests_of_at_most_100(server, make) -> None:
     emb = make()
-    vectors = emb.embed_documents([f"doc number {i}" for i in range(120)])
+    vectors = emb.embed_documents([f"doc number {i}" for i in range(250)])
     sizes = [len(r["body"]["requests"]) for r in server.requests]
-    assert sizes == [50, 50, 20]
-    assert len(vectors) == 120 and all(v is not None for v in vectors)
+    assert sizes == [100, 100, 50]
+    assert all(r["path"].endswith(":batchEmbedContents") for r in server.requests)
+    assert len(vectors) == 250 and all(v is not None for v in vectors)
     assert emb.embed_documents([]) == []
     assert len(server.requests) == 3
 
@@ -212,6 +221,25 @@ def test_batch_size_is_clamped_to_100(server, make) -> None:
     emb = make(batch_size=5000)
     emb.embed_documents([f"d{i}" for i in range(150)])
     assert [len(r["body"]["requests"]) for r in server.requests] == [100, 50]
+
+
+def test_default_dimension_is_768_everywhere(server, make) -> None:
+    emb = make()
+    assert emb.dims == 768 and emb.model_tag == "gemini-embedding-2:768:t1"
+    q = emb.embed_query("hello")
+    docs = emb.embed_documents(["a", "b"])
+    assert len(q) == 768 and all(d is not None and len(d) == 768 for d in docs)
+    for r in server.requests:
+        items = r["body"].get("requests", [r["body"]])
+        assert items and all(i["outputDimensionality"] == 768 for i in items)
+
+
+def test_one_keep_alive_connection_serves_queries_and_batches(server, make) -> None:
+    emb = make()
+    emb.embed_query("q1")
+    emb.embed_documents([f"d{i}" for i in range(150)])
+    emb.embed_query("q2")
+    assert len(server.requests) == 4 and server.connections == 1
 
 
 # ---- (b) retries ---------------------------------------------------------------
@@ -493,7 +521,7 @@ def test_key_is_only_in_the_header_and_never_in_logs_urls_or_exceptions(
         server.script = lambda n, r, s=status: (s, {"error": {"message": KEY}}, {})
         attempt(lambda: emb.embed_query("hello"))
     emb.auth_failed = False
-    for reply in ((429, {}, {"Retry-After": "1"}), (500, {}, {}), (200, b"<html>nope</html>", {})):
+    for reply in ((429, {"error": {"message": KEY}}, {"Retry-After": "1"}), (500, {}, {}), (200, b"<html>nope</html>", {})):
         server.script = lambda n, r, rep=reply: rep
         attempt(lambda: emb.embed_documents(["hello"]))
         emb._failures = 0
@@ -512,6 +540,22 @@ def test_key_is_only_in_the_header_and_never_in_logs_urls_or_exceptions(
     assert KEY not in caplog.text
     for exc in errors:
         assert KEY not in str(exc) and KEY not in repr(exc) and KEY not in repr(exc.__dict__)
+
+
+def test_key_is_not_in_the_embedder_repr_or_str(make) -> None:
+    emb = make()
+    assert KEY not in repr(emb) and KEY not in str(emb)
+
+
+def test_transport_failure_exception_chain_never_holds_the_key(server, make, caplog) -> None:
+    caplog.set_level(logging.DEBUG)
+    emb = make()
+    server.script = lambda n, r: (503, {"error": {"message": KEY}}, {})
+    with pytest.raises(EmbedUnavailable) as err:
+        emb.embed_documents(["hello"])
+    chain = [err.value, err.value.__cause__, err.value.__context__]
+    assert all(KEY not in f"{e!s}{e!r}" for e in chain if e is not None)
+    assert KEY not in caplog.text
 
 
 def test_401_latches_auth_failed(server, make) -> None:

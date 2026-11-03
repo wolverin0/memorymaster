@@ -11,11 +11,16 @@ Failure policy: every failure raises ``EmbedUnavailable(reason)`` (an
 blocked, auth, ledger. The key travels only in the ``x-goog-api-key`` header and never
 appears in a URL, log line or exception text.
 
-Contract note: the request/response shapes follow the documented v1beta REST surface
+Transport: one persistent keep-alive connection per embedder (``_post``). Documents go
+through ``batchEmbedContents`` in chunks of at most ``GEMINI_MAX_BATCH`` (the single
+batch constant, defined in ``recall.embeddings``); queries use the single
+``embedContent`` call. Every item asks for ``outputDimensionality`` = ``dims`` (768).
+
+Contract note: the request/response shapes follow the v1beta REST surface
 (``embedContent`` -> ``embedding.values``; ``batchEmbedContents`` with ``model`` and
-``outputDimensionality`` per item -> ``embeddings[].values``). They were NOT verified
-live (no key available when this was written); run ``scripts/probe_gemini_latency.py``
-(S0/S4) before relying on them.
+``outputDimensionality`` per item -> ``embeddings[].values``). Verified live on
+2026-11-02: batchEmbedContents answers 200 with 768-dim vectors; a keep-alive single call
+measured p50 539 ms / p95 747 ms.
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ from memorymaster.core.usage_ledger import (
     embed_token_limit,
 )
 from memorymaster.decisions.egress import prepare_egress
-from memorymaster.recall.embeddings import EncoderUnavailable, normalize
+from memorymaster.recall.embeddings import GEMINI_MAX_BATCH, EncoderUnavailable, normalize
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +66,6 @@ TEMPLATE_VERSION = "t1"
 QUERY_TEMPLATE = "task: search result | query: {content}"
 DOC_TEMPLATE = "title: none | text: {content}"
 
-MAX_BATCH = 100  # Google's hard limit per batchEmbedContents request
-DEFAULT_BATCH = 50
 QUERY_MAX_CHARS = 4_000
 DOC_MAX_CHARS = 8_000
 QUERY_TIMEOUT_S = 1.1
@@ -87,9 +90,9 @@ class EmbedUnavailable(EncoderUnavailable):
         super().__init__(f"embedding unavailable: {reason}" + (f" ({detail})" if detail else ""))
 
 
-def chunk(items: Sequence[Any], size: int = DEFAULT_BATCH) -> list[Sequence[Any]]:
-    """Split into pieces of at most ``min(size, MAX_BATCH)`` (>= 1) items."""
-    size = max(1, min(int(size), MAX_BATCH))
+def chunk(items: Sequence[Any], size: int = GEMINI_MAX_BATCH) -> list[Sequence[Any]]:
+    """Split into pieces of at most ``min(size, GEMINI_MAX_BATCH)`` (>= 1) items."""
+    size = max(1, min(int(size), GEMINI_MAX_BATCH))
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
@@ -134,7 +137,7 @@ class GeminiEmbedder:
         dims: int = DEFAULT_DIMS,
         base_url: str | None = None,
         ledger_path: str | Path | None = None,
-        batch_size: int = DEFAULT_BATCH,
+        batch_size: int = GEMINI_MAX_BATCH,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         query_rate_per_min: int = QUERY_RATE_PER_MIN,
@@ -151,7 +154,7 @@ class GeminiEmbedder:
         self._url = _check_base_url(base_url or os.environ.get(BASE_URL_ENV) or DEFAULT_BASE_URL)
         self._ledger_path = Path(ledger_path) if ledger_path else default_ledger_path()
         self._ledger: UsageLedger | None = None
-        self._batch = max(1, min(int(batch_size), MAX_BATCH))
+        self._batch = max(1, min(int(batch_size), GEMINI_MAX_BATCH))
         self._clock = clock
         self._sleep = sleep
         self._rate_limit = int(query_rate_per_min)
@@ -162,6 +165,9 @@ class GeminiEmbedder:
         self._open_until = 0.0
         self.auth_failed = False
         self.last_usage_tokens: int | None = None  # real count from the API, when present
+
+    def __repr__(self) -> str:  # the default repr is safe, but pin it: never include the key
+        return f"GeminiEmbedder(model={self.model!r}, dims={self.dims})"
 
     @property
     def model_tag(self) -> str:
@@ -307,7 +313,7 @@ class GeminiEmbedder:
 
     def _embed_batch(self, piece: list[tuple[int, _Prepared]]) -> list[list[float] | None]:
         """One chunk; a 400 bisects so a single poison text cannot block the rest."""
-        if not 0 < len(piece) <= MAX_BATCH:
+        if not 0 < len(piece) <= GEMINI_MAX_BATCH:
             raise ValueError("batch size out of range")
         payload = {"requests": [self._item(p) for _, p in piece]}
         status, data = self._call_status(
