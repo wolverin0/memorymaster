@@ -7,14 +7,11 @@
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
 <!-- /doc-head -->
 
-## Lane backlog tracker (updated 2026-11-02)
+## Lane backlog tracker (updated 2026-11-03)
 
 Living checklist of what the memorymaster lane still has to land, with target dates. When every box is ticked and nothing new arrived from Fleet or the operator, the lane is done for the cycle. Older sections below are dated history, not open work.
 
 ### Integrate (verified, waiting on the one-at-a-time gate under heavy-slot)
-- [ ] #355 T-2070: dashboard viewer authorization (cloud audit F-1a, F-1b, F-1c and three Argon rounds) (target 2026-11-02)
-- [ ] #356 T-2077a: windows-tasks, digest and steward-wrapper review findings (target 2026-11-02)
-- [ ] #357 T-2077b: dreaming reopen, recall tokenizer, transcript index and steward review findings (target 2026-11-02)
 - [ ] After #356: run `memorymaster-setup windows-tasks --apply` so the live tasks drop the Gemini model on the Claude extractor (target 2026-11-02)
 
 ### Gemini dense plan (operator chose the Gemini API)
@@ -33,6 +30,9 @@ Living checklist of what the memorymaster lane still has to land, with target da
 - [ ] Decide whether to disable the Obsidian-Cockpit-Sync task
 
 ### Done this cycle
+- [x] #355 T-2070 dashboard viewer authorization, merged (2026-11-03)
+- [x] #356 T-2077a windows-tasks digest and steward-wrapper review findings, merged (2026-11-03)
+- [x] #357 T-2077b dreaming reopen, recall tokenizer, transcript index and steward review findings, merged (2026-11-03)
 - [x] #349 windows-tasks installer, merged and deployed (2026-11-01)
 - [x] #351 no implicit Gemini or hash embeddings, merged and deployed (2026-11-02)
 - [x] #353 T-2067 consolidation-latency split and fallback guard, merged (2026-11-02)
