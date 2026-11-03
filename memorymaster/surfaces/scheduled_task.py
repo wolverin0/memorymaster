@@ -42,7 +42,7 @@ BEAT_OLDEST_RESERVE = 1
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="memorymaster-scheduled-task")
-    parser.add_argument("mode", choices=["dream", "steward", "beat"])
+    parser.add_argument("mode", choices=["dream", "steward", "beat", "verbatim-archive"])
     parser.add_argument("--db", required=True)
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--script", default="")
@@ -232,6 +232,17 @@ def _run_capture_beat(args: argparse.Namespace, outcomes: list[str] | None = Non
     return 0 if dream is None or busy or (dream.get("ok") and not dream.get("errors")) else 1
 
 
+def _run_verbatim_archive(args: argparse.Namespace) -> int:
+    """Weekly retention (T-2116): move verbatim rows older than 90 days into the archive DB.
+
+    A verify failure raises ArchiveVerifyError; main() logs it as job_error and exits 1."""
+    from memorymaster.govern.verbatim_cleanup import archive_old
+
+    result = archive_old(args.db, dry_run=False)
+    log_event(_JOB_LOG, "verbatim_archive_result", surface="job", job="verbatim-archive", **result)
+    return 0
+
+
 def _run_steward(args: argparse.Namespace) -> int:
     if not args.script:
         raise ValueError("--script is required for steward mode")
@@ -270,7 +281,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
                 with timed_event(_JOB_LOG, "job_finish", **fields) as result:
-                    code = {"dream": _run_dream, "beat": _run_beat}.get(args.mode, _run_steward)(args)
+                    code = {"dream": _run_dream, "beat": _run_beat, "verbatim-archive": _run_verbatim_archive}.get(args.mode, _run_steward)(args)
                     result["exit_code"] = code
                     if code:
                         result["outcome"] = "failed"

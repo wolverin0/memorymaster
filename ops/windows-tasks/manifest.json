@@ -371,6 +371,31 @@
       }
     },
     {
+      "name": "MemoryMaster-Verbatim-Archive-Weekly",
+      "description": "T-2116 weekly retention: move verbatim_memories rows older than 90 days into memorymaster-verbatim-archive.db next to the DB, verified before delete. Log: ~/.memorymaster/logs/verbatim-archive.log. Needs the graph-profile runtime to contain the verbatim-archive mode.",
+      "runtimes": [
+        "graph-profile"
+      ],
+      "triggers": [
+        {
+          "type": "weekly",
+          "at": "03:30:00",
+          "days": [
+            "Wednesday"
+          ]
+        }
+      ],
+      "settings": {
+        "preset": "job",
+        "execution_time_limit": "PT3H",
+        "priority": 6
+      },
+      "action": {
+        "command": "{RUNTIME}\\graph-profile-20260813\\Scripts\\pythonw.exe",
+        "arguments": "-m memorymaster.surfaces.scheduled_task verbatim-archive --db \"{DB}\" --workspace \"{REPO}\""
+      }
+    },
+    {
       "name": "MemoryMaster-Checkpoint-Daily",
       "description": "Daily fail-closed MemoryMaster rollout checkpoint by stable tab title.",
       "runtimes": [],

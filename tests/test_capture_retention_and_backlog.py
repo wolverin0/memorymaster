@@ -53,6 +53,28 @@ def test_retention_plan_enforces_age_bytes_sessions_without_mutation(tmp_path: P
     assert db.read_bytes() == before
 
 
+def test_a_table_larger_than_scan_limit_is_not_out_of_bounds_by_truncation(tmp_path: Path) -> None:
+    """T-2116: `truncated` is always True on a big table; it must not read as out-of-bounds."""
+    db = tmp_path / "big.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE verbatim_memories (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, "
+        "content TEXT NOT NULL, timestamp TEXT NOT NULL, created_at TEXT NOT NULL)"
+    )
+    conn.executemany(
+        "INSERT INTO verbatim_memories VALUES (?, ?, ?, ?, ?)",
+        [(i, "s", "x", "2026-07-12T00:00:00+00:00", "2026-07-12T00:00:00+00:00") for i in range(1, 21)],
+    )
+    conn.commit()
+    conn.close()
+
+    plan = plan_retention(str(db), scan_limit=5, now=datetime(2026, 7, 13, tzinfo=timezone.utc))
+
+    assert plan["truncated"] is True
+    assert plan["candidate_rows"] == 0
+    assert plan["within_bounds"] is True
+
+
 @dataclass
 class _Claim:
     id: int

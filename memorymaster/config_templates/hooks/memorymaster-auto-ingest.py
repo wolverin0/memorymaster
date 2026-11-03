@@ -347,15 +347,59 @@ def _run_incremental_llm(ledger, transcript_path, session_id, cwd, provider, ope
             Path(temp_path).unlink(missing_ok=True)
 
 
+VERBATIM_HEALTH = "verbatim-health.json"
+
+
+def _record_verbatim_health(**fields):
+    """Merge `fields` into STATE_DIR/verbatim-health.json (the probe reads it) and log one line.
+
+    Storing verbatim stopped silently for ten weeks (T-2116) because a gate returned without a
+    trace; every path that skips, fails or finds retention overdue now leaves this marker.
+    Read-modify-write without a lock: a lost update only drops a counter tick."""
+    path = os.path.join(STATE_DIR, VERBATIM_HEALTH)
+    try:
+        try:
+            with open(path, encoding="utf-8") as handle:
+                state = json.load(handle)
+        except (OSError, ValueError):
+            state = {}
+        if fields.pop("skipped", False):
+            state["store_skipped_count"] = int(state.get("store_skipped_count", 0)) + 1
+            state["last_skip_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        state.update(fields)
+        state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as handle:
+            json.dump(state, handle)
+        os.replace(tmp, path)
+        with open(os.path.join(STATE_DIR, "hook.log"), "a") as log:
+            log.write(f"[{datetime.now().strftime('%H:%M:%S')}] verbatim-health {json.dumps(fields)}\n")
+    except OSError:
+        pass  # swallow-ok: the marker is best-effort observability, never a reason to fail the Stop hook
+
+
+def _check_verbatim_retention():
+    """Signal-only: retention overdue never blocks storing, the weekly `verbatim-archive` task fixes it.
+
+    O(1) read of the oldest row. Skipped under the spool regime, where this hook must not open the DB."""
+    if _spool_enabled() or not os.path.exists(DB_PATH):
+        return
+    try:
+        from memorymaster.govern.verbatim_cleanup import retention_due
+
+        due = retention_due(DB_PATH)
+        _record_verbatim_health(
+            retention_due=bool(due["due"]), oldest_at=due["oldest_at"], oldest_age_days=due["oldest_age_days"],
+        )
+    except Exception as exc:  # swallow-ok: a failed check is reported, storing continues
+        _record_verbatim_health(retention_check_error=type(exc).__name__)
+
+
 def _run_incremental_verbatim(ledger, transcript_path, session_id, scope):
     chunk = ledger.read_increment(transcript_path, f"{session_id}:stop-verbatim")
     if not chunk.text:
         return
-    if os.path.exists(DB_PATH):
-        from memorymaster.govern.verbatim_cleanup import plan_retention
-
-        if not plan_retention(DB_PATH).get("within_bounds", True):
-            return
+    _check_verbatim_retention()
     if _spool_enabled():
         from memorymaster.recall.verbatim_store import spool_transcript_text
 
@@ -369,6 +413,7 @@ def _run_incremental_verbatim(ledger, transcript_path, session_id, scope):
             DB_PATH, chunk.text, session_id=session_id, scope=scope, source_agent="stop-hook"
         )
     ledger.commit_cursor(chunk)
+    _record_verbatim_health(last_store_at=datetime.now().astimezone().isoformat(timespec="seconds"))
 
 
 def main():
@@ -435,8 +480,9 @@ def main():
 
             scope = scope_from_cwd_or_user(cwd)
             _run_incremental_verbatim(ledger, transcript_path, session_id, scope)
-    except Exception:
-        pass
+    except Exception as exc:
+        # The cursor was not committed, so the turns are retried; make the failure visible.
+        _record_verbatim_health(skipped=True, last_skip_reason=f"store-failed:{type(exc).__name__}")
 
     # Not time to block — run passive Gemini extraction
     provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER", "google")

@@ -105,7 +105,7 @@ def run_cli(args, host, env):
 
 def test_every_task_renders_to_wellformed_xml_without_leftover_tokens(manifest, tmp_path):
     values, declared = wt.build_vars(manifest, REPO, make_env(tmp_path), {})
-    assert len(manifest["tasks"]) == 12
+    assert len(manifest["tasks"]) == 13
     for task in manifest["tasks"]:
         xml = wt.task_xml(manifest, task, values, declared)
         assert not re.search(r"\{[A-Z][A-Z0-9_]*\}", xml), task["name"]
@@ -478,3 +478,11 @@ def test_the_wheel_is_hashed_once_and_the_hash_is_case_insensitive(tmp_path, mon
     assert code == 0, output
     assert any("--force-reinstall" in cmd for cmd in host.commands)  # the install path really ran
     assert len(calls) == 1
+
+
+def test_verbatim_archive_runs_weekly_from_the_graph_profile_runtime(manifest):
+    """T-2116: pruning is scheduled so the verbatim table cannot grow past retention again."""
+    task = next(t for t in manifest["tasks"] if t["name"] == "MemoryMaster-Verbatim-Archive-Weekly")
+    assert task["triggers"][0]["type"] == "weekly"
+    assert "scheduled_task verbatim-archive" in task["action"]["arguments"]
+    assert "graph-profile" in task["runtimes"]

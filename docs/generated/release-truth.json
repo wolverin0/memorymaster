@@ -122,6 +122,7 @@
     "transcript-index",
     "transcript-search",
     "unlink",
+    "verbatim-archive",
     "verbatim-cleanup",
     "verify-claims",
     "wiki-absorb",
@@ -144,7 +145,7 @@
     "memorymaster-workflow-hook"
   ],
   "counts": {
-    "cli_commands": 131,
+    "cli_commands": 132,
     "console_entrypoints": 9,
     "mcp_tools": 51,
     "ops_cli_commands": 5

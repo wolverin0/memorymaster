@@ -485,6 +485,40 @@ def _handle_verbatim_cleanup(args: argparse.Namespace, service, parser: argparse
     return 0
 
 
+def _handle_verbatim_archive(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
+    from memorymaster.govern.verbatim_cleanup import ArchiveVerifyError, archive_old
+    t0 = time.perf_counter()
+    try:
+        result = archive_old(
+            effective_db,
+            days=args.days,
+            batch_size=args.batch_size,
+            archive_path=args.archive_path,
+            dry_run=not getattr(args, "apply", False),
+        )
+    except (ArchiveVerifyError, ValueError) as exc:
+        print(f"verbatim-archive: refused: {exc}")
+        return 1
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    if args.json_output:
+        print(_json_envelope(result, query_ms=elapsed_ms))
+    elif not result.get("verbatim_present", True):
+        print("verbatim-archive: verbatim_memories table not present; nothing to do")
+    elif result["dry_run"]:
+        print(
+            f"verbatim-archive (dry-run): would move {result['candidate_rows']} rows "
+            f"({result['candidate_bytes']} bytes) older than {result['days']} days to the archive; "
+            f"skipped_unparseable={result['skipped_unparseable']} ({elapsed_ms:.0f}ms)"
+        )
+    else:
+        print(
+            f"verbatim-archive (applied): moved {result['rows_moved']} rows in {result['batches']} batches; "
+            f"source={result['source_rows']} archive={result['archive_rows']} "
+            f"skipped_unparseable={result['skipped_unparseable']} ({elapsed_ms:.0f}ms)"
+        )
+    return 0
+
+
 def _handle_wiki_breakdown(args: argparse.Namespace, service, parser: argparse.ArgumentParser, effective_db: str) -> int:
     from memorymaster.knowledge.wiki_engine import breakdown
     t0 = time.perf_counter()
@@ -866,6 +900,7 @@ COMMAND_HANDLERS: dict[str, object] = {
     "export-rules": _handle_export_rules,
     "detect-contradictions": _handle_detect_contradictions,
     "verbatim-cleanup": _handle_verbatim_cleanup,
+    "verbatim-archive": _handle_verbatim_archive,
     "verify-claims": _handle_verify_claims,
     "extract-entities": _handle_extract_entities,
     "entity-stats": _handle_entity_stats,

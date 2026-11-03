@@ -8,6 +8,23 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### Verbatim storage no longer stops silently (T-2116)
+
+- The Stop hook skipped `verbatim_memories` storage whenever `plan_retention(...)["within_bounds"]` was false.
+  On a table larger than `scan_limit` that is always true (`truncated`), and rows older than 30 days also count
+  as candidates, so nothing was stored from 2026-08-24 and no job applied retention. `within_bounds` now ignores
+  `truncated`; the hook uses `retention_due` (one row read) and is signal-only: it always stores, and writes
+  `~/.memorymaster/hook_state/verbatim-health.json` (`retention_due`, `oldest_age_days`, `last_store_at`,
+  `store_skipped_count`, `last_skip_reason`) plus a `hook.log` line when retention is overdue or a store fails.
+- New `memorymaster verbatim-archive` (`--dry-run` default, `--apply`, `--days 90`, `--batch-size`,
+  `--archive-path`): moves rows older than N days, with their FTS entries, into
+  `memorymaster-verbatim-archive.db` next to the DB. Batched; each batch is copied, hash-verified and committed
+  to the archive before it is deleted from the source; idempotent. Scheduled weekly by the new
+  `MemoryMaster-Verbatim-Archive-Weekly` task (`scheduled_task verbatim-archive`, log
+  `~/.memorymaster/logs/verbatim-archive.log`); the installed hook and the graph-profile runtime must be
+  upgraded for the fix and the task to take effect. Tests: `tests/test_verbatim_cleanup.py`,
+  `tests/test_stop_hook_capture_policy.py`, `tests/test_capture_retention_and_backlog.py`.
+
 ### Weekly digest restored, public-safe
 
 - `scripts/atlas_weekly_digest.py` was removed in #333 as unused, but the live `MemoryMasterWeeklyDigest` task
