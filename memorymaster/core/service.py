@@ -1056,13 +1056,20 @@ class MemoryService(IntegrationService):
         plan = build_retrieval_plan(request)
         if plan.effective_mode == "qdrant":
             return RetrievalResult(plan=plan, rows=tuple(self._query_qdrant_mode(plan)))
+        head: list[dict[str, Any]] = []
+        dense_plan = plan
+        if plan.effective_mode == "dense":
+            from memorymaster.recall.dense_rows import dense_rows
+
+            head, reason = dense_rows(self, plan)
+            plan = replace(plan, effective_mode="legacy", containment_reason=reason)
         statuses = set(plan.statuses)
         from memorymaster.recall.execution import execute_planned_search
 
         rows = execute_planned_search(
             plan, self.query_rows,
             access_recorder=self._record_accesses,
-            record_accesses=True,
+            record_accesses=not head,
             limit=plan.limit,
             include_stale="stale" in statuses,
             include_conflicted="conflicted" in statuses,
@@ -1075,6 +1082,12 @@ class MemoryService(IntegrationService):
             requesting_agent=plan.requesting_agent,
             query_type=plan.query_type,
         )
+        if head:
+            from memorymaster.recall.dense_rows import fuse_rows
+
+            rows = fuse_rows(head, rows, dense_plan.limit)
+            self._record_accesses(rows, query_text=plan.query_text)
+            plan = replace(dense_plan, containment_reason=None)
         return RetrievalResult(plan=plan, rows=tuple(rows))
 
     def _query_qdrant_mode(self, plan: RetrievalPlan) -> list[dict[str, Any]]:
