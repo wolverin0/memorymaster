@@ -192,3 +192,49 @@ class TestHybridRetrieval:
         )
         ids = [r.claim.id for r in rows]
         assert 1 in ids, "Pinned claim should survive filtering"
+
+
+class TestDurableClaimsAreNotCrushedByAge:
+    """T-2117: freshness is exp(-age/half_life) with half-lives of 24-168 HOURS.
+
+    A vigente core claim last validated months ago scored ~1e-10 and lost every
+    tie to a fresh working claim. Measured 2026-11-03 on the live corpus: 37% of
+    core confirmed claims sat below 0.01 freshness. Durable claims get a floor.
+    """
+
+    @staticmethod
+    def _aged(claim_id: int, *, tier: str, claim_type: str | None, confidence: float, days: int) -> Claim:
+        from datetime import datetime, timedelta, timezone
+
+        stamp = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        claim = _make_claim(claim_id, "restart the bridge after a gotcha", confidence=confidence)
+        claim.tier = tier
+        claim.claim_type = claim_type
+        claim.created_at = claim.updated_at = claim.last_validated_at = stamp
+        return claim
+
+    def test_old_core_gotcha_outranks_fresher_higher_confidence_working_noise(self) -> None:
+        old_core = self._aged(1, tier="core", claim_type="gotcha", confidence=0.6, days=200)
+        fresh_noise = self._aged(2, tier="working", claim_type="fact", confidence=0.75, days=0)
+
+        rows = rank_claim_rows("restart bridge gotcha", [fresh_noise, old_core], mode="hybrid", limit=2)
+
+        assert [r.claim.id for r in rows] == [1, 2]
+        assert rows[0].freshness_score >= 0.5, "a vigente core claim keeps a freshness floor"
+
+    @pytest.mark.parametrize("claim_type", ["constraint", "rule", "decision"])
+    def test_old_durable_types_keep_the_floor_even_when_working_tier(self, claim_type: str) -> None:
+        claim = self._aged(1, tier="working", claim_type=claim_type, confidence=0.8, days=200)
+        rows = rank_claim_rows("restart bridge gotcha", [claim], mode="hybrid", limit=1)
+        assert rows[0].freshness_score >= 0.5
+
+    def test_old_working_fact_still_decays_to_near_zero(self) -> None:
+        claim = self._aged(1, tier="working", claim_type="fact", confidence=0.8, days=200)
+        rows = rank_claim_rows("restart bridge gotcha", [claim], mode="hybrid", limit=1)
+        assert rows[0].freshness_score < 1e-6
+
+    def test_old_stale_core_claim_is_not_floored(self) -> None:
+        claim = self._aged(1, tier="core", claim_type="gotcha", confidence=0.8, days=200)
+        claim.status = "stale"
+        rows = rank_claim_rows("restart bridge gotcha", [claim], mode="hybrid", limit=1)
+        assert rows[0].freshness_score < 1e-6
