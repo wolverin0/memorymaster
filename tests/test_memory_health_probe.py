@@ -265,10 +265,12 @@ def test_services_pass_only_on_a_healthy_answer(server):
 
 def test_the_probe_never_writes_the_database(world, monkeypatch):
     with world.rw() as conn:
-        conn.execute("UPDATE claims SET tier='core', human_id='mm-fx01' WHERE id=?", (world.claim_id,))
+        # global scope is inside both recall paths' allowlists, so the canaries really return (and would record) this claim
+        conn.execute("UPDATE claims SET tier='core', human_id='mm-fx01', scope='global', "
+                     "text='fixture lookup canary claim about spool isolation' WHERE id=?", (world.claim_id,))
     canaries = world.tmp / "canaries.json"
     canaries.write_text(json.dumps({"canaries": [
-        {"id": "x", "query": "claim text fixture lookup", "expect_human_ids": ["mm-fx01"]}]}), encoding="utf-8")
+        {"id": "x", "query": "fixture lookup canary claim about spool isolation", "expect_human_ids": ["mm-fx01"]}]}), encoding="utf-8")
 
     def digest():
         with edit(f"file:{world.db.as_posix()}?mode=ro", uri=True) as conn:
@@ -297,8 +299,9 @@ def test_the_probe_never_writes_the_database(world, monkeypatch):
     assert hashlib.sha256(world.db.read_bytes()).hexdigest() == before_file
     assert digest() == before_rows, "no access_count bump: a canary must not reinforce itself"
     assert not spool.exists(), "recall side files are redirected, then discarded"
-    assert any(c["name"] == "recall.mcp" and "hit@5" in c["detail"] for c in report["checks"]), report["checks"]
-    assert any(c["name"] == "recall.hook" and "hit@5" in c["detail"] for c in report["checks"]), report["checks"]
+    by = {c["name"]: c for c in report["checks"]}
+    # both paths really returned the claim: the access-recording branch ran, so the guarantees above are not vacuous
+    assert by["recall.mcp"]["data"]["hits"] == 1 and by["recall.hook"]["data"]["hits"] == 1, by
 
 
 def test_the_env_redirect_is_restored_after_the_run(tmp_path, monkeypatch):
