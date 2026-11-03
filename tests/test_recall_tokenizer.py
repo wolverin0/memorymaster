@@ -312,3 +312,13 @@ def test_identifiers_survive_and_rank_in_salient_terms(tmp_path: Path) -> None:
     terms = salient_terms(question, str(tmp_path / "none.db"), max_terms=4)
     assert "fstrim" in terms and len(terms) == 4
     assert salient_terms("", str(tmp_path / "none.db")) == []
+
+
+def test_t2077_l27_an_identifier_absent_from_claims_is_not_demoted(tiny_db: str) -> None:
+    from memorymaster.recall.recall_tokenizer import identifier_tokens, salient_terms
+
+    question = ("Why did we stop using `fstrim` on the common steward qdrant keys scoring tier "
+                "recomputation notes after the migration")
+    assert "fstrim" in identifier_tokens(question)  # df==0 in the claims corpus, only in transcripts
+    terms = salient_terms(question, tiny_db, max_terms=3)
+    assert "fstrim" in terms
