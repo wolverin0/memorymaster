@@ -253,3 +253,26 @@ def test_scheduled_verbatim_archive_moves_old_rows_and_logs(tmp_path: Path, monk
     archive.close()
     events = [json.loads(line)["event"] for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert "verbatim_archive_result" in events and events[-1] == "job_finish"
+
+
+def test_scheduled_transcript_index_refreshes_the_sidecar_and_logs(tmp_path: Path, monkeypatch) -> None:
+    """T-2116: the recall transcript fallback is on, so something must keep its sidecar current."""
+    import sqlite3
+
+    root = tmp_path / "projects" / "proj"
+    root.mkdir(parents=True)
+    record = {"type": "user", "message": {"role": "user", "content": "talking about the quartzmoon harness today"},
+              "timestamp": "2026-11-03T10:00:00Z", "cwd": str(tmp_path)}
+    (root / "sess.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    index = tmp_path / "transcripts.db"
+    monkeypatch.setenv("MEMORYMASTER_TRANSCRIPT_ROOT", str(tmp_path / "projects"))
+    monkeypatch.setenv("MEMORYMASTER_TRANSCRIPT_INDEX", str(index))
+    log_path = tmp_path / "transcript-index.log"
+    monkeypatch.setattr(scheduled_task, "_log_path", lambda _mode: log_path)
+
+    assert scheduled_task.main(["transcript-index", "--db", str(tmp_path / "x.db"), "--workspace", str(tmp_path)]) == 0
+
+    conn = sqlite3.connect(index)
+    assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
+    conn.close()
+    assert "transcript_index_result" in log_path.read_text(encoding="utf-8")

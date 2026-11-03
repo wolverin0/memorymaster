@@ -42,7 +42,7 @@ BEAT_OLDEST_RESERVE = 1
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="memorymaster-scheduled-task")
-    parser.add_argument("mode", choices=["dream", "steward", "beat", "verbatim-archive"])
+    parser.add_argument("mode", choices=["dream", "steward", "beat", "verbatim-archive", "transcript-index"])
     parser.add_argument("--db", required=True)
     parser.add_argument("--workspace", required=True)
     parser.add_argument("--script", default="")
@@ -243,6 +243,20 @@ def _run_verbatim_archive(args: argparse.Namespace) -> int:
     return 0
 
 
+# shortcut: fixed 30-day window keeps every run small and never widens the index to the full 28 GB
+# history (T-1860 decision); raise it only if the fallback should answer questions older than a month.
+TRANSCRIPT_INDEX_SINCE_DAYS = 30
+
+
+def _run_transcript_index(args: argparse.Namespace) -> int:
+    """Incremental refresh of the raw-transcript sidecar behind MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK (T-2116)."""
+    from memorymaster.recall import transcript_index
+
+    stats = transcript_index.index_transcripts(since_days=TRANSCRIPT_INDEX_SINCE_DAYS)
+    log_event(_JOB_LOG, "transcript_index_result", surface="job", job="transcript-index", **stats)
+    return 1 if stats.get("errors") else 0
+
+
 def _run_steward(args: argparse.Namespace) -> int:
     if not args.script:
         raise ValueError("--script is required for steward mode")
@@ -281,7 +295,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
                 with timed_event(_JOB_LOG, "job_finish", **fields) as result:
-                    code = {"dream": _run_dream, "beat": _run_beat, "verbatim-archive": _run_verbatim_archive}.get(args.mode, _run_steward)(args)
+                    code = {"dream": _run_dream, "beat": _run_beat, "verbatim-archive": _run_verbatim_archive,
+                                       "transcript-index": _run_transcript_index}.get(args.mode, _run_steward)(args)
                     result["exit_code"] = code
                     if code:
                         result["outcome"] = "failed"

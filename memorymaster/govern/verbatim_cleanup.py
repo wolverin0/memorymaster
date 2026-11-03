@@ -345,15 +345,22 @@ def retention_due(
     try:
         if not _verbatim_present(conn):
             return out
+        # Same predicate as archive_old: an undated row is never archived, so it must not be able to
+        # become the permanent head row and blind (or poison) this check.
         row = conn.execute(
-            f"SELECT {_RETAINED_AT} AS at FROM verbatim_memories ORDER BY id LIMIT 1"
+            f"SELECT {_RETAINED_AT} AS at FROM verbatim_memories WHERE {_IS_DATED} ORDER BY id LIMIT 1"
         ).fetchone()
     finally:
         conn.close()
     if row is None or not row["at"]:
         return out
-    oldest = _retained_at(row["at"])
-    age = ((now or datetime.now(timezone.utc)) - oldest).days
+    try:
+        oldest = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))
+        if oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=timezone.utc)
+        age = ((now or datetime.now(timezone.utc)) - oldest).days
+    except ValueError:  # dated prefix but a malformed rest, e.g. 2026-13-45
+        return out
     out.update(oldest_at=str(row["at"]), oldest_age_days=age, due=age > days + grace_days)
     return out
 

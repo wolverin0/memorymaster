@@ -461,3 +461,25 @@ def test_archive_moves_a_row_that_was_never_fts_indexed(tmp_path: Path) -> None:
     assert out["rows_moved"] == 3 and _count(db) == 2
     assert _fts_hits(db, "zebraquartz") == 0
     _fts_integrity(db)
+
+
+def test_retention_due_ignores_an_undated_head_row(tmp_path: Path) -> None:
+    """An undated row is never archived; as the lowest id it must not blind or poison the check."""
+    db = _real_db(tmp_path, [(1, "no date", ""), (2, "junk date", "not-a-date"), (3, "old", _OLD),
+                             (4, "recent", _RECENT)])
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE verbatim_memories SET created_at='' WHERE id IN (1, 2)")
+    conn.commit()
+    conn.close()
+
+    due = vc.retention_due(str(db), now=_NOW)
+
+    assert due["due"] is True and due["oldest_at"] == _OLD
+    vc.archive_old(str(db), days=90, dry_run=False, now=_NOW)
+    after = vc.retention_due(str(db), now=_NOW)  # the undated rows are still the head rows
+    assert after["due"] is False and after["oldest_at"] == _RECENT
+
+
+def test_retention_due_survives_a_dated_prefix_with_a_malformed_rest(tmp_path: Path) -> None:
+    db = _real_db(tmp_path, [(1, "bad month", "2026-13-45T99:99:99")])
+    assert vc.retention_due(str(db), now=_NOW)["due"] is False

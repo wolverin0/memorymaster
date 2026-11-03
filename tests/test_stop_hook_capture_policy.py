@@ -246,3 +246,60 @@ def test_a_failed_store_leaves_a_counter_and_a_log_line(tmp_path):
     assert health["last_skip_reason"].startswith("store-failed:")
     log = (tmp_path / "home" / ".memorymaster" / "hook_state" / "hook.log").read_text()
     assert "verbatim-health" in log and "store-failed" in log
+
+
+def test_a_healthy_store_keeps_hook_log_quiet_and_survives_a_corrupt_marker(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema
+
+    ensure_verbatim_schema(str(project_root / "memorymaster.db"))
+    state = tmp_path / "home" / ".memorymaster" / "hook_state"
+    state.mkdir(parents=True)
+    (state / "verbatim-health.json").write_text("[]", encoding="utf-8")  # valid JSON, not an object
+
+    result = _run_verbatim_hook(tmp_path, project_root, _verbatim_env(tmp_path))
+
+    assert result.returncode == 0
+    health = _health(tmp_path)
+    assert health["last_store_at"] and "retention_due" in health and health["retention_due"] is False
+    assert "verbatim-health" not in (state / "hook.log").read_text(encoding="utf-8")
+
+
+def test_the_first_stop_after_the_fix_stores_a_bounded_slice_of_a_huge_backlog(tmp_path):
+    import sqlite3
+
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    db = project_root / "memorymaster.db"
+    ensure_verbatim_schema(str(db))
+    transcript = tmp_path / "session.jsonl"
+    padding = "backlog filler sentence for the byte cap. " * 40
+    transcript.write_text(
+        "\n".join(json.dumps({"message": {"role": "user", "content": f"turn {i} {padding}"}}) for i in range(3000))
+        + "\n",
+        encoding="utf-8",
+    )
+    assert transcript.stat().st_size > 4 * 1024 * 1024
+    hook = _render_hook(project_root, tmp_path / "stop-hook.py")
+    payload = {"session_id": "backlog", "transcript_path": str(transcript), "cwd": str(project_root),
+               "stop_hook_active": False}
+
+    def stored() -> int:
+        conn = sqlite3.connect(db)
+        try:
+            return conn.execute("SELECT COUNT(*) FROM verbatim_memories").fetchone()[0]
+        finally:
+            conn.close()
+
+    env = _verbatim_env(tmp_path)
+    subprocess.run([sys.executable, str(hook)], input=json.dumps(payload), capture_output=True, text=True,
+                   env=env, timeout=180)
+    first = stored()
+    subprocess.run([sys.executable, str(hook)], input=json.dumps(payload), capture_output=True, text=True,
+                   env=env, timeout=180)
+
+    assert 0 < first < 3000  # capped at about 2 MiB, not the whole file
+    assert stored() > first  # the next Stop continues from the committed offset

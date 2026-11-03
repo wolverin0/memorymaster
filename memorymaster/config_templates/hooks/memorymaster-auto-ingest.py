@@ -348,23 +348,34 @@ def _run_incremental_llm(ledger, transcript_path, session_id, cwd, provider, ope
 
 
 VERBATIM_HEALTH = "verbatim-health.json"
+# Per-Stop cap on the verbatim increment. Sessions left uncommitted by the 2026-08 outage would
+# otherwise store their whole backlog (tens of MB) inside one hook run; the rest drains on later Stops.
+VERBATIM_MAX_INCREMENT_BYTES = 2 * 1024 * 1024
 
 
 def _record_verbatim_health(**fields):
-    """Merge `fields` into STATE_DIR/verbatim-health.json (the probe reads it) and log one line.
+    """Merge `fields` into STATE_DIR/verbatim-health.json (the probe reads it).
 
     Storing verbatim stopped silently for ten weeks (T-2116) because a gate returned without a
-    trace; every path that skips, fails or finds retention overdue now leaves this marker.
-    Read-modify-write without a lock: a lost update only drops a counter tick."""
+    trace; a skip, a failed store or overdue retention now leaves this marker and one hook.log
+    line. A healthy store only refreshes the marker. Read-modify-write without a lock: a lost
+    update only drops a counter tick."""
     path = os.path.join(STATE_DIR, VERBATIM_HEALTH)
+    loud = bool(fields.get("retention_due")) or "retention_check_error" in fields or bool(fields.get("skipped"))
     try:
         try:
             with open(path, encoding="utf-8") as handle:
                 state = json.load(handle)
         except (OSError, ValueError):
             state = {}
+        if not isinstance(state, dict):
+            state = {}
         if fields.pop("skipped", False):
-            state["store_skipped_count"] = int(state.get("store_skipped_count", 0)) + 1
+            try:
+                count = int(state.get("store_skipped_count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+            state["store_skipped_count"] = count + 1
             state["last_skip_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         state.update(fields)
         state["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -372,34 +383,40 @@ def _record_verbatim_health(**fields):
         with open(tmp, "w", encoding="utf-8") as handle:
             json.dump(state, handle)
         os.replace(tmp, path)
-        with open(os.path.join(STATE_DIR, "hook.log"), "a") as log:
-            log.write(f"[{datetime.now().strftime('%H:%M:%S')}] verbatim-health {json.dumps(fields)}\n")
-    except OSError:
-        pass  # swallow-ok: the marker is best-effort observability, never a reason to fail the Stop hook
+        if loud:
+            with open(os.path.join(STATE_DIR, "hook.log"), "a", encoding="utf-8") as log:
+                log.write(f"[{datetime.now().strftime('%H:%M:%S')}] verbatim-health {json.dumps(fields)}" + chr(10))
+    except Exception:  # swallow-ok: the marker is best-effort observability, never a reason to fail the Stop hook
+        pass
 
 
 def _check_verbatim_retention():
     """Signal-only: retention overdue never blocks storing, the weekly `verbatim-archive` task fixes it.
 
-    O(1) read of the oldest row. Skipped under the spool regime, where this hook must not open the DB."""
+    O(1) read of the oldest dated row. Returns the health fields to record (empty under the spool
+    regime, where this hook must not open the DB)."""
     if _spool_enabled() or not os.path.exists(DB_PATH):
-        return
+        return {}
     try:
         from memorymaster.govern.verbatim_cleanup import retention_due
 
         due = retention_due(DB_PATH)
-        _record_verbatim_health(
-            retention_due=bool(due["due"]), oldest_at=due["oldest_at"], oldest_age_days=due["oldest_age_days"],
-        )
+        return {"retention_due": bool(due["due"]), "oldest_at": due["oldest_at"],
+                "oldest_age_days": due["oldest_age_days"]}
     except Exception as exc:  # swallow-ok: a failed check is reported, storing continues
-        _record_verbatim_health(retention_check_error=type(exc).__name__)
+        return {"retention_check_error": type(exc).__name__}
 
 
 def _run_incremental_verbatim(ledger, transcript_path, session_id, scope):
-    chunk = ledger.read_increment(transcript_path, f"{session_id}:stop-verbatim")
+    chunk = ledger.read_increment(
+        transcript_path, f"{session_id}:stop-verbatim", max_bytes=VERBATIM_MAX_INCREMENT_BYTES
+    )
     if not chunk.text:
         return
-    _check_verbatim_retention()
+    health = _check_verbatim_retention()
+    if health.get("retention_due") or "retention_check_error" in health:
+        _record_verbatim_health(**health)  # loud: marker + hook.log line, even if the store then fails
+        health = {}
     if _spool_enabled():
         from memorymaster.recall.verbatim_store import spool_transcript_text
 
@@ -413,7 +430,7 @@ def _run_incremental_verbatim(ledger, transcript_path, session_id, scope):
             DB_PATH, chunk.text, session_id=session_id, scope=scope, source_agent="stop-hook"
         )
     ledger.commit_cursor(chunk)
-    _record_verbatim_health(last_store_at=datetime.now().astimezone().isoformat(timespec="seconds"))
+    _record_verbatim_health(last_store_at=datetime.now().astimezone().isoformat(timespec="seconds"), **health)
 
 
 def main():

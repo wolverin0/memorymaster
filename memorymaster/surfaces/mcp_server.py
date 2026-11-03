@@ -2864,6 +2864,7 @@ if FastMCP is not None:
         verbatim search finds exact conversation fragments.
         """
         from memorymaster.recall.verbatim_store import search_verbatim as _search
+        from memorymaster.recall.verbatim_store import verbatim_freshness as _verbatim_freshness
         limit = _bounded_limit(limit, maximum=100)
         requested_mode = str(mode).strip().lower()
         effective_mode = "fts" if requested_mode in {"vector", "hybrid"} else requested_mode
@@ -2871,6 +2872,14 @@ if FastMCP is not None:
             _resolve_db(db), query, scope=scope or None, limit=limit, mode=effective_mode
         )
         response = {"ok": True, "rows": len(results), "results": results}
+        freshness = _verbatim_freshness(_resolve_db(db))
+        if freshness:
+            response.update(freshness)
+            if freshness["stale"]:
+                response["warning"] = (
+                    f"verbatim storage looks stale: the newest stored turn is {freshness['newest_age_days']} "
+                    "days old, so recent conversations are not searchable here (try transcript-search)"
+                )
         if effective_mode != requested_mode:
             response.update({
                 "requested_mode": requested_mode,

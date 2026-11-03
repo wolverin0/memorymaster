@@ -105,7 +105,7 @@ def run_cli(args, host, env):
 
 def test_every_task_renders_to_wellformed_xml_without_leftover_tokens(manifest, tmp_path):
     values, declared = wt.build_vars(manifest, REPO, make_env(tmp_path), {})
-    assert len(manifest["tasks"]) == 13
+    assert len(manifest["tasks"]) == 14
     for task in manifest["tasks"]:
         xml = wt.task_xml(manifest, task, values, declared)
         assert not re.search(r"\{[A-Z][A-Z0-9_]*\}", xml), task["name"]
@@ -485,4 +485,11 @@ def test_verbatim_archive_runs_weekly_from_the_graph_profile_runtime(manifest):
     task = next(t for t in manifest["tasks"] if t["name"] == "MemoryMaster-Verbatim-Archive-Weekly")
     assert task["triggers"][0]["type"] == "weekly"
     assert "scheduled_task verbatim-archive" in task["action"]["arguments"]
+    assert "graph-profile" in task["runtimes"]
+
+
+def test_transcript_index_refreshes_hourly_from_the_graph_profile_runtime(manifest):
+    task = next(t for t in manifest["tasks"] if t["name"] == "MemoryMaster-Transcript-Index-Hourly")
+    assert task["triggers"][0]["repetition"]["interval"] == "PT1H"
+    assert "scheduled_task transcript-index" in task["action"]["arguments"]
     assert "graph-profile" in task["runtimes"]
