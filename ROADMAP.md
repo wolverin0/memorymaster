@@ -12,7 +12,6 @@
 Living checklist of what the memorymaster lane still has to land, with target dates. When every box is ticked and nothing new arrived from Fleet or the operator, the lane is done for the cycle. Older sections below are dated history, not open work.
 
 ### Integrate (verified, waiting on the one-at-a-time gate under heavy-slot)
-- [ ] After #356: run `memorymaster-setup windows-tasks --apply` so the live tasks drop the Gemini model on the Claude extractor (target 2026-11-02)
 
 ### Gemini dense plan (operator chose the Gemini API)
 - [x] Re-probed: keep-alive p95 747 ms at 768 dims; Fleet chose async embedding (hook answers lexically, dense used from the next prompt), card T-2081 (2026-11-02)
@@ -30,6 +29,7 @@ Living checklist of what the memorymaster lane still has to land, with target da
 - [ ] Decide whether to disable the Obsidian-Cockpit-Sync task
 
 ### Done this cycle
+- [x] After #356: `memorymaster-setup windows-tasks --apply` run, live check 3 drifted before (1 stale digest wrapper), 2 operator-owned kept after; main deployed to all three runtimes (2026-11-03)
 - [x] #355 T-2070 dashboard viewer authorization, merged (2026-11-03)
 - [x] #356 T-2077a windows-tasks digest and steward-wrapper review findings, merged (2026-11-03)
 - [x] #357 T-2077b dreaming reopen, recall tokenizer, transcript index and steward review findings, merged (2026-11-03)
