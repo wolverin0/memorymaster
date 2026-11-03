@@ -108,34 +108,53 @@ def _fresh(name: str, newest: datetime | None, max_age_h: float, now: datetime, 
 # --------------------------------------------------------------------------- 1. ingest freshness
 
 def check_ingest(db: Path, transcripts_db: Path, capture_db: Path, now: datetime, cfg: dict) -> list[dict]:
-    out: list[dict] = []
-    # claims/verbatim_memories have no created_at/timestamp index and ~10M rows: ids grow with time, so the
-    # newest rows by primary key bound the newest timestamp without a full scan.
+    """Each store is guarded on its own: one that cannot be read is a FAIL and the others still report."""
+    out = _guard("ingest.verbatim", _check_verbatim, db, now, cfg)
+    for family, spec in cfg["claim_families"].items():
+        out += _guard(f"ingest.claims.{family}", _check_claim_family, db, family, spec, now)
+    out += _guard("ingest.embeddings", _check_embeddings, db, now, cfg)
+    out += _guard("ingest.embedding_coverage", _check_embedding_coverage, db, cfg)
+    out += _guard("ingest.transcripts", _check_transcripts, transcripts_db, now, cfg)
+    out += _guard("ingest.capture_queue", _check_capture_queue, capture_db, now, cfg)
+    return out
+
+
+# claims/verbatim_memories have no created_at/timestamp index and ~10M rows: ids grow with time, so the
+# newest rows by primary key bound the newest timestamp without a full scan.
+def _check_verbatim(db: Path, now: datetime, cfg: dict) -> list[dict]:
     with contextlib.closing(ro_connect(db)) as conn:
         row = conn.execute("SELECT MAX(timestamp) FROM (SELECT timestamp FROM verbatim_memories ORDER BY id DESC LIMIT 200)").fetchone()
-        out.append(_fresh("ingest.verbatim", parse_ts(row[0]), cfg["verbatim_max_age_h"], now, "verbatim_memories"))
-        for family, spec in cfg["claim_families"].items():
-            newest = None
-            for agent in spec["agents"]:  # per agent: idx_claims_source_agent serves WHERE + ORDER BY id
-                got = conn.execute(
-                    "SELECT MAX(created_at) FROM (SELECT created_at FROM claims WHERE source_agent=? ORDER BY id DESC LIMIT 20)",
-                    (agent,)).fetchone()[0]
-                ts = parse_ts(got)
-                if ts and (newest is None or ts > newest):
-                    newest = ts
-            out.append(_fresh(f"ingest.claims.{family}", newest, spec["max_age_h"], now, f"claims from {family} sources"))
+    return [_fresh("ingest.verbatim", parse_ts(row[0]), cfg["verbatim_max_age_h"], now, "verbatim_memories")]
+
+
+def _check_claim_family(db: Path, family: str, spec: dict, now: datetime) -> list[dict]:
+    newest = None
+    with contextlib.closing(ro_connect(db)) as conn:
+        for agent in spec["agents"]:  # per agent: idx_claims_source_agent serves WHERE + ORDER BY id
+            got = conn.execute(
+                "SELECT MAX(created_at) FROM (SELECT created_at FROM claims WHERE source_agent=? ORDER BY id DESC LIMIT 20)",
+                (agent,)).fetchone()[0]
+            ts = parse_ts(got)
+            if ts and (newest is None or ts > newest):
+                newest = ts
+    return [_fresh(f"ingest.claims.{family}", newest, spec["max_age_h"], now, f"claims from {family} sources")]
+
+
+def _check_embeddings(db: Path, now: datetime, cfg: dict) -> list[dict]:
+    with contextlib.closing(ro_connect(db)) as conn:
         emb = conn.execute("SELECT MAX(updated_at) FROM claim_embeddings").fetchone()[0]
-        out.append(_fresh("ingest.embeddings", parse_ts(emb), cfg["embeddings_max_age_h"], now, "claim_embeddings"))
+    return [_fresh("ingest.embeddings", parse_ts(emb), cfg["embeddings_max_age_h"], now, "claim_embeddings")]
+
+
+def _check_embedding_coverage(db: Path, cfg: dict) -> list[dict]:
+    with contextlib.closing(ro_connect(db)) as conn:
         active, embedded = conn.execute(
             "SELECT COUNT(*), SUM(EXISTS(SELECT 1 FROM claim_embeddings e WHERE e.claim_id=c.id)) "
             "FROM claims c WHERE c.status IN ('confirmed','candidate')").fetchone()
-        coverage = (embedded or 0) / active if active else 0.0
-        out.append(_result("ingest.embedding_coverage", coverage >= cfg["embeddings_min_coverage"],
-                           f"{embedded or 0}/{active} active claims embedded ({coverage:.0%}, min {cfg['embeddings_min_coverage']:.0%})",
-                           active=active, embedded=embedded or 0, coverage=round(coverage, 3)))
-    out.extend(_guard("ingest.transcripts", _check_transcripts, transcripts_db, now, cfg))
-    out.extend(_guard("ingest.capture_queue", _check_capture_queue, capture_db, now, cfg))
-    return out
+    coverage = (embedded or 0) / active if active else 0.0
+    return [_result("ingest.embedding_coverage", coverage >= cfg["embeddings_min_coverage"],
+                    f"{embedded or 0}/{active} active claims embedded ({coverage:.0%}, min {cfg['embeddings_min_coverage']:.0%})",
+                    active=active, embedded=embedded or 0, coverage=round(coverage, 3))]
 
 
 def _check_transcripts(path: Path, now: datetime, cfg: dict) -> list[dict]:
@@ -410,9 +429,14 @@ def main(argv: list[str] | None = None) -> int:
                        transcripts_db=Path(args.transcripts_db), capture_db=Path(args.capture_db),
                        now=parse_ts(args.now) if args.now else None)
     out_dir = Path(args.out)
-    report["alert"] = ({"sent": False, "reason": "--no-alert"} if args.no_alert
-                       else maybe_alert(report, out_dir, Path(args.orchestrators)))
-    write_report(report, out_dir)
+    report["alert"] = {"sent": False, "reason": "--no-alert" if args.no_alert else "pending"}
+    write_report(report, out_dir)  # first: it creates out_dir, and the report must exist even if the alert fails
+    if not args.no_alert:
+        try:
+            report["alert"] = maybe_alert(report, out_dir, Path(args.orchestrators))
+        except Exception as exc:  # noqa: BLE001 - a failed alert never masks the exit code
+            report["alert"] = {"sent": False, "reason": f"alert error: {type(exc).__name__}: {str(exc)[:160]}"}
+        write_report(report, out_dir)
     for check in report["checks"]:
         print(f"{check['status']:4} {check['name']}: {check['detail']}")
     print(f"{report['status']}: {len(report['failures'])} failing; alert: {report['alert']['reason']}")

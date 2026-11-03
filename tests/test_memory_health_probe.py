@@ -159,6 +159,17 @@ def test_capture_queue_fails_on_backlog_size_and_on_age(world):
     assert world.ingest_checks()["ingest.capture_queue"]["status"] == "PASS"
 
 
+def test_one_unreadable_store_does_not_hide_the_others(world):
+    with world.rw() as conn:
+        conn.execute("DROP TABLE claim_embeddings")  # the DB opens; only the embeddings reads raise
+    checks = world.ingest_checks()
+    assert checks["ingest.embeddings"]["status"] == "FAIL" and "could not run" in checks["ingest.embeddings"]["detail"]
+    assert checks["ingest.embedding_coverage"]["status"] == "FAIL"
+    for healthy in ("ingest.verbatim", "ingest.claims.session", "ingest.claims.hook", "ingest.claims.dream-worker",
+                    "ingest.transcripts", "ingest.capture_queue"):
+        assert checks[healthy]["status"] == "PASS", healthy
+
+
 def test_a_missing_store_is_a_fail_not_a_crash(world):
     world.transcripts.unlink()
     checks = world.ingest_checks()
@@ -386,6 +397,30 @@ def test_main_writes_dated_and_latest_reports_exits_nonzero_and_honours_no_alert
     assert probe.main(args) == 1 and len(sends) == 1
     report["failures"], report["checks"], report["status"] = [], [], "PASS"
     assert probe.main(args) == 0
+
+
+def test_main_on_a_fresh_out_dir_writes_the_report_before_alerting_and_survives_a_failed_alert(tmp_path, monkeypatch, orchestrators):
+    report = {**failing_report("ingest.verbatim"), "env": {}}
+    monkeypatch.setattr(probe, "run_probe", lambda *a, **k: dict(report))
+    out = tmp_path / "does" / "not" / "exist"
+    on_disk_at_send: list[bool] = []
+
+    def exploding_sender(*_):
+        on_disk_at_send.append((out / "latest.json").is_file())  # the report already exists when the alert goes out
+        raise RuntimeError("orca down")
+
+    monkeypatch.setattr(probe, "send_orca", exploding_sender)
+    args = ["--db", "x.db", "--out", str(out), "--orchestrators", str(orchestrators), "--now", "2026-11-03T09:15:00+00:00"]
+    assert probe.main(args) == 1, "a failed send never masks the exit code"
+    assert on_disk_at_send == [True]
+    assert "send failed" in json.loads((out / "latest.json").read_text(encoding="utf-8"))["alert"]["reason"]
+
+    def crashing_alert(*_a, **_k):
+        raise OSError("state file unwritable")
+
+    monkeypatch.setattr(probe, "maybe_alert", crashing_alert)
+    assert probe.main(args) == 1
+    assert "alert error" in json.loads((out / "latest.json").read_text(encoding="utf-8"))["alert"]["reason"]
 
 
 def test_report_never_names_the_machine_path(world):
