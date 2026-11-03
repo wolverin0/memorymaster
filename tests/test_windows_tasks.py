@@ -1,8 +1,7 @@
 """The Windows scheduled-task installer: rendering, plan, drift detection and idempotent apply.
 
 Nothing here registers a task or touches the registry: schtasks, HKCU and pip sit behind a fake host and
-every path lives under a tmp HOME.
-"""
+every path lives under a tmp HOME.\n"""
 
 from __future__ import annotations
 
@@ -308,3 +307,174 @@ def test_setup_surface_routes_the_windows_tasks_subcommand(monkeypatch):
     monkeypatch.setattr(wt, "main", lambda argv=None, **kw: seen.append(argv) or 0)
     assert setup_hooks.main(["windows-tasks", "--check"]) == 0
     assert seen == [["--check"]]
+
+
+# --------------------------------------------------------------------------- T-2077a review findings
+
+def test_user_env_never_pairs_the_claude_cli_with_a_gemini_model(manifest, monkeypatch):
+    """M5: DREAM_EXTRACT_PROVIDER=claude plus a Gemini model made capture run `claude --model gemini-...`."""
+    from memorymaster.capture.worker import capture_llm_overrides
+
+    for name in ("MEMORYMASTER_CAPTURE_LLM_PROVIDER", "MEMORYMASTER_LLM_PROVIDER",
+                 "MEMORYMASTER_CAPTURE_LLM_MODEL", "MEMORYMASTER_LLM_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in manifest["user_env"].items():
+        monkeypatch.setenv(name, value)
+    overrides = capture_llm_overrides()
+    assert overrides.get("MEMORYMASTER_LLM_PROVIDER") == "claude_cli"
+    assert "gemini" not in overrides.get("MEMORYMASTER_LLM_MODEL", "").lower()
+
+
+def test_manifest_user_env_does_not_set_a_gemini_model_for_the_claude_provider(manifest):
+    env = manifest["user_env"]
+    if env.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER") == "claude":
+        assert "gemini" not in env.get("MEMORYMASTER_DREAM_EXTRACT_MODEL", "").lower()
+
+
+def test_capture_ignores_a_gemini_dream_model_when_the_provider_is_the_claude_cli(monkeypatch):
+    """M5, live shape: the registry already holds claude + a Gemini model; the code must not forward it."""
+    from memorymaster.capture.worker import capture_llm_overrides
+
+    for name in ("MEMORYMASTER_CAPTURE_LLM_PROVIDER", "MEMORYMASTER_LLM_PROVIDER",
+                 "MEMORYMASTER_CAPTURE_LLM_MODEL", "MEMORYMASTER_LLM_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "claude")
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_MODEL", "gemini-3.5-flash-lite")
+    overrides = capture_llm_overrides()
+    assert overrides["MEMORYMASTER_LLM_PROVIDER"] == "claude_cli"
+    assert "MEMORYMASTER_LLM_MODEL" not in overrides
+    monkeypatch.setenv("MEMORYMASTER_CAPTURE_LLM_MODEL", "sonnet")  # an explicit capture model still wins
+    assert capture_llm_overrides()["MEMORYMASTER_LLM_MODEL"] == "sonnet"
+
+
+@WINDOWS_ONLY
+def test_an_explicit_wheel_hash_is_checked_even_when_the_installed_version_matches(tmp_path, capsys):
+    """M6: same installed version used to skip the wheel entirely, so a bad --wheel-sha256 went unnoticed."""
+    env, host = fresh_pc(tmp_path)
+    python = Path(env["LOCALAPPDATA"]) / "Programs" / "Python" / "Python312" / "python.exe"
+    host.versions[str(python)] = wt.repo_version(REPO)
+    wheel = tmp_path / "w.whl"
+    wheel.write_bytes(b"x")
+    for mode in ([], ["--apply"]):
+        code, output = run_cli([*mode, "--wheel", str(wheel), "--wheel-sha256", "0" * 64], host, env)
+        assert code == 2 and "hash mismatch" in output + capsys.readouterr().err, (mode, output)
+    assert host.registered == []
+
+
+def test_a_default_that_embeds_a_required_variable_does_not_leak_the_token(manifest, tmp_path):
+    """L25: a default built from a required variable that has no value must raise, not render literally."""
+    broken = copy.deepcopy(manifest)
+    broken["variables"]["defaults"]["RELAY"] = "http://{HERMES_HOST}:8788"
+    task = copy.deepcopy(next(t for t in broken["tasks"] if t["name"] == "MemoryMaster-Beat"))
+    task["action"]["arguments"] += " --relay {RELAY}"
+    env = make_env(tmp_path)
+    env.pop(f"{wt.ENV_PREFIX}HERMES_HOST")
+    values, declared = wt.build_vars(broken, REPO, env, {})
+    with pytest.raises(wt.WindowsTasksError, match="HERMES_HOST"):
+        wt.task_xml(broken, task, values, declared)
+    values, declared = wt.build_vars(broken, REPO, make_env(tmp_path), {})
+    assert f"--relay http://{HERMES}:8788" in wt.task_xml(broken, task, values, declared)
+
+
+def test_a_relative_repo_is_resolved_to_an_absolute_path(monkeypatch):
+    """L26: find_repo(--repo .) baked a relative path into registered tasks."""
+    monkeypatch.chdir(REPO.parent)
+    found = wt.find_repo(REPO.name)
+    assert found.is_absolute() and found == REPO
+
+
+def test_the_digest_cmdline_argument_is_quoted(manifest, tmp_path):
+    """L24: every other path is quoted; a HOME with spaces split this one."""
+    values, declared = wt.build_vars(manifest, REPO, make_env(tmp_path), {})
+    digest = next(t for t in manifest["tasks"] if t["name"] == "MemoryMasterWeeklyDigest")
+    xml = wt.task_xml(manifest, digest, values, declared)
+    assert re.search(r'MemoryMasterWeeklyDigest\.cmdline(&quot;|")</Arguments>', xml), xml
+
+
+_STUBS = {
+    "__init__.py": "",
+    "service.py": (
+        "class MemoryService:\n"
+        "    def __init__(self, *a, **k):\n"
+        "        if {fail!r} == 'cycle_init':\n"
+        "            raise RuntimeError('stub failure: cycle_init')\n"
+        "        self.store = object()\n"
+        "    def run_cycle(self, **k):\n"
+        "        return {{}}\n"
+    ),
+    "govern/__init__.py": "",
+    "govern/jobs/__init__.py": "",
+    "govern/jobs/revalidation.py": (
+        "def tenants_with_work(store):\n"
+        "    if {fail!r} == 'revalidation':\n"
+        "        raise RuntimeError('stub failure: revalidation')\n"
+        "    return []\n"
+    ),
+    "govern/candidate_dedupe.py": "def run_jev(store, limit):\n    return {{}}\ndef jev_pairs_per_cycle():\n    return 1\n",
+    "govern/fuzzy_dedupe.py": "def run(store):\n    return {{}}\n",
+    "govern/jobs/scheduled_archive.py": "def run(svc, older_than_days):\n    return {{'archived': 0}}\n",
+    "govern/jobs/curation_drain.py": "def run(svc, limit, apply):\n    return {{}}\n",
+    "core/__init__.py": "",
+    "core/llm_provider.py": "def purge_claude_cli_scratch():\n    return {{}}\n",
+    "decisions/__init__.py": "",
+    "decisions/outcomes.py": "def steward_cycle_outcomes(db):\n    return {{}}\n",
+    "wiki_engine.py": (
+        "def absorb(db, path):\n"
+        "    if {fail!r} == 'wiki_absorb':\n"
+        "        raise RuntimeError('stub failure: wiki_absorb')\n"
+        "    return {{}}\n"
+        "def cleanup(path, scope_filter=None):\n"
+        "    return {{}}\n"
+        "def breakdown(db, path, scope_filter=None):\n"
+        "    return {{}}\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("fail,exit_ok", [
+    (None, True),  # every stage works: still exit 0
+    ("cycle_init", False),
+    ("revalidation", False),
+    ("wiki_absorb", False),
+])
+def test_the_steward_wrapper_exit_code_reflects_every_stage_failure(tmp_path, fail, exit_ok):
+    """L23: a stage failure was printed to stderr and the scheduled task still ended with exit 0."""
+    import subprocess
+
+    package = tmp_path / "stub" / "memorymaster"
+    for rel, body in _STUBS.items():
+        target = package / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body.format(fail=fail), encoding="utf-8")
+    root = tmp_path / "repo"
+    (root / "obsidian-vault" / "wiki").mkdir(parents=True)
+    source = (REPO / "ops/windows-tasks/wrappers/steward-cycle.py").read_text(encoding="utf-8")
+    script = tmp_path / "steward-cycle.py"
+    script.write_text(source.replace("{REPO}", str(root)), encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(tmp_path / "stub"), "HOME": str(tmp_path), "USERPROFILE": str(tmp_path),
+           "MEMORYMASTER_WIKI_ABSORB": "1"}
+    done = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True, timeout=60)
+    if fail:
+        assert f"stub failure: {fail}" in done.stderr, done.stderr
+    else:
+        assert done.stderr == "", done.stderr
+    assert (done.returncode == 0) is exit_ok, done.stdout + done.stderr
+
+
+@WINDOWS_ONLY
+def test_the_wheel_is_hashed_once_and_the_hash_is_case_insensitive(tmp_path, monkeypatch):
+    """Review of #356: the wheel was hashed up front and again at install; an uppercase digest must match."""
+    import hashlib
+
+    env, host = fresh_pc(tmp_path, MEMORYMASTER_MCP_HTTP_TOKEN="shared-secret-value",
+                         MEMORYMASTER_HERMES_MCP_HTTP_TOKEN="hermes-secret-value")
+    wheel = tmp_path / "w.whl"
+    wheel.write_bytes(b"x")
+    calls = []
+    real = hashlib.sha256
+    monkeypatch.setattr(wt.hashlib, "sha256", lambda *a, **k: calls.append(1) or real(*a, **k))
+    digest = real(b"x").hexdigest().upper()
+    code, output = run_cli(["--apply", "--wheel", str(wheel), "--wheel-sha256", digest], host, env)
+    assert code == 0, output
+    assert any("--force-reinstall" in cmd for cmd in host.commands)  # the install path really ran
+    assert len(calls) == 1

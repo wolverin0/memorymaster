@@ -119,6 +119,7 @@ os.environ["MEMORYMASTER_LLM_API_KEYS"] = _key
 os.environ["MEMORYMASTER_LLM_PROVIDER"] = "google"
 sys.path.insert(0, REPO)
 import memorymaster.bridges.atlas_llm_extractor as ax  # noqa: E402
+from memorymaster.core.llm_provider import gemini_thinking_fields  # noqa: E402
 from memorymaster.core.service import MemoryService  # noqa: E402
 
 _BATCH_INSTR = (
@@ -140,10 +141,7 @@ def _prompt(batch):
 def _call(prompt):
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={_key}"
     gen = {"temperature": 0.1, "maxOutputTokens": 8192, "responseMimeType": "application/json"}
-    if "gemini-2.5" in MODEL:
-        gen["thinkingConfig"] = {"thinkingBudget": 0}
-    elif "gemini-3" in MODEL or MODEL.startswith("gemini-flash"):  # -latest aliases resolve to 3.x
-        gen["thinkingConfig"] = {"thinkingLevel": "minimal"}
+    gen.update(gemini_thinking_fields(MODEL))
     req = urllib.request.Request(
         url, data=json.dumps({"contents": [{"parts": [{"text": prompt}]}], "generationConfig": gen}).encode(),
         headers={"content-type": "application/json"}, method="POST")

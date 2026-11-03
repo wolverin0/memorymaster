@@ -78,7 +78,6 @@
     "MEMORYMASTER_GRAPH_OBSERVATIONS": "1",
     "MEMORYMASTER_COMPILED_PROFILE": "1",
     "MEMORYMASTER_DREAM_EXTRACT_PROVIDER": "claude",
-    "MEMORYMASTER_DREAM_EXTRACT_MODEL": "gemini-3.5-flash-lite",
     "MEMORYMASTER_DREAM_CONSOLIDATE_PROVIDER": "antigravity",
     "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL": "gemini-3.8-flash-low",
     "MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY": "200",
@@ -541,7 +540,7 @@
       ],
       "action": {
         "command": "wscript.exe",
-        "arguments": "//B //NoLogo \"{HOME}\\scripts\\run-hidden.vbs\" {HOME}\\scripts\\hidden-tasks\\MemoryMasterWeeklyDigest.cmdline"
+        "arguments": "//B //NoLogo \"{HOME}\\scripts\\run-hidden.vbs\" \"{HOME}\\scripts\\hidden-tasks\\MemoryMasterWeeklyDigest.cmdline\""
       }
     }
   ]
