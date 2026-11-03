@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+import functools
 from datetime import datetime, timedelta, timezone
 from html import escape
 import json
@@ -20,7 +21,8 @@ from urllib.parse import parse_qs, urlparse
 from memorymaster.surfaces import capture_inbox as capture_inbox_surface, cohort_review_template, dashboard_auth, dashboard_summary, dashboard_template, graph_observations_dashboard as graph_observations_surface, jev_dashboard, session_scope as session_scope_surface
 from memorymaster.core.config import get_config
 from memorymaster.govern.review import build_review_queue
-from memorymaster.core.service import MemoryService
+from memorymaster.core.service import MemoryService, _filter_agent_visibility, authorize_claims
+from memorymaster.recall.candidate_pool import page_authorized_lexical
 from memorymaster.recall.qdrant_transport import QdrantTransportConfig
 from memorymaster.surfaces.dashboard_commands import (
     apply_triage_action,
@@ -31,6 +33,7 @@ from memorymaster.surfaces.dashboard_read_models import (
     action_proposals_payload,
     audit_payload,
     claims_payload,
+    effective_allow_sensitive,
     conflicts_payload,
     events_payload,
     mobile_review_queue_payload,
@@ -366,26 +369,63 @@ def _parse_claim_lineage_route(route: str) -> int | None:
     return claim_id
 
 
-def _get_lineage_claim(service: Any, claim_id: int) -> Any | None:
+def _get_lineage_claim(service: Any, claim_id: int, requesting_agent: str | None = None) -> Any | None:
+    """Load one claim for the lineage page, or ``None`` when the caller may not see it.
+
+    ``None`` covers missing and unauthorized alike so the 404 page is not an
+    existence oracle (T-2070 F-1b). ``store.get_claim`` applies no tenant or
+    visibility rule, so both are enforced here.
+    """
     store = getattr(service, "store", None)
     get_claim = getattr(store, "get_claim", None)
     if callable(get_claim):
-        return get_claim(claim_id, include_citations=False)
-    for claim in service.list_claims(limit=5000, include_archived=True):
-        if int(claim.id) == claim_id:
-            return claim
-    return None
+        claim = get_claim(claim_id, include_citations=False)
+    else:
+        claim = next(
+            (
+                c for c in service.list_claims(
+                    limit=5000, include_archived=True, requesting_agent=requesting_agent,
+                ) if int(c.id) == claim_id
+            ),
+            None,
+        )
+    if claim is None:
+        return None
+    return claim if _authorized_lineage([claim], service, requesting_agent) else None
 
 
-def _lineage_candidate_claims(service: Any) -> list[Any]:
+def _authorized_lineage(claims: list[Any], service: Any, requesting_agent: str | None) -> list[Any]:
+    # Operator keeps the full view (redacted claims included); a restricted caller
+    # gets the service's whole policy.
+    return authorize_claims(
+        claims, requesting_agent=requesting_agent,
+        tenant_id=getattr(service, "tenant_id", None),
+        include_sensitive=requesting_agent is None,
+    )
+
+
+def _lineage_candidate_claims(service: Any, requesting_agent: str | None = None) -> list[Any]:
     store = getattr(service, "store", None)
     list_claims = getattr(store, "list_claims", None) or getattr(service, "list_claims", None)
     if not callable(list_claims):
         return []
-    try:
-        return list_claims(limit=5000, include_archived=True, include_citations=False)
-    except TypeError:
-        return list_claims(limit=5000, include_archived=True)
+
+    tenant_id = getattr(service, "tenant_id", None)
+    # The tenant boundary goes into the store query so other tenants' rows do
+    # not use up the window (the service fallback has no such parameter).
+    tenant_kw = {"tenant_id": tenant_id} if tenant_id is not None and getattr(store, "list_claims", None) else {}
+
+    def fetch(window: int) -> tuple[list[Any], bool]:
+        try:
+            rows = list_claims(limit=window, include_archived=True, include_citations=False, **tenant_kw)
+        except TypeError:
+            rows = list_claims(limit=window, include_archived=True)
+        return rows, len(rows) < window
+
+    # Paged so another agent's private rows do not use up the 5000-claim window.
+    return page_authorized_lexical(
+        fetch, 5000, lambda rows: _authorized_lineage(rows, service, requesting_agent),
+    )
 
 
 def _collect_reverse_lineage(claim_id: int, by_replacement: dict[int, list[Any]], seen: set[int]) -> list[Any]:
@@ -400,8 +440,10 @@ def _collect_reverse_lineage(claim_id: int, by_replacement: dict[int, list[Any]]
     return rows
 
 
-def _build_claim_lineage(service: Any, target: Any) -> tuple[list[Any], list[tuple[int, int]]]:
-    all_claims = _lineage_candidate_claims(service)
+def _build_claim_lineage(
+    service: Any, target: Any, requesting_agent: str | None = None
+) -> tuple[list[Any], list[tuple[int, int]]]:
+    all_claims = _lineage_candidate_claims(service, requesting_agent)
     by_replacement: dict[int, list[Any]] = {}
     for claim in all_claims:
         replacement_id = getattr(claim, "replaced_by_claim_id", None)
@@ -417,7 +459,7 @@ def _build_claim_lineage(service: Any, target: Any) -> tuple[list[Any], list[tup
         next_id = getattr(current, "replaced_by_claim_id", None)
         if next_id is None or int(next_id) in seen:
             break
-        next_claim = _get_lineage_claim(service, int(next_id))
+        next_claim = _get_lineage_claim(service, int(next_id), requesting_agent)
         if next_claim is None:
             break
         seen.add(int(next_claim.id))
@@ -784,6 +826,9 @@ class DashboardHTTPServer(ThreadingHTTPServer):
 
 class DashboardRequestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    # Set per request by _enforce_auth; None = unrestricted (operator / legacy mode).
+    # Starts restricted so a path that skips _enforce_auth fails closed.
+    _requesting_agent: str | None = dashboard_auth.VIEWER_PRINCIPAL
 
     def log_message(self, fmt: str, *args: object) -> None:
         return
@@ -809,6 +854,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
         decision = dashboard_auth.authenticate(self.headers)
         decision = dashboard_auth.authorize(decision, method=method, route=route)
+        self._requesting_agent = dashboard_auth.requesting_agent_for(decision.role)
         if not decision.ok:
             self._write_json(
                 {"ok": False, "error": decision.reason},
@@ -915,7 +961,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         )
 
     def _handle_claim_lineage(self, claim_id: int) -> None:
-        target = _get_lineage_claim(self._server.service, claim_id)
+        target = _get_lineage_claim(self._server.service, claim_id, dashboard_auth.principal_of(self))
         if target is None:
             self._write_html(
                 "<!doctype html><html><head><title>Claim not found</title></head>"
@@ -923,7 +969,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 status=HTTPStatus.NOT_FOUND,
             )
             return
-        nodes, edges = _build_claim_lineage(self._server.service, target)
+        nodes, edges = _build_claim_lineage(self._server.service, target, dashboard_auth.principal_of(self))
         self._write_html(_render_claim_lineage_html(target, nodes, edges))
 
     def _write_dashboard(self) -> None:
@@ -950,7 +996,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self._write_json(claims_payload(
             self._server.service, status=status, limit=limit,
             include_archived=include_archived, allow_sensitive=allow_sensitive,
-            serialize=_claim_to_dict,
+            serialize=_claim_to_dict, requesting_agent=dashboard_auth.principal_of(self),
         ))
 
     def _handle_events(self, query_string: str) -> None:
@@ -981,7 +1027,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         include_stale = _parse_bool(_first_query_value(query, "include_stale"), default=False)
         self._write_json(conflicts_payload(
             self._server.service, limit=limit, include_stale=include_stale,
-            serialize=_claim_to_dict,
+            serialize=_claim_to_dict, requesting_agent=dashboard_auth.principal_of(self),
         ))
 
     def _handle_review_queue(self, query_string: str) -> None:
@@ -996,6 +1042,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             self._server.service, limit=limit, include_stale=include_stale,
             include_conflicted=include_conflicted, allow_sensitive=allow_sensitive,
             exclude_reviewed=exclude_reviewed, exclude_suppressed=exclude_suppressed,
+            requesting_agent=dashboard_auth.principal_of(self),
         ))
 
     def _handle_mobile_review_queue(self, query_string: str) -> None:
@@ -1005,6 +1052,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         cursor = _parse_review_queue_cursor(_first_query_value(query, "cursor"))
         self._write_json(mobile_review_queue_payload(
             self._server.service, limit=limit, scope=scope, cursor=cursor,
+            requesting_agent=dashboard_auth.principal_of(self),
         ))
 
     def _handle_action_proposals(self, query_string: str) -> None:
@@ -1032,7 +1080,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         limit = params["limit"]
         include_stale = params["include_stale"]
         include_conflicted = params["include_conflicted"]
-        allow_sensitive = params["allow_sensitive"]
+        allow_sensitive = effective_allow_sensitive(
+            params["allow_sensitive"], dashboard_auth.principal_of(self), "dashboard.retrieval",
+        )
         scope_allowlist = params["scope_allowlist"]
 
         attempts_with_scope = _build_retrieval_method_attempts(
@@ -1042,12 +1092,24 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         query_rows_fn = getattr(self._server.service, "query_rows", None)
         claims: list[Any] = []
         scored_by_claim_id: dict[int, dict[str, Any]] = {}
-        if callable(query_rows_fn):
-            rows_data = _call_retrieval_method_with_fallback(query_rows_fn, text, attempts_with_scope)
-            claims, scored_by_claim_id = _extract_claims_from_rows(rows_data)
+        # A restricted caller's principal is bound outside the fallback attempts on
+        # purpose: a method without requesting_agent raises TypeError (500) instead
+        # of silently retrying unrestricted. Both MemoryService methods take it, and
+        # authorize while paging, so private rows cannot use up the limit.
+        def bind(method: Any) -> Any:
+            if dashboard_auth.principal_of(self) is None:
+                return method
+            return functools.partial(method, requesting_agent=dashboard_auth.principal_of(self))
 
-        if not callable(query_rows_fn):
-            claims = _call_retrieval_method_with_fallback(self._server.service.query, text, attempts_with_scope)
+        if callable(query_rows_fn):
+            rows_data = _call_retrieval_method_with_fallback(bind(query_rows_fn), text, attempts_with_scope)
+            claims, scored_by_claim_id = _extract_claims_from_rows(rows_data)
+        else:
+            claims = _call_retrieval_method_with_fallback(
+                bind(self._server.service.query), text, attempts_with_scope,
+            )
+        # Defence in depth only; the service already applied the rule before its limit.
+        claims = _filter_agent_visibility(claims, dashboard_auth.principal_of(self))
         if scope_allowlist:
             claims = [claim for claim in claims if claim.scope in scope_allowlist]
         triage_flags = self._triage_flags(max(limit * 30, 200))
@@ -1082,8 +1144,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             include_stale=params["include_stale"],
             include_conflicted=params["include_conflicted"],
             include_candidates=include_candidates,
-            allow_sensitive=params["allow_sensitive"],
+            allow_sensitive=effective_allow_sensitive(
+                params["allow_sensitive"], dashboard_auth.principal_of(self), "dashboard.recall_analysis",
+            ),
             scope_allowlist=params["scope_allowlist"] or None,
+            requesting_agent=dashboard_auth.principal_of(self),
         )
         self._write_json({"ok": True, **analysis})
 
@@ -1095,7 +1160,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def _handle_namespaces(self, query_string: str) -> None:
         query = parse_qs(query_string)
         limit = _parse_int(_first_query_value(query, "limit"), default=200, minimum=1, maximum=5000)
-        self._write_json(namespaces_payload(self._server.service, limit=limit))
+        self._write_json(namespaces_payload(
+            self._server.service, limit=limit, requesting_agent=dashboard_auth.principal_of(self),
+        ))
 
     def _handle_provenance(self, query_string: str) -> None:
         """Per-agent provenance: ingest counts + status mix by source_agent.
@@ -1169,6 +1236,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             include_stale=True,
             include_conflicted=True,
             include_sensitive=False,
+            requesting_agent=dashboard_auth.principal_of(self),
         )
         triage_flags = self._triage_flags(max(queue_limit * 20, 200))
         status_counts: Counter[str] = Counter()

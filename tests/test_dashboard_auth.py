@@ -290,3 +290,18 @@ def test_e2e_invalid_token_returns_401(live_dashboard):
     )
     assert status == 401
     assert b"invalid_token" in body
+
+
+def test_unknown_or_missing_role_maps_to_the_restricted_principal():
+    """T-2070: only the operator role is unrestricted; anything else fails closed."""
+    assert dashboard_auth.requesting_agent_for(DashboardRole.OPERATOR) is None
+    assert dashboard_auth.requesting_agent_for(DashboardRole.VIEWER) == dashboard_auth.VIEWER_PRINCIPAL
+    assert dashboard_auth.requesting_agent_for(None) == dashboard_auth.VIEWER_PRINCIPAL
+    assert dashboard_auth.requesting_agent_for("root") == dashboard_auth.VIEWER_PRINCIPAL  # type: ignore[arg-type]
+
+
+def test_a_handler_that_never_ran_auth_is_restricted_not_unrestricted():
+    from types import SimpleNamespace
+
+    assert dashboard_auth.principal_of(SimpleNamespace()) == dashboard_auth.VIEWER_PRINCIPAL
+    assert dashboard_auth.principal_of(SimpleNamespace(_requesting_agent=None)) is None

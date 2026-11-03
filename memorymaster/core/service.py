@@ -9,6 +9,7 @@ import logging
 import os
 
 from memorymaster.core import access_recording, observability
+from memorymaster.core.claim_authorization import authorize_claims, filter_agent_visibility as _filter_agent_visibility
 from memorymaster.core import llm_budget
 from memorymaster.govern import candidate_dedupe
 from memorymaster.knowledge import entity_ingest
@@ -196,24 +197,6 @@ def _rerank_with_profile(
         reverse=True,
     )
     return profiled[:limit]
-
-
-def _filter_agent_visibility(claims: list[Claim], requesting_agent: str | None) -> list[Claim]:
-    """Drop other agents' PRIVATE claims for a per-agent visibility query.
-
-    A claim is visible to ``requesting_agent`` when it is public OR was authored
-    by that same agent. With no requesting agent the list is returned unchanged.
-    Must be applied on EVERY retrieval path (legacy, hybrid, cache rehydrate) or
-    a path-dependent cross-agent leak appears.
-    """
-    if not requesting_agent:
-        return claims
-    return [
-        c
-        for c in claims
-        if getattr(c, "visibility", "public") == "public"
-        or getattr(c, "source_agent", None) == requesting_agent
-    ]
 
 
 def _is_cross_scope_sensitive(claim: Claim, current_scope: str | None) -> bool:
@@ -1040,6 +1023,7 @@ class MemoryService(IntegrationService):
         scope_allowlist: list[str] | None = None,
         query_type: str | None = None,
         trust_mode: str | None = None,
+        requesting_agent: str | None = None,
     ) -> list[Claim]:
         resolved_trust = trust_mode or (
             "exploratory"
@@ -1057,6 +1041,7 @@ class MemoryService(IntegrationService):
             retrieval_profile=retrieval_profile,
             allow_sensitive=allow_sensitive,
             scope_allowlist=tuple(scope_allowlist) if scope_allowlist else None,
+            requesting_agent=requesting_agent,
             query_type=query_type,
         ), vector_hook=vector_hook)
         return [row["claim"] for row in result.rows]
@@ -2145,20 +2130,27 @@ class MemoryService(IntegrationService):
             context="service.list_claims",
             deny_mode="filter",
         )
-        claims = self.store.list_claims(
-            status=status,
-            limit=limit,
-            include_archived=include_archived,
-            include_citations=True,
-            scope_allowlist=scope_allowlist,
-            tenant_id=self.tenant_id,
-            holder=holder,
-            ids=ids,
-        )
-        claims = _filter_agent_visibility(claims, requesting_agent)
-        if not include_sensitive:
-            claims = [claim for claim in claims if not is_sensitive_claim(claim)]
-        return claims
+        def fetch(window: int) -> tuple[list[Claim], bool]:
+            rows = self.store.list_claims(
+                status=status,
+                limit=window,
+                include_archived=include_archived,
+                include_citations=True,
+                scope_allowlist=scope_allowlist,
+                tenant_id=self.tenant_id,
+                holder=holder,
+                ids=ids,
+            )
+            return rows, len(rows) < window
+
+        def authorize(rows: list[Claim]) -> list[Claim]:
+            return authorize_claims(
+                rows, requesting_agent=requesting_agent, include_sensitive=include_sensitive,
+            )
+
+        # Rows the filters drop (another agent's private claims, redacted text)
+        # must not use up the limit window (T-2070): page until it is filled.
+        return page_authorized_lexical(fetch, limit, authorize)
 
     def list_claims_page(
         self,
