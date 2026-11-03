@@ -429,6 +429,38 @@
       }
     },
     {
+      "name": "MemoryMaster-Health-Probe",
+      "description": "Daily read-only health probe: ingest freshness, canary recall, ranking, verbatim retention and services; one Orca alert per UTC day on failure.",
+      "runtimes": [
+        "client"
+      ],
+      "triggers": [
+        {
+          "type": "daily",
+          "at": "09:15:00"
+        }
+      ],
+      "settings": {
+        "preset": "job",
+        "execution_time_limit": "PT20M"
+      },
+      "requires_repo_files": [
+        "scripts/memory_health_probe.py",
+        "scripts/health_canaries.json"
+      ],
+      "optional_external": [
+        {
+          "path": "{PYAPPS}\\_intel\\orchestrators.json",
+          "owner": "Py Apps root",
+          "note": "names the Fleet run that receives the alert; without it the probe still writes its report"
+        }
+      ],
+      "action": {
+        "command": "{PYTHONW}",
+        "arguments": "\"{REPO}\\scripts\\memory_health_probe.py\" --db \"{DB}\" --workspace \"{REPO}\" --out \"{CHECKPOINTS}\\health\" --orchestrators \"{PYAPPS}\\_intel\\orchestrators.json\""
+      }
+    },
+    {
       "name": "MemoryMaster-HermesSync-AM",
       "description": "MemoryMaster <-> Hermes delta sync (morning)",
       "runtimes": [

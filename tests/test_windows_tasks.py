@@ -105,7 +105,7 @@ def run_cli(args, host, env):
 
 def test_every_task_renders_to_wellformed_xml_without_leftover_tokens(manifest, tmp_path):
     values, declared = wt.build_vars(manifest, REPO, make_env(tmp_path), {})
-    assert len(manifest["tasks"]) == 12
+    assert len(manifest["tasks"]) == 13
     for task in manifest["tasks"]:
         xml = wt.task_xml(manifest, task, values, declared)
         assert not re.search(r"\{[A-Z][A-Z0-9_]*\}", xml), task["name"]
@@ -478,3 +478,15 @@ def test_the_wheel_is_hashed_once_and_the_hash_is_case_insensitive(tmp_path, mon
     assert code == 0, output
     assert any("--force-reinstall" in cmd for cmd in host.commands)  # the install path really ran
     assert len(calls) == 1
+
+
+def test_the_health_probe_task_runs_daily_hidden_with_the_repo_probe(manifest, tmp_path):
+    """T-2121: a daily, windowless run of scripts/memory_health_probe.py; no token is left and no apply is needed to see it."""
+    task = next(t for t in manifest["tasks"] if t["name"] == "MemoryMaster-Health-Probe")
+    values, declared = wt.build_vars(manifest, REPO, make_env(tmp_path), {})
+    xml = wt.task_xml(manifest, task, values, declared)
+    assert not re.search(r"\{[A-Z][A-Z0-9_]*\}", xml)
+    assert task["triggers"] == [{"type": "daily", "at": "09:15:00"}]
+    assert "pythonw.exe" in xml and "memory_health_probe.py" in xml and "checkpoints" in xml
+    for needed in task["requires_repo_files"]:
+        assert (REPO / needed).is_file(), needed
