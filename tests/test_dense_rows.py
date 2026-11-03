@@ -52,7 +52,7 @@ class _Fixture:
 @pytest.fixture
 def fx(tmp_path, monkeypatch: pytest.MonkeyPatch) -> _Fixture:
     fixture = _Fixture(tmp_path / "main")
-    monkeypatch.setattr(mcp_server, "_ENV_DEFAULT_DB", fixture.db)  # the db the dense service indexes
+    monkeypatch.setenv("MEMORYMASTER_DEFAULT_DB", fixture.db)  # the db the dense service indexes
     return fixture
 
 
@@ -217,6 +217,41 @@ def test_other_database_never_reaches_the_dense_service(fx, monkeypatch, tmp_pat
     assert "default database" in result["containment_reason"]
 
 
+def test_service_layer_refuses_a_db_the_index_does_not_cover(fx, monkeypatch, tmp_path) -> None:
+    """Not only the MCP surface: any caller of retrieve() with another db must stay lexical."""
+    from memorymaster.recall.planner import RetrievalRequest
+
+    other = _Fixture(tmp_path / "third")
+    claim = other.claim("restart the bridge after the gotcha")
+    calls = _dense_answers(monkeypatch, [(claim, 0.99)])
+
+    result = other.svc.retrieve(RetrievalRequest(
+        query_text="restart the bridge", retrieval_mode="dense", scope_allowlist=("project:allowed",),
+    ))
+
+    assert calls == []
+    assert result.plan.effective_mode == "legacy"
+    assert "default database only" in result.plan.containment_reason
+    assert [row["claim"].id for row in result.rows] == [claim]
+
+
+def test_pending_supersession_demotion_survives_fusion(fx, monkeypatch) -> None:
+    """A demoted claim found by BOTH streams sums two RRF terms; it must still rank last."""
+    import memorymaster.core.service as service_module
+    import memorymaster.recall.dense_rows as dense_rows_module
+
+    demoted = fx.claim("restart the bridge after the gotcha, superseded wording")
+    fresh = fx.claim("restart the bridge twice after the gotcha")
+    _dense_answers(monkeypatch, [(demoted, 0.9), (fresh, 0.7)])
+    pending = frozenset({demoted})
+    monkeypatch.setattr(service_module, "pending_supersession_ids", lambda _svc, **_kw: pending)
+    monkeypatch.setattr(dense_rows_module, "pending_supersession_ids", lambda _svc, **_kw: pending)
+
+    ids = [c["id"] for c in fx.query(limit=10)["claims"]]
+
+    assert ids == [fresh, demoted]
+
+
 def test_explicit_legacy_is_unchanged(fx, monkeypatch) -> None:
     claim = fx.claim("restart the bridge after the gotcha")
     calls = _dense_answers(monkeypatch, [(claim, 0.9)])
@@ -234,7 +269,7 @@ def test_team_mode_default_is_lexical_not_denied(fx, monkeypatch) -> None:
     context = type("Ctx", (), {"mode": mcp_server.AuthMode.TEAM})()
     monkeypatch.setattr(mcp_server, "current_request_context", lambda: context)
 
-    assert "team mode" in mcp_server._dense_block_reason(fx.db)
+    assert "team mode" in mcp_server._dense_block_reason()
 
 
 def test_fuse_rows_keeps_both_signals_and_orders_by_rank() -> None:
@@ -250,3 +285,37 @@ def test_fuse_rows_keeps_both_signals_and_orders_by_rank() -> None:
     assert [r["claim"].id for r in fused] == [2, 1, 3]
     assert fused[0]["vector_score"] == 0.7 and fused[0]["lexical_score"] == 0.4
     assert fuse_rows(dense, lexical, 2)[-1]["claim"].id == 1
+
+
+def _row(cid: int, **extra: Any) -> dict[str, Any]:
+    claim = type("C", (), {"id": cid})()
+    return {"claim": claim, "score": 0.0, "lexical_score": 0.0, "vector_score": 0.0, "breakdown": {}, **extra}
+
+
+def test_fuse_rows_demoted_claim_in_both_streams_goes_last() -> None:
+    dense = [_row(1, vector_score=0.9), _row(2, vector_score=0.7)]
+    lexical = [_row(1, lexical_score=0.5), _row(3, lexical_score=0.4)]
+
+    fused = fuse_rows(dense, lexical, 3, frozenset({1}))
+
+    assert [r["claim"].id for r in fused][-1] == 1
+    assert fused[0]["claim"].id == 2
+
+
+def test_fuse_rows_tie_goes_to_dense_then_stream_rank_and_survives_a_limit_of_one() -> None:
+    dense = [_row(10, vector_score=0.8), _row(11, vector_score=0.7)]
+    lexical = [_row(20, lexical_score=0.5), _row(21, lexical_score=0.4)]
+
+    assert [r["claim"].id for r in fuse_rows(dense, lexical, 4)] == [10, 20, 11, 21]
+    assert [r["claim"].id for r in fuse_rows(dense, lexical, 1)] == [10], "limit=1 keeps the dense hit"
+
+
+def test_fuse_rows_dual_row_keeps_lexical_fields_and_both_breakdowns() -> None:
+    dense = [_row(1, vector_score=0.8, breakdown={"source": "dense", "cosine": 0.8})]
+    lexical = [_row(1, lexical_score=0.4, confidence_score=0.9, breakdown={"components": {"lexical": 0.4}})]
+
+    row = fuse_rows(dense, lexical, 1)[0]
+
+    assert (row["lexical_score"], row["confidence_score"], row["vector_score"]) == (0.4, 0.9, 0.8)
+    assert row["breakdown"]["components"] == {"lexical": 0.4}
+    assert row["breakdown"]["dense"] == {"source": "dense", "cosine": 0.8}

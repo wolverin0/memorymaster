@@ -125,6 +125,7 @@ def test_retrieve_dense_plan_reports_lexical_fallback_reason(tmp_path, monkeypat
     from memorymaster.recall import dense_recall
     from memorymaster.recall.planner import RetrievalRequest
 
+    monkeypatch.setenv("MEMORYMASTER_DEFAULT_DB", str(tmp_path / "dense-fallback.db"))  # the db the index covers
     svc = MemoryService(str(tmp_path / "dense-fallback.db"), workspace_root=tmp_path)
     svc.init_db()
     claim = svc.ingest("dense fallback marker", [CitationInput(source="test://dense")], scope="project:x", source_agent="seed")

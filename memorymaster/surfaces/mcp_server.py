@@ -494,18 +494,15 @@ def _read_service(db: str, workspace: str) -> MemoryService:
     return _service(db, workspace, read_only=True)
 
 
-def _dense_block_reason(db: str) -> str | None:
+def _dense_block_reason() -> str | None:
     """Why this call cannot use dense recall, or None when it may try.
 
-    The dense service indexes ONE database (this server's default), so ids it returns are
-    meaningless against any other file; team mode keeps semantic retrieval disabled.
+    Team mode keeps semantic retrieval disabled. The database binding lives in
+    ``dense_rows`` (service layer), so it also holds for callers that skip this surface.
     """
     context = current_request_context()
     if context is not None and context.mode is AuthMode.TEAM:
         return "dense recall is disabled in team mode; lexical search used"
-    default = _ENV_DEFAULT_DB or _DEFAULT_DB
-    if os.path.normcase(os.path.abspath(_resolve_db(db))) != os.path.normcase(os.path.abspath(default)):
-        return "dense recall indexes the default database only; lexical search used"
     return None
 
 
@@ -2041,7 +2038,7 @@ if FastMCP is not None:
                 retrieval_mode = classified_retrieval_mode
 
         from memorymaster.recall.planner import RetrievalRequest
-        dense_block = _dense_block_reason(db) if retrieval_mode == "dense" else None
+        dense_block = _dense_block_reason() if retrieval_mode == "dense" else None
         if dense_block is not None:
             retrieval_mode = "legacy"
         svc = _read_service(db, workspace)

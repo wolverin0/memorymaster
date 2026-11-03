@@ -22,6 +22,7 @@ why; the caller reports it as the plan's ``containment_reason``. Policy, no sile
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 from memorymaster.core.claim_authorization import authorize_claims
@@ -41,7 +42,22 @@ _OVERFETCH = 3
 _MAX_K = 100
 
 
+def _same_db(left: str, right: str) -> bool:
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+
+
+def indexed_db() -> str:
+    """The database the dense service indexes: its ``--db`` default, the same env the hooks use."""
+    return os.environ.get("MEMORYMASTER_DEFAULT_DB", "").strip() or "memorymaster.db"
+
+
 def dense_rows(svc: MemoryService, plan: RetrievalPlan) -> tuple[list[dict[str, Any]], str | None]:
+    # The service answers with bare integer ids of ONE database; against any other file they
+    # would rehydrate unrelated claims that happen to share the key. Bound here, at the
+    # service layer, so no caller (MCP, CLI, library) can reach the index with another db.
+    db = str(getattr(svc.store, "db_path", "") or "")
+    if not db or "://" in db or not _same_db(db, indexed_db()):
+        return [], "dense recall indexes the default database only; lexical search used"
     if plan.statuses != ("confirmed",):
         return [], "dense recall indexes confirmed claims only; lexical search used"
     if plan.allow_sensitive:
@@ -86,7 +102,7 @@ def dense_rows(svc: MemoryService, plan: RetrievalPlan) -> tuple[list[dict[str, 
         return [], "no dense candidate passed authorization; lexical search used"
 
     demoted = pending_supersession_ids(svc)
-    claims.sort(key=lambda claim: (claim.id in demoted, -scored[claim.id]))
+    claims.sort(key=lambda claim: (claim.id in demoted, -scored[claim.id], claim.id))
     rows = [
         {
             "claim": claim,
@@ -104,21 +120,36 @@ def dense_rows(svc: MemoryService, plan: RetrievalPlan) -> tuple[list[dict[str, 
     return rows, None
 
 
-def fuse_rows(dense: list[dict[str, Any]], lexical: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    """Reciprocal-rank fusion of the dense and lexical rows; a claim in both keeps both signals."""
-    by_id: dict[int, dict[str, Any]] = {}
+def fuse_rows(
+    dense: list[dict[str, Any]],
+    lexical: list[dict[str, Any]],
+    limit: int,
+    demoted: frozenset[int] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Reciprocal-rank fusion of the dense and lexical rows.
+
+    Order: claims with a pending supersession go last (as on every other path, and not
+    undone by a double-stream RRF sum); then higher fused score; on an equal score the
+    dense row wins, then the earlier rank in its own stream (dict insertion order + a
+    stable sort). A claim in both streams keeps its lexical row (lexical/confidence/
+    freshness/annotation/breakdown) and gains the dense ``vector_score`` and breakdown
+    under ``breakdown["dense"]``; nothing from either side is overwritten.
+    """
+    by_id: dict[int, dict[str, Any]] = {row["claim"].id: row for row in dense}
     for row in lexical:
-        by_id[row["claim"].id] = row
-    for row in dense:
-        merged = by_id.get(row["claim"].id)
-        by_id[row["claim"].id] = (
-            {**merged, "vector_score": row["vector_score"], "breakdown": {**row["breakdown"], "lexical": True}}
-            if merged is not None
-            else row
-        )
+        cid = row["claim"].id
+        if cid not in by_id:
+            by_id[cid] = row
+            continue
+        mine = by_id[cid]
+        by_id[cid] = {
+            **row,
+            "vector_score": mine["vector_score"],
+            "breakdown": {**(row.get("breakdown") or {}), "dense": mine.get("breakdown") or {}},
+        }
     fused = rrf_fuse({
         "dense": [row["claim"].id for row in dense],
         "lexical": [row["claim"].id for row in lexical],
     })
-    order = sorted(by_id, key=lambda cid: -fused[cid])
+    order = sorted(by_id, key=lambda cid: (cid in demoted, -fused[cid]))
     return [{**by_id[cid], "score": fused[cid]} for cid in order[:limit]]

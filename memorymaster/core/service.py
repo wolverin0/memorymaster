@@ -1085,7 +1085,7 @@ class MemoryService(IntegrationService):
         if head:
             from memorymaster.recall.dense_rows import fuse_rows
 
-            rows = fuse_rows(head, rows, dense_plan.limit)
+            rows = fuse_rows(head, rows, dense_plan.limit, pending_supersession_ids(self))
             self._record_accesses(rows, query_text=plan.query_text)
             plan = replace(dense_plan, containment_reason=None)
         return RetrievalResult(plan=plan, rows=tuple(rows))
