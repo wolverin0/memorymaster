@@ -27,6 +27,7 @@ mcp_proof.db
 probe_root.db
 memorymaster_smoke.db
 memorymaster.db
+memorymaster-verbatim-archive.db
 .memorymaster-stealth.db
 *.db-wal
 *.db-shm
