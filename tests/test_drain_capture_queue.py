@@ -137,30 +137,99 @@ def test_queue_state_uses_the_ledgers_drainable_definition(tmp_path: Path) -> No
     assert state["waiting"] == 2 and state["oldest_age_h"] == pytest.approx(192.0, abs=0.1)
 
 
-def test_caps_are_only_ever_raised_for_this_process(monkeypatch) -> None:
-    name = "MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY"
-    monkeypatch.setenv(name, "200")
-    drain_mod._raise_cap(name, 700)
-    assert __import__("os").environ[name] == "700"
-    drain_mod._raise_cap(name, 100)  # a lower ask never lowers an operator's cap
-    assert __import__("os").environ[name] == "700"
-    monkeypatch.delenv(name)
-    drain_mod._raise_cap(name, 700)
-    assert __import__("os").environ[name] == "700"
-    tokens = "MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY"
-    monkeypatch.setenv(tokens, "0")  # 0 means the token cap is disabled: stays disabled
-    drain_mod._raise_cap(tokens, 8_000_000)
-    assert __import__("os").environ[tokens] == "0"
+def test_a_breaker_or_failure_outranks_a_daily_cap_and_an_empty_queue_but_not_the_goal() -> None:
+    """Precedence of a finished batch's stop reason: worker_busy > breaker_open > run_failed > daily_budget > no_progress.
+    A cap deferral means 'healthy, rerun tomorrow', so it must never hide a breaker or a failing batch."""
+    both = {**OK, "consolidate_breaker": "open", "deferred_consolidate_budget": 2}
+    queue = Queue(3000)
+    assert run(queue, run_batch=lambda: queue.batch(both))["stop_reason"] == "breaker_open"
+    failing = {"ok": True, "extracted": 1, "consolidated": 0, "applied": 0, "errors": 6, "deferred_extract_budget": 2}
+    queue = Queue(3000)
+    assert run(queue, run_batch=lambda: queue.batch(failing))["stop_reason"] == "run_failed"
+    busy = {"ok": False, "reason": "worker_busy", "consolidate_breaker": "open"}
+    queue = Queue(3000)
+    assert run(queue, run_batch=lambda: queue.batch(busy))["stop_reason"] == "worker_busy"
+    idle = {"ok": True, "extracted": 0, "consolidated": 0, "applied": 0, "errors": 0, "deferred_extract_budget": 2}
+    queue = Queue(3000)
+    assert run(queue, run_batch=lambda: queue.batch(idle))["stop_reason"] == "daily_budget"
+
+
+def test_reaching_the_goal_does_not_hide_a_breaker_that_opened_in_the_last_batch() -> None:
+    queue = Queue(1050, per_batch=100)
+    report = run(queue, run_batch=lambda: queue.batch({**OK, "consolidate_breaker": "open"}))
+    assert report["stop_reason"] == "breaker_open" and report["after"]["waiting"] == 950
+
+
+def test_errors_are_weighed_against_captures_finished_not_against_stage_counts_summed() -> None:
+    """One capture that is extracted, consolidated and applied is progress 1, not 3: 6 errors against 5 captures fail."""
+    queue = Queue(3000)
+    six = {"ok": True, "extracted": 5, "consolidated": 5, "applied": 5, "errors": 6}
+    assert run(queue, run_batch=lambda: queue.batch(six))["stop_reason"] == "run_failed"
+    queue = Queue(3000)
+    five = {**six, "errors": 5}
+    assert run(queue, run_batch=lambda: queue.batch(five), max_batches=2)["stop_reason"] == "max_batches"
+
+
+def _drainable(ledger: DreamLedger) -> None:
+    stamp = (datetime(2026, 11, 3, tzinfo=timezone.utc) - timedelta(days=1)).isoformat()
+    ledger.enqueue(CaptureEnvelope(
+        provider="codex", session_hash="s", scope="project:test", captured_at=stamp, last_activity_at=stamp,
+        messages=tuple(DreamMessage(f"m{i}", "user", f"turn {i}", stamp) for i in range(2)),
+        cursor_start=0, cursor_end=10, content_hash="h",
+    ))
+
+
+def test_raised_caps_reach_the_batch_config_without_touching_the_environment(tmp_path: Path, monkeypatch) -> None:
+    """The caps ride in DreamConfig; the provider contract is set for the batches and restored afterwards, so
+    nothing leaks into the parent shell, other code in the same process, or the next process."""
+    import os
+
+    state_db = tmp_path / "capture-control.db"
+    monkeypatch.setenv("MEMORYMASTER_CAPTURE_STATE_DB", str(state_db))
+    monkeypatch.setenv("MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY", "200")
+    monkeypatch.setenv("MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY", "2000000")
+    monkeypatch.setenv("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "claude")  # the user's own value must come back
+    monkeypatch.delenv("MEMORYMASTER_DREAM_EXTRACT_MODEL", raising=False)
+    _drainable(DreamLedger(state_db))
+    seen: dict = {}
+
+    def fake_run_dream(db, workspace, *, apply_candidates, config):
+        seen["config"] = config
+        seen["provider_env"] = os.environ.get("MEMORYMASTER_DREAM_EXTRACT_PROVIDER")
+        seen["apply"] = apply_candidates
+        return {"ok": True, "extracted": 0, "consolidated": 0, "applied": 0, "errors": 0}
+
+    monkeypatch.setattr("memorymaster.dreaming.worker.run_dream", fake_run_dream)
+    before = dict(os.environ)
+
+    code = drain_mod.main(["--db", "x.db", "--workspace", str(tmp_path), "--stop-below", "0", "--no-guard"])
+
+    assert code == 2  # stopped on no_progress, not on the goal
+    assert seen["config"].max_input_tokens_daily == 8_000_000 and seen["config"].max_extract_calls_daily == 700
+    assert seen["provider_env"] == "gemini" and seen["apply"] is True
+    assert dict(os.environ) == before, "the drain left the environment as it found it"
+
+
+def test_a_lower_ask_never_lowers_a_cap_and_a_disabled_token_cap_stays_disabled() -> None:
+    from memorymaster.dreaming.worker import DreamConfig
+
+    config = DreamConfig(max_extract_calls_daily=900, max_input_tokens_daily=0)
+    raised = drain_mod._with_caps(config, extract_calls_daily=700, max_input_tokens_daily=8_000_000)
+    assert raised.max_extract_calls_daily == 900 and raised.max_input_tokens_daily == 0
+    low = DreamConfig(max_extract_calls_daily=200, max_input_tokens_daily=2_000_000)
+    raised = drain_mod._with_caps(low, extract_calls_daily=700, max_input_tokens_daily=8_000_000)
+    assert (raised.max_extract_calls_daily, raised.max_input_tokens_daily) == (700, 8_000_000)
+    assert (low.max_extract_calls_daily, low.max_input_tokens_daily) == (200, 2_000_000)  # the source config is untouched
 
 
 def test_plan_is_read_only_and_calls_no_provider(tmp_path: Path, monkeypatch, capsys) -> None:
+    import os
+
     monkeypatch.setenv("MEMORYMASTER_CAPTURE_STATE_DB", str(tmp_path / "capture-control.db"))
-    for name in ("MEMORYMASTER_DREAM_EXTRACT_PROVIDER", "MEMORYMASTER_DREAM_EXTRACT_MODEL",
-                 "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL", "MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY",
-                 "MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY"):
-        monkeypatch.setenv(name, "x" if name.endswith(("PROVIDER", "MODEL")) else "1")  # main() rewrites them; teardown restores
     called = []
     monkeypatch.setattr("memorymaster.dreaming.worker.run_dream", lambda *a, **k: called.append(1))
+    before = dict(os.environ)
     assert drain_mod.main(["--db", str(tmp_path / "x.db"), "--workspace", str(tmp_path), "--plan", "--no-guard"]) == 0
     out = capsys.readouterr().out
-    assert '"waiting": 0' in out and '"input_tokens_daily"' in out and not called
+    assert '"waiting": 0' in out and '"input_tokens_daily": 8000000' in out and not called
+    assert dict(os.environ) == before

@@ -19,14 +19,16 @@ Run it under the heavy-job semaphore and never by hand against a busy host:
     node wezbridge/scripts/heavy-slot.cjs run --label t2123-drain --card T-2123 --timeout-ms 14400000 -- \\
         python scripts/drain_capture_queue.py --db memorymaster.db --workspace .
 
-Spend knobs are raised for this process only (never lowered, nothing persisted): the standing daily caps
-(40/200 extract calls, 2M input tokens per provider) were sized for ~300 captures a day; draining a backlog on
-top of that intake needs ``--extract-calls-daily`` and ``--max-input-tokens-daily``.
+Spend knobs are raised for the batches of this command only, inside DreamConfig (never lowered, never written to
+the environment or to any file): the standing daily caps (200 extract calls, 2M input tokens per provider, ruling
+MM3) were sized for ~300 captures a day; draining a backlog on top of that intake needs ``--extract-calls-daily``
+and ``--max-input-tokens-daily``. The provider variables are set only while the command runs and restored after.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -73,18 +75,28 @@ def _under(state: dict, stop_below: int, max_age_h: float) -> bool:
     return state["waiting"] <= stop_below and (age is None or age <= max_age_h)
 
 
+# A stop that says the system is unhealthy; reaching the goal in the same batch must not hide it.
+_HARD_STOPS = ("worker_busy", "breaker_open", "run_failed")
+
+
 def _batch_stop(result: dict) -> str | None:
-    """Why a finished batch ends the drain, or None to continue."""
+    """Why a finished batch ends the drain, or None to continue.
+
+    Precedence: worker_busy > breaker_open > run_failed > daily_budget > no_progress. A daily-cap deferral means
+    "healthy, rerun after 00:00 UTC", so it never hides a breaker or a failing batch. Progress is captures
+    finished (the furthest stage any capture reached), not the stage counts added up: one capture that is
+    extracted, consolidated and applied is progress 1, and errors beyond that fail the batch.
+    """
     if result.get("reason") == "worker_busy":
         return "worker_busy"
     if result.get("consolidate_breaker"):
         return "breaker_open"
+    progress = max(int(result.get("extracted") or 0), int(result.get("consolidated") or 0), int(result.get("applied") or 0))
+    if not result.get("ok", True) or int(result.get("errors") or 0) > progress:
+        return "run_failed"
     if int(result.get("deferred_extract_budget") or 0) or int(result.get("deferred_consolidate_budget") or 0):
         return "daily_budget"
-    done = int(result.get("extracted") or 0) + int(result.get("consolidated") or 0) + int(result.get("applied") or 0)
-    if not result.get("ok", True) or int(result.get("errors") or 0) > max(done, 0):
-        return "run_failed"
-    if done == 0:
+    if progress == 0:
         return "no_progress"
     return None
 
@@ -133,7 +145,7 @@ def drain(
                                                                       "deferred_consolidate_budget")},
              "queue": current})
         reason = _batch_stop(result) or ""
-        if reason and _under(current, stop_below, max_age_h):
+        if reason not in _HARD_STOPS and _under(current, stop_below, max_age_h):
             reason = "under_threshold"
         if reason:
             break
@@ -141,16 +153,37 @@ def drain(
             "minutes": round((clock() - started) / 60, 1)}
 
 
-def _raise_cap(name: str, wanted: int) -> None:
-    """Raise a daily cap for this process only; never lower what the operator already set."""
+def _with_caps(config, *, extract_calls_daily: int, max_input_tokens_daily: int):
+    """A copy of ``config`` with the daily caps raised; the caller's config and the environment are untouched.
+
+    Never lowers a cap the operator set, and a token cap of 0 or less (disabled) stays disabled.
+    """
+    from dataclasses import replace
+
+    tokens = config.max_input_tokens_daily
+    return replace(
+        config,
+        max_extract_calls_daily=max(config.max_extract_calls_daily, extract_calls_daily),
+        max_input_tokens_daily=tokens if tokens <= 0 else max(tokens, max_input_tokens_daily),
+    )
+
+
+@contextlib.contextmanager
+def _scoped_env(values: dict[str, str], clear: tuple[str, ...] = ()):
+    """Set (and clear) environment variables for the duration of the block, then restore the previous state."""
+    names = (*values, *clear)
+    saved = {name: os.environ.get(name) for name in names}
     try:
-        current = int(os.environ.get(name, "0"))
-    except ValueError:
-        current = 0
-    if current > 0 and wanted > current:  # 0 or negative means "disabled" for the token cap: leave it
-        os.environ[name] = str(wanted)
-    elif name not in os.environ:
-        os.environ[name] = str(wanted)
+        for name in clear:
+            os.environ.pop(name, None)
+        os.environ.update({name: value for name, value in values.items() if value})
+        yield
+    finally:
+        for name, old in saved.items():
+            if old is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = old
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -180,42 +213,50 @@ def main(argv: list[str] | None = None) -> int:
     from memorymaster.dreaming import latency_guard
     from memorymaster.dreaming.ledger import DreamLedger
     from memorymaster.dreaming.worker import DreamConfig, run_dream
-    from memorymaster.surfaces.scheduled_task import _apply_dream_provider_contract
 
-    _apply_dream_provider_contract(argparse.Namespace(
-        extract_provider=args.extract_provider, extract_model=args.extract_model, extract_variant="",
-        consolidate_model=args.consolidate_model, consolidate_variant="", clear_provider_variants=True))
-    _raise_cap("MEMORYMASTER_DREAM_MAX_EXTRACT_CALLS_DAILY", args.extract_calls_daily)
-    _raise_cap("MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY", args.max_input_tokens_daily)
+    # Same provider contract as the Dreaming task (the provider factories read these variables), applied only
+    # while this command runs. The caps do not go through the environment at all: they ride in DreamConfig.
+    provider_env = {
+        "MEMORYMASTER_DREAM_EXTRACT_PROVIDER": args.extract_provider,
+        "MEMORYMASTER_DREAM_EXTRACT_MODEL": args.extract_model,
+        "MEMORYMASTER_DREAM_CONSOLIDATE_MODEL": args.consolidate_model,
+    }
+    variants = ("MEMORYMASTER_DREAM_EXTRACT_VARIANT", "MEMORYMASTER_DREAM_CONSOLIDATE_VARIANT")
+
+    def config() -> DreamConfig:
+        return _with_caps(replace(DreamConfig.from_env(), max_sessions=args.batch_size),
+                          extract_calls_daily=args.extract_calls_daily,
+                          max_input_tokens_daily=args.max_input_tokens_daily)
+
     ledger = DreamLedger(capture_state_path())
 
     def state() -> dict:
         return queue_state(ledger, datetime.now(timezone.utc))
 
-    if args.plan:
-        config = DreamConfig.from_env()
-        print(json.dumps({
-            "queue": state(), "stop_below": args.stop_below, "max_age_h": args.max_age_h,
-            "batch_size": args.batch_size, "max_batches": args.max_batches,
-            "extract": f"{args.extract_provider}/{args.extract_model}", "consolidate_model": args.consolidate_model,
-            "caps_this_process": {"extract_calls_daily": config.max_extract_calls_daily,
-                                  "consolidate_calls_daily": config.max_consolidate_calls_daily,
-                                  "input_tokens_daily": config.max_input_tokens_daily},
-            "guard_now": None if args.no_guard else latency_guard.evaluate(record=False).action,
-        }, indent=2))
-        return 0
+    def guard() -> str:
+        return "allow" if args.no_guard else latency_guard.evaluate(record=False).action
 
-    def run_batch() -> dict:
-        config = replace(DreamConfig.from_env(), max_sessions=args.batch_size)
-        return run_dream(args.db, args.workspace, apply_candidates=True, config=config)
-
-    report = drain(
-        state=state, run_batch=run_batch,
-        guard=(lambda: "allow") if args.no_guard else (lambda: latency_guard.evaluate(record=False).action),
-        stop_below=args.stop_below, max_age_h=args.max_age_h,
-        max_batches=args.max_batches, max_minutes=args.max_minutes,
-        log=lambda event: print(json.dumps(event), flush=True),
-    )
+    with _scoped_env(provider_env, clear=variants):
+        if args.plan:
+            effective = config()
+            print(json.dumps({
+                "queue": state(), "stop_below": args.stop_below, "max_age_h": args.max_age_h,
+                "batch_size": args.batch_size, "max_batches": args.max_batches,
+                "extract": f"{args.extract_provider}/{args.extract_model}", "consolidate_model": args.consolidate_model,
+                "caps_this_process": {"extract_calls_daily": effective.max_extract_calls_daily,
+                                      "consolidate_calls_daily": effective.max_consolidate_calls_daily,
+                                      "input_tokens_daily": effective.max_input_tokens_daily},
+                "guard_now": None if args.no_guard else guard(),
+            }, indent=2))
+            return 0
+        report = drain(
+            state=state,
+            run_batch=lambda: run_dream(args.db, args.workspace, apply_candidates=True, config=config()),
+            guard=guard,
+            stop_below=args.stop_below, max_age_h=args.max_age_h,
+            max_batches=args.max_batches, max_minutes=args.max_minutes,
+            log=lambda event: print(json.dumps(event), flush=True),
+        )
     print(json.dumps(report, indent=2))
     return 0 if report["stop_reason"] == "under_threshold" else 2
 
