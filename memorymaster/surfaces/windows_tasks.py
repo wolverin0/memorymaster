@@ -133,6 +133,8 @@ def build_vars(
     unknown = sorted(set(overrides) - declared)
     if unknown:
         raise WindowsTasksError(f"unknown variable(s): {', '.join(unknown)}")
+    # REPO_FWD and PYAPPS follow the WORKSPACE (REPO), never CODE: PYAPPS is the folder holding the workspace's siblings
+    # (wezbridge, _intel), and a code worktree nested under the workspace must not become it.
     if "REPO" in overrides:  # the workspace the tasks serve may differ from the checkout holding the manifest
         repo_text = overrides["REPO"]
         base["REPO"] = repo_text
