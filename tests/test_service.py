@@ -117,3 +117,27 @@ def test_authorize_claims_applies_tenant_visibility_and_sensitivity():
     assert kept == [rows[0], rows[2]]
     assert authorize_claims(rows, requesting_agent="viewer", tenant_id="t1") == []
     assert authorize_claims(rows, include_sensitive=True) == rows
+
+
+def test_retrieve_dense_plan_reports_lexical_fallback_reason(tmp_path, monkeypatch):
+    """retrieve() answers a "dense" plan lexically, with the reason, when dense yields nothing (T-2115)."""
+    from memorymaster.core.lifecycle import transition_claim
+    from memorymaster.recall import dense_recall
+    from memorymaster.recall.planner import RetrievalRequest
+
+    monkeypatch.setenv("MEMORYMASTER_DEFAULT_DB", str(tmp_path / "dense-fallback.db"))  # the db the index covers
+    svc = MemoryService(str(tmp_path / "dense-fallback.db"), workspace_root=tmp_path)
+    svc.init_db()
+    claim = svc.ingest("dense fallback marker", [CitationInput(source="test://dense")], scope="project:x", source_agent="seed")
+    transition_claim(svc.store, claim.id, "confirmed", reason="fixture", event_type="validator")
+
+    def down(*_args, **_kwargs):
+        raise dense_recall.DenseUnavailable("down")
+
+    monkeypatch.setattr(dense_recall, "search", down)
+    result = svc.retrieve(RetrievalRequest(query_text="dense fallback marker", retrieval_mode="dense", scope_allowlist=("project:x",)))
+
+    assert result.plan.requested_mode == "dense"
+    assert result.plan.effective_mode == "legacy"
+    assert "unavailable" in result.plan.containment_reason
+    assert [row["claim"].id for row in result.rows] == [claim.id]

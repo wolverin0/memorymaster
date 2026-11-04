@@ -53,3 +53,41 @@ def test_provider_global_and_session_budgets_survive_restart(tmp_path: Path) -> 
     assert usage["providers"] == {"google": 2, "openai": 1}
     assert usage["input_bytes"] == 40
     assert usage["output_bytes"] == 20
+
+
+def test_max_bytes_bounds_each_read_and_the_rest_drains_on_later_calls(tmp_path: Path) -> None:
+    state = tmp_path / "capture.db"
+    transcript = tmp_path / "session.jsonl"
+    lines = [f'{{"turn": {i}}}\n' for i in range(10)]
+    transcript.write_bytes("".join(lines).encode())
+    cap = len(lines[0].encode()) * 3 + 2  # three whole lines plus a fragment of the fourth
+
+    seen: list[str] = []
+    for _ in range(10):
+        chunk = CaptureLedger(state).read_increment(transcript, "stop-verbatim", max_bytes=cap)
+        if not chunk.text:
+            break
+        assert len(chunk.text.encode()) <= cap and chunk.text.endswith("\n")
+        seen.append(chunk.text)
+        CaptureLedger(state).commit_cursor(chunk)
+
+    assert len(seen) == 4 and "".join(seen) == "".join(lines)  # nothing lost, nothing repeated
+
+
+def test_a_single_line_longer_than_the_cap_is_returned_whole(tmp_path: Path) -> None:
+    state = tmp_path / "capture.db"
+    transcript = tmp_path / "session.jsonl"
+    big = '{"turn": "' + "x" * 500 + '"}\n'
+    transcript.write_bytes((big + '{"turn": 2}\n').encode())
+
+    first = CaptureLedger(state).read_increment(transcript, "k", max_bytes=100)
+
+    assert first.text == big
+    CaptureLedger(state).commit_cursor(first)
+    assert CaptureLedger(state).read_increment(transcript, "k", max_bytes=100).text == '{"turn": 2}\n'
+
+
+def test_without_max_bytes_the_whole_backlog_is_still_returned(tmp_path: Path) -> None:
+    transcript = tmp_path / "session.jsonl"
+    transcript.write_bytes(b'{"a": 1}\n{"a": 2}\n')
+    assert CaptureLedger(tmp_path / "c.db").read_increment(transcript, "k").text == '{"a": 1}\n{"a": 2}\n'

@@ -371,6 +371,58 @@
       }
     },
     {
+      "name": "MemoryMaster-Verbatim-Archive-Weekly",
+      "description": "T-2116 weekly retention: move verbatim_memories rows older than 90 days into memorymaster-verbatim-archive.db next to the DB, verified before delete. Log: ~/.memorymaster/logs/verbatim-archive.log. Needs the graph-profile runtime to contain the verbatim-archive mode.",
+      "runtimes": [
+        "graph-profile"
+      ],
+      "triggers": [
+        {
+          "type": "weekly",
+          "at": "03:30:00",
+          "days": [
+            "Wednesday"
+          ]
+        }
+      ],
+      "settings": {
+        "preset": "job",
+        "execution_time_limit": "PT3H",
+        "priority": 6
+      },
+      "action": {
+        "command": "{RUNTIME}\\graph-profile-20260813\\Scripts\\pythonw.exe",
+        "arguments": "-m memorymaster.surfaces.scheduled_task verbatim-archive --db \"{DB}\" --workspace \"{REPO}\""
+      }
+    },
+    {
+      "name": "MemoryMaster-Transcript-Index-Hourly",
+      "description": "T-2116 incremental refresh of ~/.memorymaster/transcripts.db (last 30 days) for the recall transcript fallback (MEMORYMASTER_RECALL_TRANSCRIPT_FALLBACK=1). Hourly because an idle run costs under a second and the fallback is only useful if it sees today's conversation. Log: ~/.memorymaster/logs/transcript-index.log. Needs the graph-profile runtime to contain the transcript-index mode.",
+      "runtimes": [
+        "graph-profile"
+      ],
+      "triggers": [
+        {
+          "type": "time",
+          "at": "00:20:00",
+          "repetition": {
+            "interval": "PT1H",
+            "duration": "P3650D",
+            "stop_at_duration_end": true
+          }
+        }
+      ],
+      "settings": {
+        "preset": "job",
+        "execution_time_limit": "PT30M",
+        "priority": 6
+      },
+      "action": {
+        "command": "{RUNTIME}\\graph-profile-20260813\\Scripts\\pythonw.exe",
+        "arguments": "-m memorymaster.surfaces.scheduled_task transcript-index --db \"{DB}\" --workspace \"{REPO}\""
+      }
+    },
+    {
       "name": "MemoryMaster-Checkpoint-Daily",
       "description": "Daily fail-closed MemoryMaster rollout checkpoint by stable tab title.",
       "runtimes": [],
@@ -426,6 +478,38 @@
       "action": {
         "command": "powershell.exe",
         "arguments": "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File \"{LOCALAPPDATA}\\MemoryMaster\\operational-review\\windows-operational-review.ps1\" -ConfigPath \"{LOCALAPPDATA}\\MemoryMaster\\operational-review\\config.json\""
+      }
+    },
+    {
+      "name": "MemoryMaster-Health-Probe",
+      "description": "Daily read-only health probe: ingest freshness, canary recall, ranking, verbatim retention and services; one Orca alert per UTC day on failure.",
+      "runtimes": [
+        "client"
+      ],
+      "triggers": [
+        {
+          "type": "daily",
+          "at": "09:15:00"
+        }
+      ],
+      "settings": {
+        "preset": "job",
+        "execution_time_limit": "PT20M"
+      },
+      "requires_repo_files": [
+        "scripts/memory_health_probe.py",
+        "scripts/health_canaries.json"
+      ],
+      "optional_external": [
+        {
+          "path": "{PYAPPS}\\_intel\\orchestrators.json",
+          "owner": "Py Apps root",
+          "note": "names the Fleet run that receives the alert; without it the probe still writes its report"
+        }
+      ],
+      "action": {
+        "command": "{PYTHONW}",
+        "arguments": "\"{REPO}\\scripts\\memory_health_probe.py\" --db \"{DB}\" --workspace \"{REPO}\" --out \"{CHECKPOINTS}\\health\" --orchestrators \"{PYAPPS}\\_intel\\orchestrators.json\""
       }
     },
     {

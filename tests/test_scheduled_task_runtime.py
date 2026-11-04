@@ -227,3 +227,52 @@ def test_scheduled_main_logs_bound_dream_execution(tmp_path: Path, monkeypatch) 
     assert seen == ["gemini"]
     events = [json.loads(line)["event"] for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert events[0] == "job_start" and events[-1] == "job_finish"  # JSON lines since T-0764
+
+
+def test_scheduled_verbatim_archive_moves_old_rows_and_logs(tmp_path: Path, monkeypatch) -> None:
+    """T-2116: the weekly task runs the archive for real (apply, not dry-run) and leaves a job log."""
+    import sqlite3
+
+    from memorymaster.govern import verbatim_cleanup
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema
+
+    db = tmp_path / "memorymaster.db"
+    ensure_verbatim_schema(str(db))
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO verbatim_memories (session_id, role, content, timestamp, created_at) "
+                 "VALUES ('s', 'user', 'old turn', '2025-01-01T00:00:00+00:00', '2025-01-01T00:00:00Z')")
+    conn.commit()
+    conn.close()
+    log_path = tmp_path / "verbatim-archive.log"
+    monkeypatch.setattr(scheduled_task, "_log_path", lambda _mode: log_path)
+
+    assert scheduled_task.main(["verbatim-archive", "--db", str(db), "--workspace", str(tmp_path)]) == 0
+
+    archive = sqlite3.connect(tmp_path / verbatim_cleanup.ARCHIVE_DB_NAME)
+    assert archive.execute("SELECT COUNT(*) FROM verbatim_memories").fetchone()[0] == 1
+    archive.close()
+    events = [json.loads(line)["event"] for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert "verbatim_archive_result" in events and events[-1] == "job_finish"
+
+
+def test_scheduled_transcript_index_refreshes_the_sidecar_and_logs(tmp_path: Path, monkeypatch) -> None:
+    """T-2116: the recall transcript fallback is on, so something must keep its sidecar current."""
+    import sqlite3
+
+    root = tmp_path / "projects" / "proj"
+    root.mkdir(parents=True)
+    record = {"type": "user", "message": {"role": "user", "content": "talking about the quartzmoon harness today"},
+              "timestamp": "2026-11-03T10:00:00Z", "cwd": str(tmp_path)}
+    (root / "sess.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    index = tmp_path / "transcripts.db"
+    monkeypatch.setenv("MEMORYMASTER_TRANSCRIPT_ROOT", str(tmp_path / "projects"))
+    monkeypatch.setenv("MEMORYMASTER_TRANSCRIPT_INDEX", str(index))
+    log_path = tmp_path / "transcript-index.log"
+    monkeypatch.setattr(scheduled_task, "_log_path", lambda _mode: log_path)
+
+    assert scheduled_task.main(["transcript-index", "--db", str(tmp_path / "x.db"), "--workspace", str(tmp_path)]) == 0
+
+    conn = sqlite3.connect(index)
+    assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
+    conn.close()
+    assert "transcript_index_result" in log_path.read_text(encoding="utf-8")

@@ -19,9 +19,12 @@ by default; ``--apply`` to actually delete.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import sqlite3
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from memorymaster.stores._storage_shared import connect_ro, open_conn
@@ -278,5 +281,222 @@ def plan_retention(
         "candidate_ids_sample": sorted(candidates)[:100],
         "retained_rows": len(rows) - len(candidates),
         "retained_bytes": retained_bytes,
-        "within_bounds": not candidates and not truncated,
+        # `truncated` is reported but is not a bound: on a table larger than scan_limit it is always
+        # true, which made this gate fail forever and silently stopped verbatim storage (T-2116).
+        "within_bounds": not candidates,
     }
+
+
+# --- T-2116: archive (move, never lose) rows older than N days into a separate DB ----------------
+
+DEFAULT_ARCHIVE_DAYS = 90
+ARCHIVE_GRACE_DAYS = 14  # retention counts as overdue only after two missed weekly runs
+DEFAULT_ARCHIVE_BATCH = 2000
+ARCHIVE_DB_NAME = "memorymaster-verbatim-archive.db"
+_IN_CHUNK = 500  # bound SQLite parameter binding on old builds
+_COLUMNS = ("id", "session_id", "role", "content", "scope", "timestamp", "source_agent",
+            "embedding_synced", "created_at")
+_COL_LIST = ", ".join(_COLUMNS)
+_RETAINED_AT = "COALESCE(NULLIF(timestamp, ''), created_at)"
+# shortcut: string-compares the first 19 chars (UTC wall clock, offset and 'T'/space ignored), so a
+# row within hours of the cutoff may land on either side; irrelevant for a 90-day window.
+_IS_DATED = f"substr({_RETAINED_AT}, 1, 10) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'"
+_IS_OLD = f"substr({_RETAINED_AT}, 1, 19) < ?"
+
+
+class ArchiveVerifyError(RuntimeError):
+    """The copy could not be proven identical; nothing was deleted from the source."""
+
+
+def _row_hash(row: Any) -> str:
+    # embedding_synced is deliberately outside the hash: the Qdrant sync flips it on live rows and
+    # that must not read as the row having changed.
+    payload = "\x1f".join(str(row[name]) for name in _COLUMNS if name != "embedding_synced")
+    return hashlib.sha256(payload.encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def _chunks(ids: list[int]) -> Iterator[list[int]]:
+    for i in range(0, len(ids), _IN_CHUNK):
+        yield ids[i : i + _IN_CHUNK]
+
+
+def _rows_by_id(conn: sqlite3.Connection, ids: list[int]) -> dict[int, Any]:
+    found: dict[int, Any] = {}
+    for chunk in _chunks(ids):
+        marks = ",".join("?" for _ in chunk)
+        for row in conn.execute(f"SELECT {_COL_LIST} FROM verbatim_memories WHERE id IN ({marks})", chunk):
+            found[int(row["id"])] = row
+    return found
+
+
+def retention_due(
+    db_path: str, *, days: int = DEFAULT_ARCHIVE_DAYS, grace_days: int = ARCHIVE_GRACE_DAYS,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """O(1) staleness check for the Stop hook: is the oldest row older than ``days + grace_days``?
+
+    Reads one row (lowest id; ids ascend with time). ``plan_retention`` sorts a computed column
+    over the whole table and cannot run per Stop on a million-row table.
+    """
+    out: dict[str, Any] = {"due": False, "oldest_at": None, "oldest_age_days": None}
+    if "://" in str(db_path) or not Path(str(db_path)).exists():
+        return out
+    conn = connect_ro(db_path)
+    try:
+        if not _verbatim_present(conn):
+            return out
+        # Same predicate as archive_old: an undated row is never archived, so it must not be able to
+        # become the permanent head row and blind (or poison) this check.
+        row = conn.execute(
+            f"SELECT {_RETAINED_AT} AS at FROM verbatim_memories WHERE {_IS_DATED} ORDER BY id LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or not row["at"]:
+        return out
+    try:
+        oldest = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))
+        if oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=timezone.utc)
+        age = ((now or datetime.now(timezone.utc)) - oldest).days
+    except ValueError:  # dated prefix but a malformed rest, e.g. 2026-13-45
+        return out
+    out.update(oldest_at=str(row["at"]), oldest_age_days=age, due=age > days + grace_days)
+    return out
+
+
+def _move_batch(src: sqlite3.Connection, dst: sqlite3.Connection, rows: list[Any],
+                src_fts: bool, dst_fts: bool) -> None:
+    """Copy one batch into the archive, prove it, commit it, then delete it from the source.
+
+    The archive commit comes first and the source delete second, each in its own transaction (WAL
+    gives no atomicity across two files). A crash in between leaves the rows in both DBs, which the
+    idempotent rerun resolves; the opposite order could lose rows.
+    """
+    wanted = {int(r["id"]): _row_hash(r) for r in rows}
+    ids = list(wanted)
+    dst.execute("BEGIN IMMEDIATE")
+    try:
+        have = {i: _row_hash(r) for i, r in _rows_by_id(dst, ids).items()}
+        clash = [i for i, h in have.items() if h != wanted[i]]
+        if clash:
+            raise ArchiveVerifyError(f"archive already holds different content for ids {clash[:5]}")
+        fresh = [r for r in rows if int(r["id"]) not in have]
+        dst.executemany(
+            f"INSERT INTO verbatim_memories ({_COL_LIST}) VALUES ({','.join('?' for _ in _COLUMNS)})",
+            [tuple(r[name] for name in _COLUMNS) for r in fresh],
+        )
+        if dst_fts:
+            dst.executemany("INSERT INTO verbatim_fts(rowid, content) VALUES (?, ?)",
+                            [(int(r["id"]), r["content"]) for r in fresh])
+        copied = {i: _row_hash(r) for i, r in _rows_by_id(dst, ids).items()}
+        if copied != wanted:
+            raise ArchiveVerifyError("archive copy does not match the source batch; rolled back")
+        dst.commit()
+    except BaseException:
+        dst.rollback()
+        raise
+    src.execute("BEGIN IMMEDIATE")
+    try:
+        current = {i: _row_hash(r) for i, r in _rows_by_id(src, ids).items()}
+        if current != wanted:
+            raise ArchiveVerifyError("source rows changed during the move; nothing deleted")
+        for chunk in _chunks(ids):
+            marks = ",".join("?" for _ in chunk)
+            if src_fts:
+                # External-content FTS5: drop the entry while the content row still exists. Deleting
+                # a rowid that was never indexed raises "malformed", so only delete the indexed ones
+                # (docsize holds one row per indexed document).
+                indexed = [int(r[0]) for r in src.execute(
+                    f"SELECT id FROM verbatim_fts_docsize WHERE id IN ({marks})", chunk)]
+                for part in _chunks(indexed):
+                    src.execute(
+                        f"DELETE FROM verbatim_fts WHERE rowid IN ({','.join('?' for _ in part)})", part)
+            src.execute(f"DELETE FROM verbatim_memories WHERE id IN ({marks})", chunk)
+        src.commit()
+    except BaseException:
+        src.rollback()
+        raise
+
+
+def archive_old(
+    db_path: str,
+    *,
+    days: int = DEFAULT_ARCHIVE_DAYS,
+    batch_size: int = DEFAULT_ARCHIVE_BATCH,
+    archive_path: str | None = None,
+    dry_run: bool = True,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Move verbatim rows older than ``days`` (and their FTS entries) into a separate archive DB.
+
+    Rows keep their ids and the same schema. Each batch is copied, hash-verified and committed to
+    the archive before it is deleted from the source, so an interrupted or repeated run loses
+    nothing and re-copies nothing. Rows with an unparseable timestamp are never moved. Default is
+    a dry run that opens the source read-only and creates no archive file.
+    """
+    if "://" in str(db_path):
+        raise ValueError("verbatim archive is SQLite-only")
+    if days < 1 or batch_size < 1:
+        raise ValueError("days and batch_size must be at least 1")
+    target = Path(archive_path) if archive_path else Path(db_path).resolve().parent / ARCHIVE_DB_NAME
+    if target.resolve() == Path(db_path).resolve():
+        raise ValueError("archive path must differ from the source database")
+    cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+    out: dict[str, Any] = {"dry_run": bool(dry_run), "days": days, "cutoff": cutoff,
+                           "archive_path": str(target)}
+    if dry_run:
+        conn = connect_ro(db_path)
+        try:
+            if not _verbatim_present(conn):
+                return {"verbatim_present": False, **out}
+            row = conn.execute(
+                f"""SELECT COUNT(CASE WHEN {_IS_DATED} AND {_IS_OLD} THEN 1 END) AS n,
+                           COALESCE(SUM(CASE WHEN {_IS_DATED} AND {_IS_OLD}
+                                        THEN length(CAST(content AS BLOB)) END), 0) AS b,
+                           COUNT(CASE WHEN NOT ({_IS_DATED}) THEN 1 END) AS bad
+                    FROM verbatim_memories""",
+                (cutoff, cutoff),
+            ).fetchone()
+        finally:
+            conn.close()
+        return {"verbatim_present": True, **out, "candidate_rows": int(row["n"]),
+                "candidate_bytes": int(row["b"]), "skipped_unparseable": int(row["bad"])}
+
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema
+
+    src = _connect(db_path)
+    try:
+        if not _verbatim_present(src):
+            return {"verbatim_present": False, **out}
+        ensure_verbatim_schema(str(target))
+        dst = _connect(str(target))
+        try:
+            src_fts, dst_fts = _fts_present(src), _fts_present(dst)
+            moved = batches = 0
+            cursor = 0
+            while True:
+                rows = src.execute(
+                    f"SELECT {_COL_LIST} FROM verbatim_memories "
+                    f"WHERE id > ? AND {_IS_DATED} AND {_IS_OLD} ORDER BY id LIMIT ?",
+                    (cursor, cutoff, batch_size),
+                ).fetchall()
+                if not rows:
+                    break
+                _move_batch(src, dst, rows, src_fts, dst_fts)
+                cursor = int(rows[-1]["id"])
+                moved += len(rows)
+                batches += 1
+            bad = src.execute(
+                f"SELECT COUNT(*) FROM verbatim_memories WHERE NOT ({_IS_DATED})"
+            ).fetchone()[0]
+            out.update(
+                verbatim_present=True, rows_moved=moved, batches=batches, skipped_unparseable=int(bad),
+                source_rows=int(src.execute("SELECT COUNT(*) FROM verbatim_memories").fetchone()[0]),
+                archive_rows=int(dst.execute("SELECT COUNT(*) FROM verbatim_memories").fetchone()[0]),
+            )
+            return out
+        finally:
+            dst.close()
+    finally:
+        src.close()

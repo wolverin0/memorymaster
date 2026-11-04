@@ -211,3 +211,10 @@ def test_qdrant_request_remains_contained_until_governed_rehydration() -> None:
     assert plan.requested_mode == "qdrant"
     assert plan.effective_mode == "legacy"
     assert plan.containment_reason
+
+
+def test_dense_mode_is_a_valid_request_and_keeps_its_effective_mode() -> None:
+    plan = build_retrieval_plan(RetrievalRequest(query_text="x", retrieval_mode="dense"))
+    assert (plan.requested_mode, plan.effective_mode, plan.containment_reason) == ("dense", "dense", None)
+    with pytest.raises(ValueError, match="Unsupported retrieval mode"):
+        build_retrieval_plan(RetrievalRequest(query_text="x", retrieval_mode="densest"))

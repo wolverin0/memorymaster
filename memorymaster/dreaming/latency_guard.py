@@ -5,7 +5,7 @@ reads two recent signals and returns ``allow``, ``capture_only`` or ``skip``:
 
 * dense recall events (``recall-dense.jsonl``), thresholds soft 150 ms / hard 300 ms;
 * end-to-end hook durations (``hook.log`` ``recall / latency_total``), thresholds
-  soft 900 ms / hard 1200 ms, the T-1042 bound.
+  soft 1500 ms / hard 3000 ms (see DEFAULT_HOOK_SOFT_MS for how they were measured).
 
 A signal with fewer than ``MEMORYMASTER_BEAT_GUARD_MIN_EVENTS`` events in the window
 (missing log, cold start, quiet hour) says nothing and never blocks. An error inside the
@@ -39,9 +39,14 @@ WINDOW_ENV = "MEMORYMASTER_BEAT_GUARD_WINDOW_MINUTES"
 
 DEFAULT_DENSE_SOFT_MS = 150.0
 DEFAULT_DENSE_HARD_MS = 300.0
-DEFAULT_HOOK_SOFT_MS = 900.0
-DEFAULT_HOOK_HARD_MS = 1200.0
-DEFAULT_MIN_EVENTS = 5
+# T-2123: measured on this host 2026-10-30..11-03 (11.8k hook calls), the interactive recall hook ran p95
+# ~1.2 s with no dream run in progress and ~1.5 s during one. The original 900/1200 ms (the T-1042 bound for an
+# idle host) sat below that baseline, so the beat skipped 31% of its ticks (68% on 2026-11-03) for load it did not
+# cause. Soft is a quarter above the baseline, hard is 2.5x it.
+DEFAULT_HOOK_SOFT_MS = 1500.0
+DEFAULT_HOOK_HARD_MS = 3000.0
+# Nearest-rank p95 of fewer than 20 samples is the maximum: with 5-9 samples one slow prompt decided the tick.
+DEFAULT_MIN_EVENTS = 20
 DEFAULT_WINDOW_MINUTES = 60
 
 HOOK_LOG_TAIL_BYTES = 512 * 1024

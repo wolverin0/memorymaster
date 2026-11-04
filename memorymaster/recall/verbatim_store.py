@@ -458,6 +458,38 @@ def _row_dedup_key(r: dict) -> tuple:
     return ("sch", r.get("session_id", ""), content_hash)
 
 
+VERBATIM_STALE_DAYS = 7  # a week without any stored turn means capture is broken, not that nothing was said
+
+
+def verbatim_freshness(
+    db_path: str, *, stale_days: int = VERBATIM_STALE_DAYS, now: datetime | None = None
+) -> dict:
+    """How recent the newest stored verbatim row is, so an empty search is not read as "no such thing".
+
+    Returns ``{}`` when it cannot be determined (missing DB or table, undated row). Reads one row
+    (highest id) read-only. T-2116: storage was silently off for ten weeks and the search just
+    returned 0 rows."""
+    from memorymaster.stores._storage_shared import connect_ro
+
+    if "://" in str(db_path) or not Path(str(db_path)).exists():
+        return {}
+    try:
+        with closing(connect_ro(db_path)) as conn:
+            row = conn.execute(
+                "SELECT COALESCE(NULLIF(timestamp, ''), created_at) AS at "
+                "FROM verbatim_memories ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        if row is None or not row["at"]:
+            return {}
+        newest = datetime.fromisoformat(str(row["at"]).replace("Z", "+00:00"))
+        if newest.tzinfo is None:
+            newest = newest.replace(tzinfo=timezone.utc)
+        age = ((now or datetime.now(timezone.utc)) - newest).days
+    except (sqlite3.Error, ValueError):
+        return {}
+    return {"newest_verbatim_at": str(row["at"]), "newest_age_days": age, "stale": age > stale_days}
+
+
 def search_verbatim(
     db_path: str,
     query: str,

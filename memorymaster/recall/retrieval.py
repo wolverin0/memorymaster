@@ -153,6 +153,21 @@ def _lexical_score(query_text: str, claim: Claim) -> float:
     return max(0.0, min(1.0, score))
 
 
+# The decay constants are HOURS (24/72/168, the revalidation cadence), so a claim
+# last validated months ago reaches exp(-5400/168) ~ 1e-14. Measured 2026-11-03 on
+# the live corpus: 37% of confirmed core claims sat below 0.01. Age is a reason to
+# doubt a perishable fact, not a durable one: a confirmed core claim, or a
+# constraint/rule/decision, keeps this floor and so is never out-ranked by recency alone.
+_DURABLE_FRESHNESS_FLOOR = 0.5
+_DURABLE_CLAIM_TYPES = frozenset({"constraint", "rule", "decision"})
+
+
+def _is_durable(claim: Claim) -> bool:
+    if claim.status != "confirmed":
+        return False
+    return getattr(claim, "tier", None) == "core" or (claim.claim_type or "") in _DURABLE_CLAIM_TYPES
+
+
 def _freshness_score(claim: Claim) -> float:
     anchor = _parse_iso(claim.last_validated_at) or _parse_iso(claim.updated_at) or _parse_iso(claim.created_at)
     if anchor is None:
@@ -162,7 +177,8 @@ def _freshness_score(claim: Claim) -> float:
     cfg = get_config()
     half_life_hours = cfg.freshness_half_life_hours
     half_life = half_life_hours.get(claim.volatility, half_life_hours["medium"])
-    return max(0.0, min(1.0, math.exp(-age_hours / max(1.0, half_life))))
+    decayed = max(0.0, min(1.0, math.exp(-age_hours / max(1.0, half_life))))
+    return max(decayed, _DURABLE_FRESHNESS_FLOOR) if _is_durable(claim) else decayed
 
 
 _TIER_BONUS = {"core": 0.15, "working": 0.0, "peripheral": -0.10}

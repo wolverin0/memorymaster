@@ -1,0 +1,13 @@
+{
+  "about": "Canary queries for scripts/memory_health_probe.py: durable confirmed claims (picked 2026-11-03) that a working recall must return in the top 5. A canary hits when an expected human_id (ignoring any ~N suffix) or an expected substring appears in the top 5. Replace one when its claim is superseded.",
+  "canaries": [
+    {"id": "dashboard-viewer-leak", "query": "how was the dashboard token-mode viewer leak fixed requesting_agent", "expect_human_ids": ["mm-a1a0"], "expect_substrings": ["T-2070"]},
+    {"id": "no-hosted-ci", "query": "MemoryMaster has no hosted CI what is the merge gate", "expect_human_ids": ["mm-3258", "mm-e652"], "expect_substrings": ["bulk_check.py is the only merge gate"]},
+    {"id": "bulk-check-venv", "query": "bulk_check clean venv needs setuptools psycopg extras collection error", "expect_human_ids": ["mm-8388"], "expect_substrings": []},
+    {"id": "mcp-shared-env-registry", "query": "shared MCP server does not inherit user environment variables registry key launcher", "expect_human_ids": ["mm-04e1"], "expect_substrings": []},
+    {"id": "mcp-chdir-stale-checkout", "query": "shared MCP server chdir stale checkout child python -m memorymaster imports", "expect_human_ids": ["mm-2b53"], "expect_substrings": []},
+    {"id": "orca-close-kills-tree", "query": "closing an Orca terminal kills the whole process tree", "expect_human_ids": ["mm-e89f"], "expect_substrings": []},
+    {"id": "dense-recall-commit", "query": "dense-recall service committed memory torch embeddings model resident", "expect_human_ids": ["mm-60be"], "expect_substrings": []},
+    {"id": "stdio-relay-roots", "query": "workspace_outside_served_roots error stdio relay client folder", "expect_human_ids": ["mm-0adb"], "expect_substrings": ["workspace_outside_served_roots"]}
+  ]
+}

@@ -171,7 +171,7 @@ historical recovery remain separate future decisions.
 
 ## Reinstall after reformat
 
-Every MemoryMaster scheduled task (12) is declared in `ops/windows-tasks/manifest.json`;
+Every MemoryMaster scheduled task (14) is declared in `ops/windows-tasks/manifest.json`;
 `memorymaster-setup windows-tasks` rebuilds them. Obsidian-Cockpit-Sync is not covered.
 Modes: `--plan` (default, read-only), `--apply`, `--check` (exit 1 on drift). Output shows
 machine paths as `{HOME}`, `{REPO}`, ... tokens; `--show-paths` prints them.
