@@ -494,6 +494,18 @@ def _read_service(db: str, workspace: str) -> MemoryService:
     return _service(db, workspace, read_only=True)
 
 
+def _dense_block_reason() -> str | None:
+    """Why this call cannot use dense recall, or None when it may try.
+
+    Team mode keeps semantic retrieval disabled. The database binding lives in
+    ``dense_rows`` (service layer), so it also holds for callers that skip this surface.
+    """
+    context = current_request_context()
+    if context is not None and context.mode is AuthMode.TEAM:
+        return "dense recall is disabled in team mode; lexical search used"
+    return None
+
+
 def _usage_rollup(db: str) -> dict[str, Any]:
     """Build the usage-telemetry rollup payload.
 
@@ -973,7 +985,7 @@ def _normalize_team_arguments(
         if field in bound.arguments:
             bound.arguments[field] = context.principal
     if tool_name == "query_memory" and (
-        str(bound.arguments.get("retrieval_mode", "legacy")) != "legacy"
+        str(bound.arguments.get("retrieval_mode", "dense")) not in {"legacy", "dense"}
         or bool(bound.arguments.get("auto_classify", False))
     ):
         raise PermissionError("Semantic MCP retrieval remains disabled in team mode pending planner containment.")
@@ -1975,7 +1987,7 @@ if FastMCP is not None:
         db: str = "memorymaster.db",
         workspace: str = ".",
         limit: int = 20,
-        retrieval_mode: str = "legacy",
+        retrieval_mode: str = "dense",
         trust_mode: str = "trusted",
         auto_classify: bool = False,
         include_stale: bool | None = None,
@@ -1988,12 +2000,20 @@ if FastMCP is not None:
         """Query governed memory; trusted mode returns confirmed claims only.
 
         retrieval_mode options:
-          - "legacy" (default, fastest ~0.1s): SQL text search
-          - "qdrant": temporarily quarantined; falls back to authoritative lexical search
-          - "hybrid" (slow ~8s): local sentence-transformers vector + lexical ranking
+          - "dense" (default, ~0.1-0.3s warm, ~6s the first query after the model unloads):
+            the resident EmbeddingGemma service proposes ids, the store re-authorizes each one.
+            Used when the service answers, the db is this server's default db, the request is
+            trusted/confirmed-only and not allow_sensitive. Otherwise it answers with "legacy"
+            and says why in "containment_reason" (response "retrieval_mode" is the mode used).
+          - "legacy" (~0.1-0.8s): SQL text search, AND first, OR-relaxed when it finds nothing
+          - "hybrid": lexical ranking plus the in-process embedding provider (measured
+            2026-11-03 on the live db: ~17s for the first call, which loads the provider;
+            ~1-2.3s warm)
+          - "qdrant": quarantined; falls back to authoritative lexical search
 
-        auto_classify: when True and retrieval_mode is "legacy", classify the query
-          automatically and upgrade to the recommended retrieval mode.
+        auto_classify: when True, classify the query and set "query_type". An explicit
+          "legacy" request is upgraded to the classifier's recommended mode; "dense"
+          stays dense.
 
         detail_level options:
           - "summary": claim_id, human_id, status, confidence, text[:80]
@@ -2011,12 +2031,16 @@ if FastMCP is not None:
         requested_retrieval_mode = retrieval_mode
         classified_retrieval_mode: str | None = None
         query_type: str | None = None
-        if auto_classify and retrieval_mode == "legacy":
+        if auto_classify and retrieval_mode in {"legacy", "dense"}:
             query_type = _classify(query)
-            classified_retrieval_mode = recommended_retrieval_mode(query_type)
-            retrieval_mode = classified_retrieval_mode
+            if retrieval_mode == "legacy":
+                classified_retrieval_mode = recommended_retrieval_mode(query_type)
+                retrieval_mode = classified_retrieval_mode
 
         from memorymaster.recall.planner import RetrievalRequest
+        dense_block = _dense_block_reason() if retrieval_mode == "dense" else None
+        if dense_block is not None:
+            retrieval_mode = "legacy"
         svc = _read_service(db, workspace)
         retrieval = svc.retrieve(RetrievalRequest(
             query_text=query,
@@ -2073,8 +2097,8 @@ if FastMCP is not None:
         }
         if query_type is not None:
             response["query_type"] = query_type
-        if retrieval.plan.containment_reason is not None:
-            response["containment_reason"] = retrieval.plan.containment_reason
+        if dense_block is not None or retrieval.plan.containment_reason is not None:
+            response["containment_reason"] = dense_block or retrieval.plan.containment_reason
             if classified_retrieval_mode is not None:
                 response["classified_retrieval_mode"] = classified_retrieval_mode
 
