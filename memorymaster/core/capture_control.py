@@ -120,7 +120,14 @@ class CaptureLedger:
         with path.open("rb") as handle:
             return hashlib.sha256(handle.read(max(0, limit))).hexdigest()
 
-    def read_increment(self, transcript_path: str | Path, stream_key: str) -> TranscriptChunk:
+    def read_increment(
+        self, transcript_path: str | Path, stream_key: str, *, max_bytes: int | None = None
+    ) -> TranscriptChunk:
+        """Unread complete lines since the committed offset.
+
+        ``max_bytes`` bounds one read: the chunk ends at the last newline inside the cap, so the
+        rest is returned by the next call after ``commit_cursor``. A single line longer than the
+        cap is returned whole (a partial JSONL record is useless)."""
         path = Path(transcript_path)
         path_hash = self._hash(str(path.resolve()))
         if not path.is_file():
@@ -142,7 +149,9 @@ class CaptureLedger:
             start = 0
         with path.open("rb") as handle:
             handle.seek(start)
-            pending = handle.read()
+            pending = handle.read(max_bytes) if max_bytes else handle.read()
+            if max_bytes and b"\n" not in pending:
+                pending += handle.readline()
         last_newline = pending.rfind(b"\n")
         complete = pending[: last_newline + 1] if last_newline >= 0 else b""
         end = start + len(complete)

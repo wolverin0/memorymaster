@@ -172,3 +172,134 @@ def test_verbatim_capture_only_spools_appended_turns(tmp_path):
     assert run_hook().returncode == 0
     third = [line for path in spool_root.rglob("*.jsonl") for line in path.read_text().splitlines()]
     assert len(third) == 16
+
+
+# --- T-2116: the retention gate must not silently stop storing -----------------------------------
+
+def _verbatim_env(tmp_path, **extra):
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(tmp_path / "home"),
+            "USERPROFILE": str(tmp_path / "home"),
+            "MEMORYMASTER_CAPTURE_STATE_DB": str(tmp_path / "capture.db"),
+            "MEMORYMASTER_WAL_DISCIPLINE": "0",
+            "MEMORYMASTER_STOP_CAPTURE_VERBATIM": "1",
+            "PYTHONPATH": str(ROOT),
+            **extra,
+        }
+    )
+    return env
+
+
+def _run_verbatim_hook(tmp_path, project_root, env):
+    hook = _render_hook(project_root, tmp_path / "stop-hook.py")
+    transcript = _write_transcript(tmp_path / "session.jsonl")
+    payload = {"session_id": "gate", "transcript_path": str(transcript), "cwd": str(project_root),
+               "stop_hook_active": False}
+    return subprocess.run([sys.executable, str(hook)], input=json.dumps(payload), capture_output=True,
+                          text=True, env=env, timeout=120)
+
+
+def _health(tmp_path):
+    path = tmp_path / "home" / ".memorymaster" / "hook_state" / "verbatim-health.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+def test_overdue_retention_signals_but_never_stops_storing(tmp_path):
+    import sqlite3
+
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    db = project_root / "memorymaster.db"
+    ensure_verbatim_schema(str(db))
+    conn = sqlite3.connect(db)  # rows far older than the 30-day age that used to make the gate refuse
+    conn.execute("INSERT INTO verbatim_memories (session_id, role, content, timestamp, created_at) "
+                 "VALUES ('old', 'user', 'ancient turn', '2026-04-08T18:47:56+00:00', '2026-04-08T18:47:56Z')")
+    conn.commit()
+    conn.close()
+
+    result = _run_verbatim_hook(tmp_path, project_root, _verbatim_env(tmp_path))
+
+    assert result.returncode == 0
+    conn = sqlite3.connect(db)
+    stored = conn.execute("SELECT COUNT(*) FROM verbatim_memories WHERE session_id = 'gate'").fetchone()[0]
+    conn.close()
+    assert stored == 15  # storing was not skipped
+    health = _health(tmp_path)
+    assert health["retention_due"] is True and health["oldest_age_days"] > 90
+    assert health["last_store_at"]
+
+
+def test_a_failed_store_leaves_a_counter_and_a_log_line(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    (project_root / "memorymaster.db").write_bytes(b"this is not a sqlite database" * 64)
+
+    result = _run_verbatim_hook(tmp_path, project_root, _verbatim_env(tmp_path))
+
+    assert result.returncode == 0  # the Stop hook itself still succeeds
+    health = _health(tmp_path)
+    assert health["store_skipped_count"] == 1
+    assert health["last_skip_reason"].startswith("store-failed:")
+    log = (tmp_path / "home" / ".memorymaster" / "hook_state" / "hook.log").read_text()
+    assert "verbatim-health" in log and "store-failed" in log
+
+
+def test_a_healthy_store_keeps_hook_log_quiet_and_survives_a_corrupt_marker(tmp_path):
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema
+
+    ensure_verbatim_schema(str(project_root / "memorymaster.db"))
+    state = tmp_path / "home" / ".memorymaster" / "hook_state"
+    state.mkdir(parents=True)
+    (state / "verbatim-health.json").write_text("[]", encoding="utf-8")  # valid JSON, not an object
+
+    result = _run_verbatim_hook(tmp_path, project_root, _verbatim_env(tmp_path))
+
+    assert result.returncode == 0
+    health = _health(tmp_path)
+    assert health["last_store_at"] and "retention_due" in health and health["retention_due"] is False
+    assert "verbatim-health" not in (state / "hook.log").read_text(encoding="utf-8")
+
+
+def test_the_first_stop_after_the_fix_stores_a_bounded_slice_of_a_huge_backlog(tmp_path):
+    import sqlite3
+
+    from memorymaster.recall.verbatim_store import ensure_verbatim_schema
+
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    db = project_root / "memorymaster.db"
+    ensure_verbatim_schema(str(db))
+    transcript = tmp_path / "session.jsonl"
+    padding = "backlog filler sentence for the byte cap. " * 40
+    transcript.write_text(
+        "\n".join(json.dumps({"message": {"role": "user", "content": f"turn {i} {padding}"}}) for i in range(3000))
+        + "\n",
+        encoding="utf-8",
+    )
+    assert transcript.stat().st_size > 4 * 1024 * 1024
+    hook = _render_hook(project_root, tmp_path / "stop-hook.py")
+    payload = {"session_id": "backlog", "transcript_path": str(transcript), "cwd": str(project_root),
+               "stop_hook_active": False}
+
+    def stored() -> int:
+        conn = sqlite3.connect(db)
+        try:
+            return conn.execute("SELECT COUNT(*) FROM verbatim_memories").fetchone()[0]
+        finally:
+            conn.close()
+
+    env = _verbatim_env(tmp_path)
+    subprocess.run([sys.executable, str(hook)], input=json.dumps(payload), capture_output=True, text=True,
+                   env=env, timeout=180)
+    first = stored()
+    subprocess.run([sys.executable, str(hook)], input=json.dumps(payload), capture_output=True, text=True,
+                   env=env, timeout=180)
+
+    assert 0 < first < 3000  # capped at about 2 MiB, not the whole file
+    assert stored() > first  # the next Stop continues from the committed offset

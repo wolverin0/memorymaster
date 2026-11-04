@@ -60,3 +60,44 @@ def test_hybrid_search_uses_authoritative_fts_during_quarantine(tmp_path, monkey
     )
 
     assert results == []
+
+
+def test_freshness_reports_the_newest_row_and_flags_staleness(tmp_path) -> None:
+    """T-2116: an empty search must be distinguishable from storage having stopped."""
+    import sqlite3
+    from datetime import datetime, timezone
+
+    db = tmp_path / "v.db"
+    verbatim_store.ensure_verbatim_schema(str(db))
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO verbatim_memories (session_id, role, content, timestamp) "
+                 "VALUES ('s', 'user', 'old turn', '2026-08-24T15:49:21.754968+00:00')")
+    conn.commit()
+    conn.close()
+
+    stale = verbatim_store.verbatim_freshness(str(db), now=datetime(2026, 11, 3, tzinfo=timezone.utc))
+    fresh = verbatim_store.verbatim_freshness(str(db), now=datetime(2026, 8, 26, tzinfo=timezone.utc))
+
+    assert stale == {"newest_verbatim_at": "2026-08-24T15:49:21.754968+00:00", "newest_age_days": 70, "stale": True}
+    assert fresh["stale"] is False
+    assert verbatim_store.verbatim_freshness(str(tmp_path / "missing.db")) == {}
+
+
+def test_mcp_search_adds_freshness_and_a_stale_warning_without_changing_existing_fields(tmp_path) -> None:
+    import sqlite3
+
+    from memorymaster.surfaces import mcp_server
+
+    db = tmp_path / "v.db"
+    verbatim_store.ensure_verbatim_schema(str(db))
+    conn = sqlite3.connect(db)
+    conn.execute("INSERT INTO verbatim_memories (session_id, role, content, timestamp) "
+                 "VALUES ('s', 'user', 'harness notes', '2026-08-24T15:49:21+00:00')")
+    conn.commit()
+    conn.close()
+
+    result = mcp_server.search_verbatim(query="DeepSeek Harness", db=str(db))
+
+    assert result["ok"] is True and result["rows"] == 0 and result["results"] == []
+    assert result["stale"] is True and result["newest_age_days"] > 7
+    assert "stale" in result["warning"] and "transcript-search" in result["warning"]

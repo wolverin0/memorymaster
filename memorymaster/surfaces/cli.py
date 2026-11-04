@@ -660,6 +660,14 @@ def build_parser() -> argparse.ArgumentParser:
     verbatim_clean.add_argument("--no-dedup", dest="no_dedup", action="store_true", help="Skip the (session_id, content) exact-dup pass")
     verbatim_clean.add_argument("--purge-junk", dest="purge_junk", action="store_true", help="Also delete rows matching known pre-#128 junk prefixes (wiki-absorb prompt, etc.)")
 
+    verbatim_archive = sub.add_parser("verbatim-archive", help="Move verbatim rows older than N days into a separate archive DB, verified before delete (T-2116)")
+    verbatim_archive.add_argument("--days", type=int, default=90, help="Archive rows older than this many days (default: 90)")
+    verbatim_archive.add_argument("--batch-size", dest="batch_size", type=int, default=2000, help="Rows per verified batch/transaction (default: 2000)")
+    verbatim_archive.add_argument("--archive-path", dest="archive_path", default=None, help="Archive DB file (default: memorymaster-verbatim-archive.db next to --db)")
+    mode = verbatim_archive.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", dest="dry_run", action="store_true", help="Report what would move; change nothing (the default)")
+    mode.add_argument("--apply", action="store_true", help="Actually move the rows")
+
     detect_contra = sub.add_parser("detect-contradictions", help="Find semantic contradictions between topically-similar claims via an LLM judge (v3.22)")
     detect_contra.add_argument("--limit", type=int, default=200, help="Max claims to load for pair sampling")
     detect_contra.add_argument("--sample", type=int, default=50, help="Max candidate pairs to judge this run (caps LLM calls)")
