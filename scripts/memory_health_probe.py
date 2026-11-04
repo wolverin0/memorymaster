@@ -419,6 +419,17 @@ def maybe_alert(report: dict, out_dir: Path, orchestrators: Path, *, sender=None
     return {"sent": True, "reason": "delivered"}
 
 
+@contextlib.contextmanager
+def quiet_info_logs():
+    """Recall logs one INFO line per FTS query; the report is the output. Process-global, so always restored."""
+    previous = logging.root.manager.disable
+    logging.disable(logging.INFO)
+    try:
+        yield
+    finally:
+        logging.disable(previous)
+
+
 def main(argv: list[str] | None = None) -> int:
     default_db = os.environ.get("MEMORYMASTER_DEFAULT_DB") or str(REPO / "memorymaster.db")
     home = Path.home() / ".memorymaster"
@@ -433,11 +444,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--now", help="ISO timestamp override (tests)")
     parser.add_argument("--no-alert", action="store_true")
     args = parser.parse_args(argv)
-    logging.disable(logging.INFO)  # recall logs one INFO line per FTS query; the report is the output
 
-    report = run_probe(Path(args.db), workspace=Path(args.workspace).resolve(), canaries_path=Path(args.canaries),
-                       transcripts_db=Path(args.transcripts_db), capture_db=Path(args.capture_db),
-                       now=parse_ts(args.now) if args.now else None)
+    with quiet_info_logs():
+        report = run_probe(Path(args.db), workspace=Path(args.workspace).resolve(), canaries_path=Path(args.canaries),
+                           transcripts_db=Path(args.transcripts_db), capture_db=Path(args.capture_db),
+                           now=parse_ts(args.now) if args.now else None)
     out_dir = Path(args.out)
     report["alert"] = {"sent": False, "reason": "--no-alert" if args.no_alert else "pending"}
     write_report(report, out_dir)  # first: it creates out_dir, and the report must exist even if the alert fails

@@ -472,3 +472,16 @@ def test_shipped_canaries_are_well_formed():
     for canary in data:
         assert canary["id"] and len(canary["query"].split()) >= 4, "short queries are skipped as trivial by the prompt hook"
         assert canary.get("expect_human_ids") or canary.get("expect_substrings")
+
+
+def test_main_leaves_global_logging_as_it_found_it(tmp_path, monkeypatch, orchestrators):
+    """Regression: main() once called logging.disable(INFO) for good, which broke every later caplog test in the session."""
+    import logging
+
+    monkeypatch.setattr(probe, "run_probe", lambda *a, **k: {**failing_report(), "env": {}})
+    before = logging.root.manager.disable
+    probe.main(["--out", str(tmp_path), "--orchestrators", str(orchestrators), "--no-alert"])
+    assert logging.root.manager.disable == before
+    with probe.quiet_info_logs():
+        assert logging.root.manager.disable == logging.INFO
+    assert logging.root.manager.disable == before
