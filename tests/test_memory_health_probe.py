@@ -455,7 +455,7 @@ class FakeOrca:
         self.result = subprocess.CompletedProcess([], returncode, stdout, stderr)
 
     def __call__(self, argv, **kwargs):
-        self.calls.append((list(argv), kwargs.get("env") or {}))
+        self.calls.append((list(argv), kwargs.get("env")))  # None = the child would inherit os.environ
         return self.result
 
 
@@ -468,6 +468,7 @@ def test_the_alert_is_signed_with_a_label_never_a_terminal_handle(monkeypatch):
     argv, env = fake.calls[0]
     assert argv[argv.index("--from") + 1] == "memorymaster-health-probe"
     assert argv[argv.index("--type") + 1] == "status" and argv[argv.index("--to") + 1] == "run:run_fixture"
+    assert env is not None, "env must be passed explicitly: a missing env means the child inherits ORCA_TERMINAL_HANDLE"
     assert "term_lane_handle" not in argv and "ORCA_TERMINAL_HANDLE" not in env
 
 
