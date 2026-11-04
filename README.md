@@ -88,6 +88,27 @@ observations disappear from trusted recall. For focused development checks, see
 [development guidance](docs/development.md). Installed services and provider
 quality require separate runtime evidence.
 
+### From a source checkout (development and tests)
+
+There is no Makefile or `package.json`; `pyproject.toml` (Python 3.10+),
+`pytest.ini` and `noxfile.py` define the build and tests. The commands work the
+same in bash and PowerShell (only the `env` prefix differs).
+
+```bash
+python -m pip install -e ".[dev,mcp,capture,security]"
+memorymaster --json demo
+python -m pytest tests/test_public_demo.py -q
+python -m pytest tests/ -m "not ml"
+python scripts/bulk_check.py --fast
+```
+
+- `tests/ -m "not ml"` is the full suite; embedding/vector tests run apart with
+  `-m ml` (needs the `ml`/`vector` extras), as `pytest.ini` explains.
+  `nox -s unit` and `nox -s ml` wrap the same two runs.
+- `python scripts/bulk_check.py` without `--fast` is the merge gate and also runs
+  the suites; outside the maintainer's heavy-slot host set
+  `MEMORYMASTER_BULK_NO_SLOT=1` (see [AGENTS.md](AGENTS.md)).
+
 ## Four public operations
 
 The stable Python, CLI and MCP interface is intentionally small:
