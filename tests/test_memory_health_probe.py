@@ -447,6 +447,59 @@ def test_a_failed_send_is_retried_next_run_and_never_raises(tmp_path, orchestrat
     assert probe.maybe_alert(failing_report("a"), out, orchestrators, sender=lambda *_: None)["sent"]
 
 
+class FakeOrca:
+    """Stands in for subprocess.run: records argv and env, answers with a canned result."""
+
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.calls: list[tuple[list, dict]] = []
+        self.result = subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append((list(argv), kwargs.get("env") or {}))
+        return self.result
+
+
+def test_the_alert_is_signed_with_a_label_never_a_terminal_handle(monkeypatch):
+    monkeypatch.setenv("ORCA_TERMINAL_HANDLE", "term_lane_handle")
+    monkeypatch.delenv("MEMORYMASTER_HEALTH_PROBE_SENDER", raising=False)
+    fake = FakeOrca()
+    monkeypatch.setattr(probe.subprocess, "run", fake)
+    probe.send_orca("run_fixture", "[MM-SALUD] 2 fallas", "body")
+    argv, env = fake.calls[0]
+    assert argv[argv.index("--from") + 1] == "memorymaster-health-probe"
+    assert argv[argv.index("--type") + 1] == "status" and argv[argv.index("--to") + 1] == "run:run_fixture"
+    assert "term_lane_handle" not in argv and "ORCA_TERMINAL_HANDLE" not in env
+
+
+def test_the_sender_label_can_be_overridden_by_env(monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_HEALTH_PROBE_SENDER", "  probe-staging ")
+    fake = FakeOrca()
+    monkeypatch.setattr(probe.subprocess, "run", fake)
+    probe.send_orca("run_fixture", "s", "b")
+    argv, _ = fake.calls[0]
+    assert argv[argv.index("--from") + 1] == "probe-staging"
+
+
+def test_a_refused_send_keeps_the_exit_code_non_zero_and_the_report_says_why(tmp_path, monkeypatch, orchestrators):
+    report = {**failing_report("ingest.verbatim"), "env": {}}
+    monkeypatch.setattr(probe, "run_probe", lambda *a, **k: dict(report))
+    monkeypatch.setattr(probe.subprocess, "run", FakeOrca(returncode=1, stderr='{"code": "no_active_sender_terminal"}'))
+    out = tmp_path / "health"
+    args = ["--db", "x.db", "--out", str(out), "--orchestrators", str(orchestrators), "--now", "2026-11-03T09:15:00+00:00"]
+    assert probe.main(args) == 1
+    alert = json.loads((out / "latest.json").read_text(encoding="utf-8"))["alert"]
+    assert alert["sent"] is False and "no_active_sender_terminal" in alert["reason"] and "orca exit 1" in alert["reason"]
+    assert not (out / "alert-state.json").exists(), "a refused send is retried on the next run"
+
+
+def test_a_refusal_reported_on_stdout_is_still_explained():
+    fake = FakeOrca(returncode=2, stdout="sender_not_assignee")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(probe.subprocess, "run", fake)
+        with pytest.raises(RuntimeError, match="sender_not_assignee"):
+            probe.send_orca("run_fixture", "s", "b")
+
+
 def test_alert_body_carries_criteria_and_a_digit_free_voz_line():
     body = probe.alert_body(failing_report("ingest.verbatim", "retention.due"))
     assert body.startswith("criteria:") and "ingest.verbatim: fail" in body and "files_changed:" in body
