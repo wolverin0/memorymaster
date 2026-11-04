@@ -240,12 +240,43 @@ def test_ranking_ignores_non_core_and_non_confirmed_rows_and_fails_with_no_core_
 
 # --------------------------------------------------------------------------- 4. retention
 
-def test_retention_fails_when_verbatim_is_outside_its_bounds(world):
-    assert probe.check_retention(world.db)[0]["status"] == "PASS"
+def test_retention_fails_when_the_oldest_verbatim_row_is_past_the_archive_window(world):
+    assert probe.check_retention(world.db, NOW)[0]["status"] == "PASS"
     with world.rw() as conn:
-        conn.execute("INSERT INTO verbatim_memories (session_id, role, content, timestamp) VALUES ('old','user','x',?)", (iso(24 * 3000),))
-    result = probe.check_retention(world.db)[0]
-    assert result["status"] == "FAIL" and result["data"]["candidate_rows"] >= 1
+        # retention_due reads the lowest id, so the old row only counts when it is the head of the table
+        conn.execute("INSERT INTO verbatim_memories (id, session_id, role, content, timestamp) VALUES (0, 'old','user','x',?)", (iso(24 * 200),))
+    result = probe.check_retention(world.db, NOW)[0]
+    assert result["status"] == "FAIL" and result["data"]["oldest_age_days"] >= 199
+
+
+def write_marker(tmp_path, **fields):
+    path = tmp_path / "verbatim-health.json"
+    path.write_text(json.dumps(fields), encoding="utf-8")
+    return path
+
+
+def test_verbatim_marker_passes_when_absent_or_healthy(tmp_path):
+    assert probe.check_verbatim_marker(tmp_path / "none.json", NOW, CFG)[0]["status"] == "PASS"
+    healthy = write_marker(tmp_path, retention_due=False, last_store_at=iso(1), store_skipped_count=4, last_skip_at=iso(24 * 9))
+    assert probe.check_verbatim_marker(healthy, NOW, CFG)[0]["status"] == "PASS", "an old skip is history, not an alarm"
+
+
+@pytest.mark.parametrize("fields,reason", [
+    ({"retention_due": True}, "retention_due"),
+    ({"retention_check_error": "OperationalError"}, "retention check failed"),
+    ({"last_skip_at": "RECENT", "last_skip_reason": "gate closed", "store_skipped_count": 1}, "store skipped"),
+])
+def test_verbatim_marker_fails_on_overdue_retention_a_failed_check_or_a_recent_skip(tmp_path, fields, reason):
+    fields = {k: (iso(2) if v == "RECENT" else v) for k, v in fields.items()}
+    result = probe.check_verbatim_marker(write_marker(tmp_path, **fields), NOW, CFG)[0]
+    assert result["status"] == "FAIL" and reason in result["detail"]
+
+
+def test_a_corrupt_marker_is_a_fail_not_a_crash(tmp_path):
+    path = tmp_path / "verbatim-health.json"
+    path.write_text("{not json", encoding="utf-8")
+    checks = probe._guard("verbatim.marker", probe.check_verbatim_marker, path, NOW, CFG)
+    assert checks[0]["status"] == "FAIL" and "could not run" in checks[0]["detail"]
 
 
 # --------------------------------------------------------------------------- 5. services
@@ -417,7 +448,7 @@ def test_a_failed_send_is_retried_next_run_and_never_raises(tmp_path, orchestrat
 
 
 def test_alert_body_carries_criteria_and_a_digit_free_voz_line():
-    body = probe.alert_body(failing_report("ingest.verbatim", "retention.within_bounds"))
+    body = probe.alert_body(failing_report("ingest.verbatim", "retention.due"))
     assert body.startswith("criteria:") and "ingest.verbatim: fail" in body and "files_changed:" in body
     voz = re.search(r"^voz: (.+)$", body, re.M).group(1)
     assert voz == probe.VOZ and not re.search(r"\d", voz) and len(voz.split()) >= 5

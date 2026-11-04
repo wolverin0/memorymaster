@@ -49,6 +49,7 @@ CONFIG: dict = {
         "dream-worker": {"max_age_h": 48, "agents": ["dream-worker"]},
     },
     # The live dense index is the embeddinggemma service (claim_embeddings is only a cache of the opt-in hybrid path).
+    "verbatim_skip_window_h": 24,  # a skip recorded by the stop hook inside this window is a FAIL
     "dense_url": "http://127.0.0.1:8767/health",
     "dense_min_indexed_ratio": 0.95,  # indexed / confirmed claims
     "dense_max_sync_age_s": 600,  # the service syncs every 60 s
@@ -284,14 +285,34 @@ def check_ranking(mcp_hits: list[Hit], cfg: dict) -> list[dict]:
 
 # --------------------------------------------------------------------------- 4. retention, 5. services
 
-def check_retention(db: Path) -> list[dict]:
-    from memorymaster.govern.verbatim_cleanup import plan_retention
+def check_retention(db: Path, now: datetime) -> list[dict]:
+    """The stop hook's own O(1) staleness test: is the oldest dated verbatim row past the archive window?"""
+    from memorymaster.govern.verbatim_cleanup import retention_due
 
-    plan = plan_retention(str(db))
-    return [_result("retention.within_bounds", bool(plan["within_bounds"]),
-                    f"{plan['candidate_rows']} verbatim rows over the retention bounds (truncated={plan['truncated']}); "
-                    "outside bounds the stop hook skips storing",
-                    candidate_rows=plan["candidate_rows"], truncated=plan["truncated"], limits=plan["limits"])]
+    due = retention_due(str(db), now=now)
+    return [_result("retention.due", not due["due"],
+                    f"oldest dated verbatim row is {due['oldest_age_days']} days old; "
+                    + ("archive retention is overdue" if due["due"] else "within the archive window"),
+                    oldest_at=due["oldest_at"], oldest_age_days=due["oldest_age_days"])]
+
+
+def check_verbatim_marker(path: Path, now: datetime, cfg: dict) -> list[dict]:
+    """What the Stop hook says about itself (verbatim-health.json, T-2116): overdue retention, a failed check or a recent skip."""
+    if not path.is_file():
+        return [_result("verbatim.marker", True, "no marker yet (stop hook not reinstalled, or no Stop since); ingest.verbatim covers the outage")]
+    marker = json.loads(path.read_text(encoding="utf-8"))
+    problems = []
+    if marker.get("retention_due"):
+        problems.append("retention_due")
+    if marker.get("retention_check_error"):
+        problems.append(f"retention check failed ({marker['retention_check_error']})")
+    skipped_at = parse_ts(marker.get("last_skip_at"))
+    skip_age = _age_h(skipped_at, now)
+    if skip_age is not None and skip_age <= cfg["verbatim_skip_window_h"]:
+        problems.append(f"store skipped {skip_age}h ago ({marker.get('last_skip_reason') or 'no reason recorded'})")
+    return [_result("verbatim.marker", not problems,
+                    "; ".join(problems) or f"healthy (last store {marker.get('last_store_at') or 'unknown'})",
+                    last_store_at=marker.get("last_store_at"), store_skipped_count=marker.get("store_skipped_count"))]
 
 
 def check_services(cfg: dict) -> list[dict]:
@@ -336,7 +357,8 @@ def check_dense(db: Path, now: datetime, cfg: dict) -> list[dict]:
 # --------------------------------------------------------------------------- orchestration
 
 def run_probe(db: Path, *, workspace: Path, canaries_path: Path, transcripts_db: Path, capture_db: Path,
-              now: datetime | None = None, cfg: dict | None = None, recallers: dict | None = None) -> dict:
+              verbatim_health: Path | None = None, now: datetime | None = None, cfg: dict | None = None,
+              recallers: dict | None = None) -> dict:
     cfg = cfg or CONFIG
     now = now or datetime.now(timezone.utc)
     canaries = json.loads(Path(canaries_path).read_text(encoding="utf-8"))["canaries"]
@@ -345,7 +367,9 @@ def run_probe(db: Path, *, workspace: Path, canaries_path: Path, transcripts_db:
         recallers = recallers or {"hook": lambda: hook_recaller(db, workspace), "mcp": lambda: mcp_recaller(db, workspace)}
         canary_checks, mcp_hits = check_canaries(canaries, recallers, cfg)
     checks += canary_checks + check_ranking(mcp_hits, cfg)
-    checks += _guard("retention.within_bounds", check_retention, db)
+    checks += _guard("retention.due", check_retention, db, now)
+    if verbatim_health is not None:
+        checks += _guard("verbatim.marker", check_verbatim_marker, verbatim_health, now, cfg)
     checks += check_services(cfg)
     checks += _guard("dense.service", check_dense, db, now, cfg)
     failures = [c["name"] for c in checks if c["status"] == FAIL]
@@ -443,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--canaries", default=str(Path(__file__).with_name("health_canaries.json")))
     parser.add_argument("--transcripts-db", default=str(home / "transcripts.db"))
     parser.add_argument("--capture-db", default=str(home / "capture-control.db"))
+    parser.add_argument("--verbatim-health", default=str(home / "hook_state" / "verbatim-health.json"))
     parser.add_argument("--out", default=str(home / "checkpoints" / "health"))
     parser.add_argument("--orchestrators", default=str(REPO.parent / "_intel" / "orchestrators.json"))
     parser.add_argument("--now", help="ISO timestamp override (tests)")
@@ -452,7 +477,7 @@ def main(argv: list[str] | None = None) -> int:
     with quiet_info_logs():
         report = run_probe(Path(args.db), workspace=Path(args.workspace).resolve(), canaries_path=Path(args.canaries),
                            transcripts_db=Path(args.transcripts_db), capture_db=Path(args.capture_db),
-                           now=parse_ts(args.now) if args.now else None)
+                           verbatim_health=Path(args.verbatim_health), now=parse_ts(args.now) if args.now else None)
     out_dir = Path(args.out)
     report["alert"] = {"sent": False, "reason": "--no-alert" if args.no_alert else "pending"}
     write_report(report, out_dir)  # first: it creates out_dir, and the report must exist even if the alert fails
