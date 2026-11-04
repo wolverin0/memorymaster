@@ -116,6 +116,9 @@ def build_vars(
         "USERNAME": env.get("USERNAME") or ntpath.basename(home),
         "USERDOMAIN": env.get("USERDOMAIN") or env.get("COMPUTERNAME") or "",
         "REPO": str(repo),
+        # CODE: the checkout the scripts run from. It is the checkout holding the manifest unless overridden, so with
+        # `--repo <live-main> --var REPO=<main>` scripts come from live-main while the DB/workspace stay in main.
+        "CODE": str(repo),
         "REPO_FWD": str(repo).replace("\\", "/"),
         "PYAPPS": ntpath.dirname(str(repo)) if "\\" in str(repo) else str(repo.parent),
     }
@@ -154,7 +157,7 @@ def make_redactor(values: dict[str, str], enabled: bool) -> Callable[[str], str]
     if not enabled:
         return lambda text: text
     pairs = sorted(
-        ((values[name], f"{{{name}}}") for name in ("HERMES_HOST", "REPO", "REPO_FWD", "PYAPPS", "LOCALAPPDATA", "HOME", "USERNAME")
+        ((values[name], f"{{{name}}}") for name in ("HERMES_HOST", "REPO", "CODE", "REPO_FWD", "PYAPPS", "LOCALAPPDATA", "HOME", "USERNAME")
          if len(values.get(name, "")) >= 4),
         key=lambda pair: -len(pair[0]),
     )

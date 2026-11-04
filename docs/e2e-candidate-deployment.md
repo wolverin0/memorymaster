@@ -3,7 +3,7 @@ Covers: seven remediation packages, useful-selection receipts, wheel identity an
 Read before installing the September E2E candidate; use the adjacent implementation checklist for evidence.
 Executed installation, client changes and restart are recorded in LIVE-DEPLOYMENT.md; restore/history stay separate.
 ROADMAP.md remains the only roadmap; this document is an operator procedure.
-Last section, "Reinstall after reformat", rebuilds every Windows scheduled task (memorymaster-setup windows-tasks).
+Last section, "Reinstall after reformat", rebuilds every Windows scheduled task (memorymaster-setup windows-tasks); {REPO} = workspace and DB, {CODE} = checkout the scripts run from.
 <!-- /doc-head -->
 
 # E2E candidate operator procedure
@@ -171,10 +171,18 @@ historical recovery remain separate future decisions.
 
 ## Reinstall after reformat
 
-Every MemoryMaster scheduled task (14) is declared in `ops/windows-tasks/manifest.json`;
+Every MemoryMaster scheduled task (15) is declared in `ops/windows-tasks/manifest.json`;
 `memorymaster-setup windows-tasks` rebuilds them. Obsidian-Cockpit-Sync is not covered.
 Modes: `--plan` (default, read-only), `--apply`, `--check` (exit 1 on drift). Output shows
-machine paths as `{HOME}`, `{REPO}`, ... tokens; `--show-paths` prints them.
+machine paths as `{HOME}`, `{REPO}`, `{CODE}`, ... tokens; `--show-paths` prints them.
+
+`{REPO}` is the workspace: the folder holding `memorymaster.db`. `{CODE}` is the checkout the scheduled
+scripts run from (the health probe, the weekly digest, the Hermes sync). `{CODE}` defaults to the checkout
+holding the manifest (`--repo`), so a single-checkout install needs nothing extra. To run the scripts from a
+dedicated worktree pinned to `origin/main` while the DB and workspace stay in the main checkout, run the
+installer from that worktree and point `REPO` at the main one:
+`memorymaster-setup windows-tasks --repo <live-main worktree> --var REPO=<main checkout> --plan`.
+`--var CODE=<path>` overrides the script checkout on its own.
 
 1. Install Python 3.12 (the client interpreter) and Git; clone this repository to the path the
    tasks served before, or pass `--var REPO=<path>` when the workspace differs from the checkout

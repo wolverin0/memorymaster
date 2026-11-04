@@ -505,3 +505,45 @@ def test_transcript_index_refreshes_hourly_from_the_graph_profile_runtime(manife
     assert task["triggers"][0]["repetition"]["interval"] == "PT1H"
     assert "scheduled_task transcript-index" in task["action"]["arguments"]
     assert "graph-profile" in task["runtimes"]
+
+
+# --------------------------------------------------------------------------- CODE: scripts from one checkout, DB and workspace from another
+
+def test_code_defaults_to_the_checkout_holding_the_manifest(manifest, tmp_path):
+    values, declared = wt.build_vars(manifest, REPO, make_env(tmp_path), {})
+    assert "CODE" in declared and values["CODE"] == values["REPO"] == str(REPO)
+
+
+@WINDOWS_ONLY
+def test_scripts_run_from_the_code_checkout_while_db_and_workspace_stay_in_the_main_one(manifest, tmp_path):
+    """`--repo <live-main> --var REPO=<main>`: every script path is {CODE}, DB and workspace are {REPO}."""
+    live, main = Path(r"C:\work\live-main"), r"C:\work\main"
+    values, declared = wt.build_vars(manifest, live, make_env(tmp_path), {"REPO": main})
+    assert values["CODE"] == str(live) and values["REPO"] == main and values["DB"] == main + r"\memorymaster.db"
+
+    probe_task = next(t for t in manifest["tasks"] if t["name"] == "MemoryMaster-Health-Probe")
+    args = wt.task_xml(manifest, probe_task, values, declared)
+    assert rf"{live}\scripts\memory_health_probe.py" in args
+    assert rf'--db "{main}\memorymaster.db" --workspace "{main}"' in args
+
+    for wrapper, script in (("mm_weekly_digest.cmd", "atlas_weekly_digest.py"), ("run-hermes-sync-hidden.vbs", "windows-hermes-sync.ps1")):
+        text = wt.render((REPO / "ops/windows-tasks/wrappers" / wrapper).read_text(encoding="utf-8"), values, declared)
+        assert rf"{live}\scripts\{script}" in text and main not in text
+
+
+@WINDOWS_ONLY
+def test_code_can_be_overridden_on_its_own_and_is_redacted_as_its_own_token(manifest, tmp_path):
+    values, _ = wt.build_vars(manifest, REPO, make_env(tmp_path), {"CODE": r"C:\elsewhere\live-main"})
+    assert values["CODE"] == r"C:\elsewhere\live-main" and values["REPO"] == str(REPO)
+    shown = wt.make_redactor(values, True)(rf"{values['CODE']}\scripts\x.py {values['REPO']}\memorymaster.db")
+    assert shown.startswith(r"{CODE}\scripts") and "{REPO}" in shown
+
+
+def test_no_script_path_in_the_manifest_or_its_wrappers_hangs_off_repo(manifest):
+    """A script is code (CODE); only the DB, the workspace and the steward's data root are REPO."""
+    for task in manifest["tasks"]:
+        action = task["action"]
+        text = f"{action['command']} {action.get('arguments', '')}"
+        assert not re.search(r"\{REPO\}\+scripts", text), task["name"]
+    for wrapper in (REPO / "ops/windows-tasks/wrappers").iterdir():
+        assert not re.search(r"\{REPO\}\scripts", wrapper.read_text(encoding="utf-8", errors="replace")), wrapper.name

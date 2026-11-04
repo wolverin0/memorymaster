@@ -509,7 +509,7 @@
       ],
       "action": {
         "command": "{PYTHONW}",
-        "arguments": "\"{REPO}\\scripts\\memory_health_probe.py\" --db \"{DB}\" --workspace \"{REPO}\" --out \"{CHECKPOINTS}\\health\" --orchestrators \"{PYAPPS}\\_intel\\orchestrators.json\""
+        "arguments": "\"{CODE}\\scripts\\memory_health_probe.py\" --db \"{DB}\" --workspace \"{REPO}\" --out \"{CHECKPOINTS}\\health\" --orchestrators \"{PYAPPS}\\_intel\\orchestrators.json\""
       }
     },
     {
