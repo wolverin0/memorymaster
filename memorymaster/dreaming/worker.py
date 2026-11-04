@@ -383,6 +383,9 @@ class DreamWorker:
                     synthesize=apply_candidates,
                 )
             self._hold_lease()
+            summary["retired_below_min_turns"] = self.ledger.retire_below_min_turns(
+                idle_days=self.config.retain_days, now=self.now(),
+            )
             self.ledger.prune(retain_days=self.config.retain_days, max_bytes=self.config.max_capture_bytes, now=self.now(),
                               held_retain_days=self.config.held_retain_days, on_held_expired=self._record_held_expired)
             self.ledger.finish_run(run_id, "ok" if not summary["errors"] else "partial", summary, now=self.now())

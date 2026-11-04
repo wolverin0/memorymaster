@@ -289,6 +289,26 @@ def test_shadow_then_apply_is_candidate_first_scope_safe_and_replay_safe(tmp_pat
     assert len(service.list_claims(status="candidate", limit=20, scope_allowlist=["project:test", "personal"])) == 2
 
 
+def test_a_run_retires_idle_single_turn_captures_and_leaves_real_ones(tmp_path: Path) -> None:
+    """T-2123: a one-turn capture is never eligible, so each run closes it out (after retain_days idle)."""
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    real = _capture(ledger)
+    stamp = (NOW - timedelta(days=30)).isoformat()
+    lonely = ledger.enqueue(CaptureEnvelope(
+        provider="codex", session_hash="lonely", scope="project:test", captured_at=stamp, last_activity_at=stamp,
+        messages=(DreamMessage("m1", "user", "One prompt, never answered.", stamp),),
+        cursor_start=0, cursor_end=50, content_hash="lonely-hash",
+    ))
+
+    summary = DreamWorker(ledger, service, _Extractor(), _Consolidator(), config=DreamConfig(), now=lambda: NOW).run(apply_candidates=False)
+
+    assert summary["retired_below_min_turns"] == 1
+    assert ledger.get_capture(lonely)["state"] == "skipped"
+    assert ledger.get_capture(real)["state"] != "skipped"
+    assert ledger.drainable_queue()["waiting"] == 0  # the real one was worked, the lonely one no longer counts
+
+
 def test_provider_failure_is_replayable_and_never_mutates_claims(tmp_path: Path) -> None:
     service = _service(tmp_path)
     ledger = DreamLedger(tmp_path / "capture.db")
