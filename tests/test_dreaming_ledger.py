@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -129,6 +130,30 @@ def test_retention_never_discards_unprocessed_capture(tmp_path: Path) -> None:
 
     assert result["deleted"] == 0
     assert ledger.get_capture(capture_id)["state"] == "captured"
+
+
+def test_idle_single_turn_captures_are_retired_with_a_reason_and_kept(tmp_path: Path) -> None:
+    """T-2123: eligible() needs turn_count >= 2, so a one-turn capture is never scheduled; left in 'captured'
+    it ages forever in the queue (556 rows, oldest 2515 h). Retire it, keeping the row, once it stopped growing."""
+    now = datetime(2026, 11, 3, 12, tzinfo=timezone.utc)
+    ledger = DreamLedger(tmp_path / "dream.db")
+    old = ledger.enqueue(_envelope(now - timedelta(days=10), content_hash="old"))
+    other = _envelope(now - timedelta(days=1), content_hash="fresh")
+    fresh = ledger.enqueue(replace(other, session_hash="fresh-session"))
+    two = _envelope(now - timedelta(days=10), content_hash="two")
+    multi = ledger.enqueue(replace(two, session_hash="two-turn-session",
+                                   messages=(*two.messages, DreamMessage("m2", "assistant", "Noted.", two.captured_at))))
+    assert len({old, fresh, multi}) == 3
+
+    assert ledger.retire_below_min_turns(idle_days=7, now=now) == 1
+
+    retired = ledger.get_capture(old)
+    assert retired["state"] == "skipped" and retired["last_error"] == "below_min_turns"
+    assert retired["messages"], "the capture content is kept, only its queue state changes"
+    assert ledger.get_capture(fresh)["state"] == "captured"  # may still grow into a real session
+    assert ledger.get_capture(multi)["state"] == "captured"  # two turns: the worker will pick it up
+    assert ledger.retire_below_min_turns(idle_days=7, now=now) == 0  # idempotent
+    assert ledger.prune(retain_days=7, max_bytes=1, now=now)["deleted"] == 0  # retention still never discards it
 
 
 def test_status_warns_on_stale_scheduler_and_low_structured_yield(tmp_path: Path) -> None:

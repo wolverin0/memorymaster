@@ -355,6 +355,34 @@ class DreamLedger:
             ).fetchall()
         return [_decode_row(row) for row in rows]
 
+    def drainable_queue(self) -> dict[str, Any]:
+        """Captures a run can still pick up, the same set ``eligible`` draws from (ignoring the idle gate):
+        ``{"waiting": n, "oldest_last_activity_at": iso | None}``. The health probe and the drain script use it."""
+        with self._connect() as conn:
+            waiting, oldest = conn.execute(
+                "SELECT COUNT(*), MIN(last_activity_at) FROM dream_captures "
+                "WHERE (state IN ('captured','retryable') OR (state='extracted' AND resume_eligible=1)) AND turn_count >= 2"
+            ).fetchone()
+        return {"waiting": int(waiting), "oldest_last_activity_at": oldest}
+
+    def retire_below_min_turns(self, *, idle_days: int, now: datetime | None = None) -> int:
+        """Give captures that can never be scheduled a terminal state; return how many were retired.
+
+        ``eligible`` needs ``turn_count >= 2``, so a one-turn capture that stopped growing stayed ``captured``
+        forever and aged in the queue (T-2123). It becomes ``skipped`` with ``last_error='below_min_turns'``.
+        The row is kept, not deleted (retention never discards unprocessed captures), and only after
+        ``idle_days`` without activity, so a session that is still being coalesced into is left alone.
+        shortcut: skipped rows are never pruned; they hold one short turn each, revisit if they pile up.
+        """
+        current = now or _utc_now()
+        cutoff = _iso(current - timedelta(days=max(0, idle_days)))
+        with self._connect() as conn:
+            return conn.execute(
+                "UPDATE dream_captures SET state='skipped', last_error='below_min_turns', updated_at=? "
+                "WHERE state='captured' AND turn_count < 2 AND last_activity_at < ?",
+                (_iso(current), cutoff),
+            ).rowcount
+
     def consolidated(self, *, max_sessions: int, scope: str | None = None) -> list[dict[str, Any]]:
         params: list[Any] = []
         where = "state='consolidated'"
