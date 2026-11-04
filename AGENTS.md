@@ -1,6 +1,9 @@
-<!-- doc-head: concise MemoryMaster implementation instructions -->
-<!-- Covers: code map, governance boundaries and scoped verification. -->
-<!-- Read when: changing MemoryMaster; deeper guidance is in docs/development.md. -->
+<!-- doc-head: shared agent entrypoint for changing MemoryMaster (all agents; CLAUDE.md and GEMINI.md import it) -->
+<!-- Covers: start-of-task checks, code map of memorymaster/ subpackages, critical governance boundaries, finish/verify gates. -->
+<!-- Read when: before any code, schema, hook or doc change in this repo; read once per task, then follow the links. -->
+<!-- Gates: tests/test_public_demo.py, Ruff on changed files, scripts/bulk_check.py (only merge gate; no hosted CI). -->
+<!-- Deeper: docs/development.md (verification, GitNexus), DOCS-MAP.md (every doc + whether current), ROADMAP.md. -->
+<!-- Last verified against the tree: 2026-11-04 (all paths and commands below exist). -->
 <!-- /doc-head -->
 # MemoryMaster
 
