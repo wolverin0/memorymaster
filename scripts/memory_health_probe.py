@@ -418,13 +418,26 @@ def orca_executable() -> str:
     return str(Path(local) / "Programs" / "orca" / "resources" / "bin" / "orca.exe")
 
 
+SENDER_LABEL = "memorymaster-health-probe"
+SENDER_ENV = "MEMORYMASTER_HEALTH_PROBE_SENDER"
+
+
+def sender_label() -> str:
+    """Orca accepts a plain label as `--from` with no terminal behind it (wezbridge sender-identity.cjs, T-1219).
+
+    Never a lane handle and never ORCA_TERMINAL_HANDLE: a task launched from a lane pane would inherit it and sign as that lane."""
+    return os.environ.get(SENDER_ENV, "").strip() or SENDER_LABEL
+
+
 def send_orca(run_id: str, subject: str, body: str) -> None:
+    env = {k: v for k, v in os.environ.items() if k != "ORCA_TERMINAL_HANDLE"}
     done = subprocess.run(
-        [orca_executable(), "orchestration", "send", "--to", f"run:{run_id}", "--type", "status",
+        [orca_executable(), "orchestration", "send", "--from", sender_label(), "--to", f"run:{run_id}", "--type", "status",
          "--subject", subject, "--body", body],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, env=env)
     if done.returncode != 0:
-        raise RuntimeError(f"orca exit {done.returncode}: {done.stderr.strip()[:200]}")
+        why = (done.stderr.strip() or done.stdout.strip())[:200]  # Orca reports its refusal code on either stream
+        raise RuntimeError(f"orca exit {done.returncode}: {why}")
 
 
 def maybe_alert(report: dict, out_dir: Path, orchestrators: Path, *, sender=None) -> dict:
