@@ -95,13 +95,16 @@ There is no Makefile or `package.json`; `pyproject.toml` (Python 3.10+),
 same in bash and PowerShell (only the `env` prefix differs).
 
 ```bash
-python -m pip install -e ".[dev,mcp,capture,security]"
+python -m pip install -e ".[dev,mcp,capture,security,postgres]" setuptools
 memorymaster --json demo
 python -m pytest tests/test_public_demo.py -q
 python -m pytest tests/ -m "not ml"
 python scripts/bulk_check.py --fast
 ```
 
+- The `postgres` extra and `setuptools` are needed only so the full suite can
+  collect (Python 3.12+ venvs ship without `setuptools`); PostgreSQL itself is
+  not required, its tests skip without a DSN.
 - `tests/ -m "not ml"` is the full suite; embedding/vector tests run apart with
   `-m ml` (needs the `ml`/`vector` extras), as `pytest.ini` explains.
   `nox -s unit` and `nox -s ml` wrap the same two runs.
