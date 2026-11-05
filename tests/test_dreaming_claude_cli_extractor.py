@@ -206,3 +206,44 @@ def test_claude_extractor_is_a_consolidation_fallback(tmp_path):
     assert (result.usage.provider, result.usage.model) == ("claude", "haiku")
     assert (result.usage.input_tokens, result.usage.output_tokens) == (11, 3)
     assert seen[0][4]["MEMORYMASTER_INTERNAL_RUN"] == "1"  # the headless child must not be recaptured
+
+
+def test_cli_failure_carries_a_sanitized_bounded_excerpt_and_outcome(tmp_path):
+    secret = "sk-ant-api03-" + "A" * 40
+    stdout = json.dumps({"type": "result", "is_error": True, "result": f"weird failure {secret} " + "x " * 300})
+    with pytest.raises(ProviderCallError) as caught:
+        _extractor(tmp_path, stdout, returncode=1, stderr="line\nbreak").extract(MESSAGES, scope="project:x", capture_hash="h1")
+    message = str(caught.value)
+    assert message.startswith("Claude CLI extraction failed with exit 1: weird failure")
+    assert secret not in message and "\n" not in message
+    assert len(message.split(": ", 1)[1]) <= 200
+    assert caught.value.outcome == "cli_error" and caught.value.http_status == 0
+
+
+@pytest.mark.parametrize("text", [
+    "Claude AI usage limit reached|1760000000", "API Error: 529 overloaded_error", "rate limit exceeded",
+    "Credit balance is too low",
+])
+def test_usage_limit_overload_and_rate_limit_are_provider_wide_429(tmp_path, text):
+    envelope = json.dumps({"type": "result", "is_error": True, "result": text})
+    with pytest.raises(ProviderCallError) as caught:
+        _extractor(tmp_path, envelope, returncode=1).extract(MESSAGES, scope="project:x", capture_hash="h1")
+    assert not isinstance(caught.value, ProviderConfigError)
+    assert caught.value.http_status == 429 and caught.value.outcome == "cli_error"
+    assert text.split("|")[0][:20] in str(caught.value)
+
+
+def test_expired_oauth_token_is_a_config_error(tmp_path):
+    envelope = json.dumps({"type": "result", "is_error": True, "result": "OAuth token has expired"})
+    with pytest.raises(ProviderConfigError) as caught:
+        _extractor(tmp_path, envelope, returncode=1).extract(MESSAGES, scope="project:x", capture_hash="h1")
+    assert caught.value.reason == "unauthorized"
+
+
+def test_timeout_and_unparseable_have_their_own_outcome(tmp_path):
+    with pytest.raises(ProviderCallError) as caught:
+        _extractor(tmp_path, exc=subprocess.TimeoutExpired("claude", 5)).extract(MESSAGES, scope="project:x", capture_hash="h1")
+    assert caught.value.outcome == "timeout"
+    with pytest.raises(ProviderOutputError) as caught:
+        _extractor(tmp_path, "not json at all").extract(MESSAGES, scope="project:x", capture_hash="h1")
+    assert caught.value.outcome == "unparseable"

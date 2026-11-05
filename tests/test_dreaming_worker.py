@@ -1823,16 +1823,16 @@ def test_claude_fallback_is_not_stopped_by_the_daily_consolidate_caps(tmp_path):
 
 
 @pytest.mark.parametrize("hung_call", [1, 2])
-@pytest.mark.parametrize("error_name", ["TimeoutError", "TimeoutExpired"])
-def test_fallback_timeout_still_opens_breaker(tmp_path, hung_call, error_name):
-    import subprocess
+@pytest.mark.parametrize("error_name", ["TimeoutError", "ConnectionError"])
+def test_fallback_failure_still_opens_breaker(tmp_path, hung_call, error_name):
+    # T-2123: a TimeoutExpired fallback hang is soft (tests at the end of this file); other fallback failures break.
 
     service = _service(tmp_path)
     ledger = DreamLedger(tmp_path / "capture.db")
     for i in range(3):
         _extracted_capture(ledger, session_hash=f"s{i}", candidate_id=f"c{i}")
     calls = []
-    error = TimeoutError("fixture") if error_name == "TimeoutError" else subprocess.TimeoutExpired("fixture", 90)
+    error = TimeoutError("fixture") if error_name == "TimeoutError" else ConnectionError("fixture")
     extractor = _gemini_extractor(_transport_raises(error), [])
     summary = DreamWorker(ledger, service, extractor, _agy_consolidator(tmp_path, _agy_hangs_on_calls({hung_call}), calls),
                           config=DreamConfig(max_consolidate_candidates=1, jev_triage_enabled=False),
@@ -1907,3 +1907,100 @@ def test_t2077_m7_a_budget_deferral_reopens_released_and_never_held_candidates()
     # without a budget deferral only the released-undecided candidates reopen
     plain = DreamWorker._reopened({**row, "deferred_reason": None})
     assert [p["candidate_id"] for p in plain["released"]] == ["a"]
+
+
+# --- T-2211: a Claude CLI outage is availability, not a charge against the capture ---------
+
+def _claude_failing_extractor(tmp_path: Path, stdout: str, returncode: int = 1, exc: Exception | None = None):
+    import subprocess
+
+    from memorymaster.dreaming.providers import ClaudeCliExtractor
+
+    def runner(command, prompt, timeout, cwd, env):
+        if exc is not None:
+            raise exc
+        return subprocess.CompletedProcess(command, returncode, stdout, "")
+
+    return ClaudeCliExtractor(command="claude-fixture", runner=runner, work_dir=tmp_path / "claude")
+
+
+def test_claude_usage_limit_defers_the_capture_without_charging_it(tmp_path: Path) -> None:
+    import json
+
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+    stdout = json.dumps({"type": "result", "is_error": True, "result": "Claude AI usage limit reached"})
+
+    DreamWorker(ledger, service, _claude_failing_extractor(tmp_path, stdout), _NoCall(),
+                config=DreamConfig(), now=lambda: NOW).run(apply_candidates=False)
+
+    capture = ledger.get_capture(capture_id)
+    assert (capture["state"], capture["error_count"]) == ("retryable", 0)
+    assert "usage limit reached" in capture["last_error"]
+    with ledger._connect() as conn:
+        assert [tuple(r) for r in conn.execute("SELECT outcome, http_status FROM dream_provider_usage")] == [("cli_error", 429)]
+
+
+@pytest.mark.parametrize("kind", ["timeout", "cli_error", "unparseable"])
+def test_claude_failures_record_a_specific_outcome(tmp_path: Path, kind: str) -> None:
+    import subprocess
+
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    _capture(ledger)
+    extractor = {
+        "timeout": lambda: _claude_failing_extractor(tmp_path, "", exc=subprocess.TimeoutExpired("claude", 5)),
+        "cli_error": lambda: _claude_failing_extractor(tmp_path, "boom"),
+        "unparseable": lambda: _claude_failing_extractor(tmp_path, "not json", returncode=0),
+    }[kind]()
+
+    DreamWorker(ledger, service, extractor, _NoCall(), config=DreamConfig(), now=lambda: NOW).run(apply_candidates=False)
+
+    with ledger._connect() as conn:
+        assert [row[0] for row in conn.execute("SELECT outcome FROM dream_provider_usage")] == [kind]
+
+
+# --- T-2123: a hung consolidation fallback does not open the breaker for the rest of the run -------
+
+def test_a_hung_fallback_restores_the_primary_and_defers_instead_of_opening_the_breaker(tmp_path: Path) -> None:
+    import subprocess
+
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    ids = [_extracted_capture(ledger, session_hash=f"s{i}", candidate_id=f"c{i}") for i in range(3)]
+    extractor = _gemini_extractor(_transport_raises(subprocess.TimeoutExpired("fixture", 90)), [])
+    calls: list = []
+    primary = _agy_consolidator(tmp_path, _agy_hangs_on_calls({1}), calls)
+    worker = DreamWorker(ledger, service, extractor, primary,
+                         config=DreamConfig(max_consolidate_candidates=1, jev_triage_enabled=False), now=lambda: NOW)
+
+    summary = worker.run(apply_candidates=False)
+
+    assert summary["consolidate_breaker"] is None
+    assert summary["consolidate_hung_calls"] == 2
+    assert summary["consolidated"] == 2 and summary["deferred_consolidate_provider"] == 1
+    assert len(calls) == 3  # the primary answered the items after the hung batch
+    assert worker.consolidator is primary
+    states = sorted(ledger.get_capture(i)["state"] for i in ids)
+    assert states == ["consolidated", "consolidated", "extracted"]
+
+
+def test_hung_calls_are_capped_at_two_per_run_then_the_breaker_opens(tmp_path: Path) -> None:
+    import subprocess
+
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    for i in range(4):
+        _extracted_capture(ledger, session_hash=f"s{i}", candidate_id=f"c{i}")
+    extractor = _gemini_extractor(_transport_raises(subprocess.TimeoutExpired("fixture", 90)), [])
+    calls: list = []
+    primary = _agy_consolidator(tmp_path, _agy_hangs_on_calls({1, 2, 3}), calls)
+
+    summary = DreamWorker(ledger, service, extractor, primary,
+                          config=DreamConfig(max_consolidate_candidates=1, jev_triage_enabled=False),
+                          now=lambda: NOW).run(apply_candidates=False)
+
+    assert summary["consolidate_breaker"] == "TimeoutExpired"
+    assert summary["consolidate_hung_calls"] == 2
+    assert len(calls) == 2  # primary hung (-> fallback hung), then the primary hung again: breaker

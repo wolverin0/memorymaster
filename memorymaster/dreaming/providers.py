@@ -168,6 +168,9 @@ _GEMINI_CANDIDATE_SCHEMA = {
 
 
 class ProviderCallError(RuntimeError):
+    # Free-text ``dream_provider_usage.outcome`` the worker records for a failed call.
+    outcome = "error"
+
     def __init__(self, message: str, *, http_status: int = 0) -> None:
         super().__init__(message)
         self.http_status = http_status
@@ -180,6 +183,8 @@ class ProviderOutputError(ProviderCallError, ValueError):
     ValueError-based semantic retry bound applies. Transport, configuration
     and availability failures stay plain ProviderCallError (transient).
     """
+
+    outcome = "unparseable"
 
 
 class ProviderConfigError(ProviderCallError):
@@ -308,6 +313,14 @@ def _json_object(raw: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ProviderOutputError("provider JSON response must be an object")
     return parsed
+
+
+def _excerpt(text: str, limit: int = 200) -> str:
+    """Single-line, secret-redacted, bounded excerpt of CLI output for an error message."""
+    from memorymaster.core.security import sanitize_persisted_text
+
+    redacted, _ = sanitize_persisted_text(" ".join(text.split()))
+    return redacted[:limit]
 
 
 def _default_command_runner(
@@ -898,7 +911,15 @@ class ClaudeCliExtractor:
 
     provider = "claude"
     uncapped_daily = True
-    _AUTH_FAILURE = re.compile(r"/login|invalid api key|authentication_error|not logged in", re.IGNORECASE)
+    _AUTH_FAILURE = re.compile(
+        r"/login|invalid api key|authentication_error|not logged in|oauth token.{0,40}expired|token has expired",
+        re.IGNORECASE,
+    )
+    # Subscription usage limit, overload or rate limit: nothing about the capture, so provider-wide (429).
+    _LIMIT_FAILURE = re.compile(
+        r"usage limit|limit reached|rate[ _-]?limit|overloaded|too many requests|credit balance|(?:429|529)",
+        re.IGNORECASE,
+    )
 
     def __init__(
         self,
@@ -961,12 +982,25 @@ class ClaudeCliExtractor:
         except FileNotFoundError as exc:
             raise ProviderConfigError("Claude CLI is not installed or not on PATH", reason="cli_missing") from exc
         except subprocess.TimeoutExpired as exc:
-            raise ProviderCallError("Claude CLI extraction timed out") from exc
+            timed_out = ProviderCallError("Claude CLI extraction timed out")
+            timed_out.outcome = "timeout"
+            raise timed_out from exc
         raw, input_tokens, output_tokens, is_error = self._response(completed.stdout or "")
         if completed.returncode != 0 or is_error:
-            if self._AUTH_FAILURE.search(f"{raw}\n{completed.stderr or ''}"):
+            output = f"{raw}\n{completed.stderr or ''}"
+            if self._AUTH_FAILURE.search(output):
                 raise ProviderConfigError("Claude CLI is not authenticated", reason="unauthorized")
-            raise ProviderCallError(f"Claude CLI extraction failed with exit {completed.returncode}")
+            detail = _excerpt(output)
+            if self._LIMIT_FAILURE.search(output):
+                limited = ProviderCallError(
+                    f"Claude CLI usage limit, overload or rate limit (exit {completed.returncode}): {detail}",
+                    http_status=429,
+                )
+                limited.outcome = "cli_error"
+                raise limited
+            failed = ProviderCallError(f"Claude CLI extraction failed with exit {completed.returncode}: {detail}")
+            failed.outcome = "cli_error"
+            raise failed
         if input_tokens is None:
             input_tokens = self.token_counter(prompt)
         if output_tokens is None:

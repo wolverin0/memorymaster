@@ -818,7 +818,8 @@ class DreamLedger:
     ) -> dict[str, Any]:
         queue = {str(row[0]): int(row[1]) for row in conn.execute("SELECT state, COUNT(*) FROM dream_captures GROUP BY state")}
         last = conn.execute("SELECT * FROM dream_runs ORDER BY started_at DESC LIMIT 1").fetchone()
-        usage_sql = """SELECT provider, COUNT(*), SUM(structured_valid), SUM(input_tokens), SUM(output_tokens), SUM(CASE WHEN http_status=429 THEN 1 ELSE 0 END)
+        usage_sql = """SELECT provider, COUNT(*), SUM(structured_valid), SUM(input_tokens), SUM(output_tokens), SUM(CASE WHEN http_status=429 THEN 1 ELSE 0 END),
+            SUM(CASE WHEN outcome IN ('error','timeout','cli_error') THEN 1 ELSE 0 END)
             FROM dream_provider_usage {where_clause} GROUP BY provider"""
         lifetime_usage = conn.execute(usage_sql.format(where_clause="")).fetchall()
         window_start = current - timedelta(hours=max(1, provider_window_hours))
@@ -870,13 +871,17 @@ class DreamLedger:
 
     @staticmethod
     def _provider_stats(rows: list[sqlite3.Row]) -> dict[str, dict[str, Any]]:
+        # structured_yield is output quality over calls that were delivered; availability is the share
+        # of calls that were not a transport/CLI failure (T-2211). An outage must not read as bad quality.
         return {
             str(row[0]): {
                 "calls": int(row[1]),
-                "structured_yield": float(row[2] or 0) / max(1, int(row[1])),
+                "structured_yield": float(row[2] or 0) / max(1, int(row[1]) - int(row[6] or 0)),
                 "input_tokens": int(row[3] or 0),
                 "output_tokens": int(row[4] or 0),
                 "http_429": int(row[5] or 0),
+                "error_calls": int(row[6] or 0),
+                "availability": (int(row[1]) - int(row[6] or 0)) / max(1, int(row[1])),
             }
             for row in rows
         }
@@ -898,8 +903,10 @@ class DreamLedger:
         if last is None or str(last["heartbeat_at"]) < _iso(now - timedelta(minutes=max(1, interval_minutes) * 2)):
             warnings.append("scheduler_stale")
         for provider, stats in providers.items():
-            if stats["calls"] >= 10 and stats["structured_yield"] < 0.9:
+            if stats["calls"] - stats["error_calls"] >= 10 and stats["structured_yield"] < 0.9:
                 warnings.append(f"{provider}_structured_yield_low")
+            if stats["calls"] >= 10 and stats["availability"] < 0.9:
+                warnings.append(f"{provider}_availability_low")
         return warnings
 
     def prune(

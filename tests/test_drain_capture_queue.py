@@ -66,6 +66,24 @@ def test_an_open_breaker_stops_the_drain_after_that_batch() -> None:
     assert report["stop_reason"] == "breaker_open" and report["batches"] == 1
 
 
+def test_a_hung_call_breaker_is_soft_and_only_two_in_a_row_stop_the_drain() -> None:
+    """T-2123: `TimeoutExpired` means one hung call, not a dead provider: retry the next batch."""
+    queue = Queue(3000, per_batch=0, age_h=200.0)
+    hung = {**OK, "errors": 1, "consolidate_breaker": "TimeoutExpired"}
+    report = run(queue, run_batch=lambda: queue.batch(hung))
+    assert report["stop_reason"] == "breaker_open" and report["batches"] == 2
+
+
+def test_a_healthy_batch_resets_the_soft_breaker_streak() -> None:
+    queue = Queue(3000, per_batch=0, age_h=200.0)
+    results = iter([
+        {**OK, "consolidate_breaker": "TimeoutExpired"}, OK,
+        {**OK, "consolidate_breaker": "TimeoutExpired"}, OK, {**OK, "consolidate_breaker": "open"},
+    ])
+    report = run(queue, run_batch=lambda: queue.batch(next(results)))
+    assert report["stop_reason"] == "breaker_open" and report["batches"] == 5
+
+
 @pytest.mark.parametrize("key", ["deferred_extract_budget", "deferred_consolidate_budget"])
 def test_a_daily_cap_deferral_stops_the_drain(key: str) -> None:
     queue = Queue(3000)

@@ -242,6 +242,8 @@ def test_status_separates_lifetime_and_recent_provider_yield(tmp_path: Path) -> 
                 "input_tokens": 100,
                 "output_tokens": 50,
                 "http_429": 0,
+                "error_calls": 0,
+                "availability": 1.0,
             },
         },
     }
@@ -281,3 +283,45 @@ def test_read_status_handles_pre_dream_capture_database_without_migrating(tmp_pa
     with sqlite3.connect(path) as conn:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert tables == {"existing_capture_state"}
+
+
+def test_outage_lowers_availability_not_structured_yield(tmp_path: Path) -> None:
+    """T-2211: a CLI outage (error/timeout/cli_error calls) is availability; quality is over delivered calls."""
+    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
+    ledger = DreamLedger(tmp_path / "dream.db")
+    run_id = ledger.start_run(False, "haiku", "glm-5.2", now=now)
+    outcomes = ["ok"] * 10 + ["cli_error"] * 20 + ["timeout"] * 5 + ["error"] * 5
+    for index, outcome in enumerate(outcomes):
+        ledger.record_provider_call(
+            run_id, provider="claude", model="haiku", outcome=outcome, latency_ms=100,
+            structured_valid=outcome == "ok", input_tokens=10, output_tokens=5,
+            http_status=200, now=now - timedelta(minutes=index),
+        )
+
+    status = ledger.status(now=now, interval_minutes=60)
+    stats = status["providers_lifetime"]["claude"]
+
+    assert stats["calls"] == 40 and stats["error_calls"] == 30
+    assert stats["structured_yield"] == 1.0  # of the 10 delivered calls
+    assert stats["availability"] == 0.25
+    assert "claude_availability_low" in status["warnings"]
+    assert "claude_structured_yield_low" not in status["warnings"]
+
+
+def test_unparseable_output_still_counts_against_structured_yield(tmp_path: Path) -> None:
+    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
+    ledger = DreamLedger(tmp_path / "dream.db")
+    run_id = ledger.start_run(False, "haiku", "glm-5.2", now=now)
+    for index in range(12):
+        ledger.record_provider_call(
+            run_id, provider="claude", model="haiku", outcome="ok" if index < 6 else "unparseable",
+            latency_ms=100, structured_valid=index < 6, input_tokens=10, output_tokens=5,
+            http_status=200, now=now - timedelta(minutes=index),
+        )
+
+    status = ledger.status(now=now, interval_minutes=60)
+
+    assert status["providers_lifetime"]["claude"]["structured_yield"] == 0.5
+    assert status["providers_lifetime"]["claude"]["availability"] == 1.0
+    assert "claude_structured_yield_low" in status["warnings"]
+    assert "claude_availability_low" not in status["warnings"]
