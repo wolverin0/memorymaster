@@ -80,6 +80,8 @@ class DreamProviderStopped(RuntimeError):
 # each batch under it or raises DreamPromptTooLarge, which counts (review B1).
 # shortcut: fixed per-capture extractor-call bound per run; make it config when a capture needs more.
 MAX_EXTRACT_WINDOWS_PER_RUN = 4
+# T-2123: hung consolidation calls (primary or fallback) one run tolerates before the breaker opens.
+MAX_CONSOLIDATE_HUNG_CALLS = 2
 _PROVIDER_WIDE_HTTP = frozenset({401, 403, 408, 429})
 _TRANSIENT_ERRORS = (TimeoutError, ConnectionError, subprocess.TimeoutExpired, AntigravityError)
 _TRANSPORT_CAUSES = (OSError, http.client.HTTPException, subprocess.TimeoutExpired, AntigravityError)
@@ -873,7 +875,10 @@ class DreamWorker:
                     fallback = consolidation_fallback(self.extractor)
                     if fallback is not None and (fallback.provider, fallback.model) == (consolidator.provider, consolidator.model):
                         fallback = None
-                if fallback is not None or (
+                fallback_hung = timed_out and consolidator is not self.consolidator and hung < MAX_CONSOLIDATE_HUNG_CALLS
+                if fallback is not None and hung >= MAX_CONSOLIDATE_HUNG_CALLS:
+                    fallback = None  # too many hung calls this run: the breaker opens as before
+                if fallback is not None or fallback_hung or (
                     timed_out and consolidator is self.consolidator and answered > 0 and hung == 0
                 ):
                     # T-1793: switch to the configured extractor on the first
@@ -884,6 +889,10 @@ class DreamWorker:
                     summary["consolidate_hung_calls"] = hung
                     summary["errors"] += 1
                     LOGGER.warning("Dreaming consolidation call hung, continuing the run: %s", str(exc)[:300])
+                    if fallback_hung:
+                        # T-2123: the fallback hung too. That says nothing durable about the provider:
+                        # restore the primary for the next item and leave this batch for a later run.
+                        consolidator = self.consolidator
                     if fallback is not None:
                         consolidator = fallback
                         summary["consolidate_fallback"] = fallback.provider
@@ -1336,7 +1345,7 @@ class DreamWorker:
         # daily token budget sees the failure.
         reported = int(getattr(error, "input_tokens", 0) or 0)
         self.ledger.record_provider_call(run_id, provider=provider, model=model,
-            outcome="error", latency_ms=0, structured_valid=False,
+            outcome=str(getattr(error, "outcome", "error")), latency_ms=0, structured_valid=False,
             input_tokens=reported or input_tokens,
             output_tokens=int(getattr(error, "output_tokens", 0) or 0),
             http_status=int(getattr(error, "http_status", 0)), now=self.now())

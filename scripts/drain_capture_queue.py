@@ -79,7 +79,13 @@ def _under(state: dict, stop_below: int, max_age_h: float) -> bool:
 _HARD_STOPS = ("worker_busy", "breaker_open", "run_failed")
 
 
-def _batch_stop(result: dict) -> str | None:
+# T-2123: a hung consolidation call (breaker "TimeoutExpired") is soft: the next batch retries, and only
+# this many consecutive such batches end the drain.
+_SOFT_BREAKER = "TimeoutExpired"
+MAX_SOFT_BREAKER_BATCHES = 2
+
+
+def _batch_stop(result: dict, soft_breakers: int = 0) -> str | None:
     """Why a finished batch ends the drain, or None to continue.
 
     Precedence: worker_busy > breaker_open > run_failed > daily_budget > no_progress. A daily-cap deferral means
@@ -89,7 +95,10 @@ def _batch_stop(result: dict) -> str | None:
     """
     if result.get("reason") == "worker_busy":
         return "worker_busy"
-    if result.get("consolidate_breaker"):
+    breaker = result.get("consolidate_breaker")
+    if breaker == _SOFT_BREAKER and soft_breakers < MAX_SOFT_BREAKER_BATCHES:
+        return None
+    if breaker:
         return "breaker_open"
     progress = max(int(result.get("extracted") or 0), int(result.get("consolidated") or 0), int(result.get("applied") or 0))
     if not result.get("ok", True) or int(result.get("errors") or 0) > progress:
@@ -119,6 +128,7 @@ def drain(
     totals = {"extracted": 0, "consolidated": 0, "applied": 0, "errors": 0}
     batches = 0
     reason = ""
+    soft_breakers = 0
     current = before
     while True:
         if _under(current, stop_below, max_age_h):
@@ -144,7 +154,8 @@ def drain(
                                                                       "deferred_extract_budget",
                                                                       "deferred_consolidate_budget")},
              "queue": current})
-        reason = _batch_stop(result) or ""
+        soft_breakers = soft_breakers + 1 if result.get("consolidate_breaker") == _SOFT_BREAKER else 0
+        reason = _batch_stop(result, soft_breakers) or ""
         if reason not in _HARD_STOPS and _under(current, stop_below, max_age_h):
             reason = "under_threshold"
         if reason:
