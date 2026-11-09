@@ -6,7 +6,6 @@ that was months old and not the lane's. Disposable fixtures only; never the auth
 """
 from __future__ import annotations
 
-import asyncio
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -141,26 +140,6 @@ def test_bound_zero_disables_the_age_check_and_env_sets_the_default(monkeypatch)
     assert active_tasks.select_active([old], now=NOW)[0]["id"] == "T-8"
     monkeypatch.setenv(active_tasks.MAX_AGE_ENV, "garbage")
     assert active_tasks.max_age_hours() == active_tasks.DEFAULT_MAX_AGE_HOURS
-
-
-def test_read_active_tasks_tool_does_not_return_the_stale_task(tmp_path):
-    """The MCP tool the look-ahead hook calls: the April task from the report is not 'active'."""
-    from memorymaster.surfaces import mcp_server
-
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    (vault / "active_tasks.md").write_text(
-        "## Task: extend recall hook\n```yaml\nstatus: in_progress\nowner: claude-l1\n"
-        "dispatched_at: 2026-04-29T01:00:00Z\n```\nold narrative\n\n"
-        "## Task: current work\n```yaml\nstatus: in_progress\nowner: claude-l1\n"
-        f"dispatched_at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}\n```\nnew narrative\n",
-        encoding="utf-8",
-    )
-    result = asyncio.run(mcp_server.mcp._tool_manager.call_tool("read_active_tasks", {"project_root": str(tmp_path)}))
-    assert result["ok"] is True
-    assert result["active_task"]["title"] == "current work"
-    assert [s["reason"] for s in result["skipped"]] == ["older than 48h"]
-    assert len(result["all_tasks"]) == 2
 
 
 def test_fresh_active_task_is_a_drop_in_for_a_hooks_own_parser(tmp_path):

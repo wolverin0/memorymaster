@@ -12,9 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
+from memorymaster.profile.project_repository import LEDGER_MAX_FILES
 
 PREFIX = "MEMORYMASTER_PROJECT_PROJECTION_"
 _refresh_cache: dict[tuple, tuple] = {}
+MAX_PROJECTS = 8  # allowlisted projects, and read-only db connections cached; the 4-CLI x 4-project matrix needs 4
 _connections: dict[str, sqlite3.Connection] = {}
 _rotation = 0
 
@@ -38,7 +40,7 @@ def load_project_configs() -> list:
         output = os.environ.get(PREFIX + "DIR", "")
         state = os.environ.get("MEMORYMASTER_PROJECT_SESSION_STATE_DIR", "")
         ledger = os.environ.get("MEMORYMASTER_PROJECT_LEDGER_TASKS_DIR", "")
-        if (not isinstance(mappings, list) or not 1 <= len(mappings) <= 3 or not epoch
+        if (not isinstance(mappings, list) or not 1 <= len(mappings) <= MAX_PROJECTS or not epoch
                 or len(epoch) > 128 or not output or not state
                 or not Path(output).is_absolute() or not Path(state).is_absolute()
                 or (ledger and not Path(ledger).is_absolute())):
@@ -176,7 +178,7 @@ def cheap_fingerprint(config) -> tuple:
     key = str(config.db_path.resolve())
     connection = _connections.get(key)
     if connection is None:
-        if len(_connections) >= 3:
+        if len(_connections) >= MAX_PROJECTS:
             _, previous = _connections.popitem()
             previous.close()
         connection = sqlite3.connect(config.db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=.025)
@@ -194,8 +196,8 @@ def cheap_fingerprint(config) -> tuple:
         files.append(stat(config.ledger_root))
     elif config.ledger_root:
         # Only configured JSON records, bounded before materializing a directory list.
-        paths = list(islice(config.ledger_root.glob("*.json"), 1025))
-        if len(paths) > 1024:
+        paths = list(islice(config.ledger_root.glob("*.json"), LEDGER_MAX_FILES + 1))
+        if len(paths) > LEDGER_MAX_FILES:
             raise ValueError("ledger_capacity")
         for path in sorted(paths):
             files.append((path.name, stat(path)))

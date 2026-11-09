@@ -900,7 +900,6 @@ MCP_TOOL_POLICIES: dict[str, McpToolPolicy] = {
     "query_memory": McpToolPolicy("query", team_enabled=True),
     "query_meta_decisions": McpToolPolicy("query"),
     "query_rules": McpToolPolicy("query"),
-    "read_active_tasks": McpToolPolicy("query"),
     "recall_analysis": McpToolPolicy("query"),
     "recompute_tiers": McpToolPolicy("steward"),
     "redact_claim_payload": McpToolPolicy("delete"),
@@ -2460,72 +2459,6 @@ if FastMCP is not None:
             "briefing": briefing or "",
             "scope": effective_scope,
             "elapsed_ms": int((_time.perf_counter() - t0) * 1000),
-        }
-
-    @mcp.tool()
-    def read_active_tasks(
-        project_root: str = ".",
-        cwd: str = "",
-        lane: str = "",
-        max_age_hours: float | None = None,
-    ) -> dict[str, Any]:
-        """Read and parse <project_root>/vault/active_tasks.md (or active_tasks.md at root).
-
-        Returns the active task pointer (first in_progress, falling back to first
-        pending) and the full task list. Goose-side equivalent of legacy
-        wezbridge/src/task-parser.cjs — used by recipes that need to know what
-        the user is currently working on. Stale or foreign tasks never become
-        ``active_task`` (T-1433): one older than ``max_age_hours`` (default 48,
-        env MEMORYMASTER_ACTIVE_TASK_MAX_AGE_HOURS, 0 disables), with an expired
-        lease, naming a ``cwd`` unrelated to the caller's ``cwd``, or an ``owner``
-        other than the caller's ``lane`` are listed under ``skipped`` instead.
-        Path resolution:
-            1. <project_root>/vault/active_tasks.md
-            2. <project_root>/active_tasks.md
-            3. None → returns ok=False with reason
-
-        Output shape:
-            {
-              "ok": True,
-              "active_task": {"id": "T-001", "title": "...", "status": "in_progress",
-                              "narrative": "...", "yaml_block": {...}}  | None,
-              "all_tasks": [ ... same shape ... ],
-              "skipped": [{"id": "T-001", "reason": "older than 48h"}, ...],
-              "source_file": "<resolved path>",
-            }
-        """
-        from pathlib import Path as _Path
-        mcp_path_policy.validate_workspace_path(project_root, actor="mcp_caller")
-        candidates = [
-            _Path(project_root) / "vault" / "active_tasks.md",
-            _Path(project_root) / "active_tasks.md",
-        ]
-        source = next((c for c in candidates if c.is_file()), None)
-        if source is None:
-            return {"ok": False, "reason": "no active_tasks.md found", "candidates": [str(c) for c in candidates]}
-
-        try:
-            text = source.read_text(encoding="utf-8")
-        except Exception as exc:
-            return {"ok": False, "reason": f"read failed: {exc}", "source_file": str(source)}
-
-        from memorymaster.recall.active_tasks import parse_tasks, select_active
-
-        all_tasks = parse_tasks(text)
-        try:
-            mtime = source.stat().st_mtime
-        except OSError:
-            mtime = None
-        active, skipped = select_active(
-            all_tasks, file_mtime=mtime, max_age=max_age_hours, cwd=cwd or project_root, lane=lane,
-        )
-
-        return {
-            "ok": True,
-            "active_task": active,
-            "all_tasks": all_tasks,
-            "skipped": skipped,
-            "source_file": str(source),
         }
 
     @mcp.tool()

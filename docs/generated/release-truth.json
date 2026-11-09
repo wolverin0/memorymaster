@@ -147,7 +147,7 @@
   "counts": {
     "cli_commands": 132,
     "console_entrypoints": 9,
-    "mcp_tools": 51,
+    "mcp_tools": 50,
     "ops_cli_commands": 5
   },
   "feature_profile_matrix": {
@@ -214,7 +214,6 @@
     "query_memory",
     "query_meta_decisions",
     "query_rules",
-    "read_active_tasks",
     "recall",
     "recall_analysis",
     "recall_stats",

@@ -9,7 +9,7 @@ Total: 349 variables.
 
 | Variable | Referenced in |
 |---|---|
-| `MEMORYMASTER_ACTIVE_TASK_MAX_AGE_HOURS` | `memorymaster/recall/active_tasks.py`, `memorymaster/surfaces/mcp_server.py` |
+| `MEMORYMASTER_ACTIVE_TASK_MAX_AGE_HOURS` | `memorymaster/recall/active_tasks.py` |
 | `MEMORYMASTER_AGY_COMMAND` | `memorymaster/core/antigravity_client.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_AGY_HOOK_INTERNAL` | `memorymaster/core/antigravity_client.py`, `memorymaster/surfaces/agy_hooks.py` |
 | `MEMORYMASTER_AGY_MODEL` | `memorymaster/core/antigravity_client.py` |

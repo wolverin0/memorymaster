@@ -28,7 +28,7 @@ All five switches default off. A child switch cannot bypass the master gate:
 | `MEMORYMASTER_PROJECT_PROJECTION_COCKPIT` | Reserved external consumer activation |
 
 `MEMORYMASTER_PROJECT_PROJECTION_PROJECTS` defaults to an empty JSON list.
-Each of at most three mappings supplies `scope`, `context_key`, `project_root`,
+Each of at most eight mappings supplies `scope`, `context_key`, `project_root`,
 `db_path`, explicit `tenant_id` (JSON null means only the unset legacy tenant),
 optional `aliases`, `ledger_repo` and `ledger_filtered: true`. The latter asserts
 that the lane supplied an authorized visibility-filtered export. Blind/private
@@ -74,7 +74,10 @@ decisions reserve space before optional prose. Mandatory omissions visibly
 block M2 readiness. The public manifest excludes protected source coverage.
 
 Builder snapshots cap all watched project rows at 512, citations at 2,048,
-cards at 256, configured ledger records at 1,024 and source bytes at 8 MiB.
+cards at 1,024, configured ledger records at 4,096 and source bytes at 8 MiB. The ledger directory
+holds at most 4,096 JSON files (32 MiB scanned): cards in an open state and cards modified in the
+last 30 days are kept, other closed cards are skipped, and a malformed file is skipped and counted
+(`ledger_malformed:N`, projection incomplete) rather than failing the ledger.
 The all-status watch cap is deliberately stricter than counting eligible
 claims: candidates and unsupported rows may later become eligible. An exceeded
 cap is partial. Reader support limits are 64 claims, 256 citations and 2 MiB
@@ -121,7 +124,7 @@ process restarts. Temporal boundaries defeat the cheap cache. An unchanged
 SKIP does not rewrite Markdown or `checked_at`; successful non-SKIP validation
 may update manifest freshness without rewriting Markdown. Changes rebuild.
 Source failure or budget/lock refusal leaves the successful watermark intact.
-Refresh rotates at most three pilot contexts under a cooperative 750 ms tick
+Refresh rotates at most eight pilot contexts under a cooperative 750 ms tick
 budget. A validation older than sixty minutes is withheld pending refresh.
 
 ## Activation and rollback
