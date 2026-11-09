@@ -20,7 +20,7 @@ from memorymaster.core.generated_artifacts import (
     GENERATED_CLOSER as CLOSER,
 )
 from memorymaster.profile.egress import prepare_claim_egress
-from memorymaster.profile.project_brief import BRIEF_MAX_BYTES, cut_bottom
+from memorymaster.profile.project_brief import BRIEF_MAX_BYTES, collect_brief_inputs, cut_bottom, render_brief
 from memorymaster.profile.project_repository import (
     _display,
     digest,
@@ -49,6 +49,8 @@ class ProjectProjectionConfig:
     aliases: tuple[str, ...] = ()
     enabled: bool = False
     budget_bytes: int = 2200
+    brief: bool = False  # publish the project brief with the projection
+    due_measurements: Path | None = None  # read-only due-measurements.json; None = source unavailable
 
     def __post_init__(self) -> None:
         if str(self.db_path).startswith(("postgres:", "postgresql:")):
@@ -65,7 +67,7 @@ class ProjectProjectionConfig:
             raise ValueError("invalid aliases")
         if not 400 <= self.budget_bytes <= 2200:
             raise ValueError("project cap must be 400..2200 UTF-8 bytes")
-        for name in ("db_path", "project_root", "output_root", "state_root", "ledger_root"):
+        for name in ("db_path", "project_root", "output_root", "state_root", "ledger_root", "due_measurements"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, Path(value).resolve())
@@ -436,9 +438,14 @@ def build_project_projection(config: ProjectProjectionConfig) -> ProjectProjecti
     if any(diagnostic.startswith("ledger_") for diagnostic in diagnostics):
         diagnostics.append("m2_not_ready:ledger_incomplete")
     generation = digest([config.scope, config.context_key, config.epoch, snapshot["read_at"], snapshot["coverage"]])
+    brief = None
+    if config.brief:
+        now = datetime.fromisoformat(snapshot["read_at"].replace("Z", "+00:00"))
+        brief = render_brief(collect_brief_inputs(config, snapshot["items"], diagnostics, now))
     return render_project_projection(
         config,
         ordered,
+        brief=brief,
         generation=generation,
         read_at=snapshot["read_at"],
         coverage=snapshot["coverage"],

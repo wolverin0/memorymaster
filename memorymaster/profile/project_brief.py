@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-from memorymaster.profile.project_repository import _display
+from memorymaster.profile.project_repository import (
+    DUE_SLUGS,
+    _display,
+    load_brief_claims,
+    load_due_failures,
+)
 
 BRIEF_MAX_BYTES = 1600
 STALE_DAYS = 14
@@ -135,3 +140,28 @@ def render_brief(inputs: BriefInputs) -> str:
     while len(text.encode("utf-8")) > BRIEF_MAX_BYTES and NL in text:
         text = cut_bottom(text)
     return text
+
+
+def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], diagnostics: list[str],
+                         now: datetime) -> BriefInputs:
+    """Gather the brief's sources. Runs on the refresh path only, never in the SessionStart hook."""
+    cards = tuple(
+        {"id": item["support"]["id"], "state": item["support"]["state"], "title": item.get("title"),
+         "next_action": item.get("next_action"), "blocker": item.get("blocker"), "updated_at": item.get("updated_at")}
+        for key, item in items.items() if key.startswith("card:")
+    )
+    stamps = [t for t in (when(c["updated_at"]) for c in cards) if t]
+    claims, claims_ok = load_brief_claims(config, now=now)
+    decisions = tuple(Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["decision"])
+    failures = [Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["failure"]]
+    seen = [e.when for e in (*decisions, *failures) if e.when]
+    sources: dict[str, datetime | None | str] = {
+        "ledger": None if "ledger_unavailable" in diagnostics else max(stamps, default=EMPTY),
+        "claims": max(seen, default=EMPTY) if claims_ok else None,
+    }
+    if config.slug in DUE_SLUGS:
+        rows, mtime = load_due_failures(config.due_measurements) if config.due_measurements else (None, None)
+        failures += [Entry(r["when"], f"FAIL: {r['text']}", f"due:{r['id']}") for r in rows or ()]
+        sources["due"] = mtime
+    return BriefInputs(project=config.slug, as_of=now, cards=cards, decisions=decisions,
+                       failures=tuple(failures), sources=sources)

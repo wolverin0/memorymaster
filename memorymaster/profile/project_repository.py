@@ -216,7 +216,12 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
                     "version": selected["version"],
                     "state": selected["state"],
                 }
+                # Display-only brief fields. Deliberately outside `selected`: they must not move support.hash.
+                shown = {name: _display(row[name], 160) for name in ("next_action", "blocker")
+                         if isinstance(row.get(name), str) and row[name].strip() and _safe({name: row[name]})}
                 cards[card_id] = {
+                    **shown,
+                    "updated_at": row["updated_at"] if isinstance(row.get("updated_at"), str) else None,
                     "key": "card:" + card_id,
                     "section": "Open cards",
                     "text": f"{_display(card_id, 48)} [{_display(selected['state'], 24)}] {_display(selected['title'], 80)}",
@@ -244,6 +249,100 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
         except (OSError, ValueError, TypeError, KeyError):
             return {}, False, ["ledger_unavailable"]
     return {}, False, ["ledger_unavailable"]
+
+
+BRIEF_DECISION_TYPES = ("decision", "architecture_decision")
+BRIEF_FAILURE_TYPES = ("bug", "bug_cause", "gotcha")
+BRIEF_SCAN_ROWS = 60
+BRIEF_MAX_DUE_BYTES = 4 * 1024 * 1024
+
+
+def _claim_instant(row: dict) -> datetime | None:
+    name = "event_time" if row.get("event_time") else "created_at"
+    try:
+        return _parse_iso_strict(name, row.get(name)) if isinstance(row.get(name), str) else None
+    except ValueError:
+        return None
+
+
+def load_brief_claims(config: Any, *, now: datetime | None = None, per_kind: int = 3):
+    """Newest confirmed decision / failure claims for the brief: ({'decision': [...], 'failure': [...]}, ok).
+
+    Same trust gates as the projection (confirmed, public, unsuperseded, cited, temporally current, not
+    generated, `_safe`), but a narrow read-only query instead of the 512-claim full scan, so a large
+    project scope still yields a brief. Each row is {'id', 'when', 'text'}; failure text is `<type>: <text>`.
+    """
+    now = now or datetime.now(timezone.utc)
+    scopes = (config.scope, *config.aliases)
+    found: dict[str, list[dict]] = {"decision": [], "failure": []}
+    try:
+        with closing(sqlite3.connect(Path(config.db_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=0.025)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            deadline = time.monotonic() + 0.1
+            conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+            for kind, types in (("decision", BRIEF_DECISION_TYPES), ("failure", BRIEF_FAILURE_TYPES)):
+                marks = ",".join("?" for _ in types)
+                rows = conn.execute(
+                    "SELECT id,text,claim_type,predicate,source_agent,valid_from,valid_until,event_time,created_at "
+                    "FROM claims WHERE tenant_id IS ? AND scope IN (" + ",".join("?" for _ in scopes) + ") "
+                    "AND status='confirmed' AND COALESCE(visibility,'public')='public' AND replaced_by_claim_id IS NULL "
+                    f"AND (claim_type IN ({marks}) OR predicate IN ({marks})) "
+                    f"AND length(CAST(COALESCE(text,'') AS BLOB)) <= {MAX_FIELD_BYTES} "
+                    "AND EXISTS (SELECT 1 FROM citations WHERE citations.claim_id=claims.id) "
+                    "ORDER BY COALESCE(event_time,created_at) DESC, id DESC LIMIT ?",
+                    [config.tenant_id, *scopes, *types, *types, BRIEF_SCAN_ROWS],
+                ).fetchall()
+                for row in map(dict, rows):
+                    label = row["claim_type"] if row["claim_type"] in types else row["predicate"]
+                    if (row["source_agent"] in GENERATED_SOURCES or not str(row["text"] or "").strip()
+                            or not _safe({k: v for k, v in row.items() if k != "id"})
+                            or not claim_is_temporally_current(
+                                SimpleNamespace(valid_from=row["valid_from"], valid_until=row["valid_until"]), now=now)):
+                        continue
+                    found[kind].append({"id": int(row["id"]), "when": _claim_instant(row),
+                                        "text": (f"{label}: " if kind == "failure" else "") + _display(row["text"], 110)})
+                floor = datetime.min.replace(tzinfo=timezone.utc)
+                found[kind] = sorted(found[kind], key=lambda r: (r["when"] or floor, r["id"]), reverse=True)[:per_kind]
+        return found, True
+    except (sqlite3.Error, OSError, ValueError, TypeError):
+        return {"decision": [], "failure": []}, False
+
+
+# shortcut: due-measurements rows carry no repo field, so only these slugs may show them; drop the gate
+# when Fleet adds `repo` to the file (T-2278 ask).
+DUE_SLUGS = frozenset({"memorymaster", "py-apps"})
+
+
+def load_due_failures(path: Path) -> tuple[list[dict] | None, datetime | None]:
+    """FAIL rows of the due-measurements file plus its mtime; (None, None) when missing/unreadable."""
+    try:
+        stat = Path(path).stat()
+        if stat.st_size > BRIEF_MAX_DUE_BYTES:
+            raise ValueError("due_measurements_size")
+        data = json.loads(Path(path).read_bytes())
+        rows = data["items"] if isinstance(data, dict) else data
+        if not isinstance(rows, list):
+            raise ValueError("due_measurements_shape")
+    except (OSError, ValueError, KeyError, RecursionError):
+        return None, None
+    failures = []
+    for row in rows:
+        result = row.get("result") if isinstance(row, dict) else None
+        if not (isinstance(result, str) and result.strip().startswith("FAIL") and isinstance(row.get("id"), str)):
+            continue
+        if not _safe({"id": row["id"], "result": result}):
+            continue
+        instant = None
+        for name in ("done_at", "checked_at"):
+            try:
+                instant = _parse_iso_strict(name, row[name]) if isinstance(row.get(name), str) else None
+            except ValueError:
+                instant = None
+            if instant:
+                break
+        failures.append({"id": _display(row["id"], 48), "when": instant, "text": _display(result, 110)})
+    return failures, datetime.fromtimestamp(stat.st_mtime, timezone.utc)
 
 
 def _section(row: dict) -> str | None:
