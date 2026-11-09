@@ -582,8 +582,13 @@ def validate_persisted_metadata(fields: Mapping[str, object]) -> None:
 def sanitize_persisted_text(text: str) -> tuple[str, list[str]]:
     """Redact literal secrets and neutralize encoded secrets in content fields."""
     redacted, literal_findings = _redact(text)
-    findings = sorted(set(literal_findings + scan_text_for_findings(text)))
-    if findings and scan_text_for_findings(redacted):
+    scanned = scan_text_for_findings(text)
+    findings = sorted(set(literal_findings + scanned))
+    # `decoded_only`: a hit that only a decoded variant produced (e.g. a base64 blob wrapping a token).
+    # The literal pass may already have replaced the blob (base64_secret), so the rescan alone
+    # would miss it; the whole field is neutralized either way.
+    decoded_only = bool(set(scanned) - set(literal_findings))
+    if findings and (decoded_only or scan_text_for_findings(redacted)):
         redacted = "[REDACTED:encoded_secret]"
     return redacted, findings
 

@@ -6,6 +6,8 @@ swallow ordinary prose (hashes, long identifiers, money amounts, plain version n
 """
 from __future__ import annotations
 
+import base64
+
 import pytest
 
 from memorymaster.core.security import redact_text, sanitize_persisted_text, scan_text_for_findings
@@ -46,6 +48,15 @@ def test_base64_blob_is_neutralized_before_it_reaches_a_persisted_field() -> Non
     assert BASE64_SECRET not in sanitized
     assert "base64_secret" in findings
     assert "base64_secret" in scan_text_for_findings(BASE64_SECRET)
+
+
+def test_a_blob_that_decodes_to_a_known_secret_keeps_the_encoded_secret_contract() -> None:
+    """The decode path owns it: the whole field becomes [REDACTED:encoded_secret], not a bare blob marker."""
+    token = "gh" + "p_" + "".join(format((i * 7 + 3) % 16, "x") for i in range(40))
+    blob = base64.b64encode(token.encode()).decode()
+    sanitized, findings = sanitize_persisted_text(blob)
+    assert sanitized == "[REDACTED:encoded_secret]"
+    assert "github_token" in findings
 
 
 # --- argentine_dni ---------------------------------------------------------------------------------------------
