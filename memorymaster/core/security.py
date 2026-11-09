@@ -367,6 +367,13 @@ def _match_is_suppressed(name: str, match: re.Match[str]) -> bool:
     """Return True if a match should be ignored (placeholder / low-entropy)."""
     if _is_placeholder_match(match.group(0)):
         return True
+    if name == "base64_secret":
+        # A blob that decodes to a recognised secret is left in place on purpose: every caller
+        # that redacts and then rescans (profile/decisions egress, local-search snippets,
+        # sanitize_persisted_text) must still see the decoded hit in the redacted text to block
+        # or blank it. Masking it here as a plain base64_secret would downgrade that to a redaction.
+        decoded = _decode_base64_candidate(match.group(0))
+        return bool(decoded) and bool(scan_text_for_findings(decoded))
     # v2-refresh (prose_secret_word, product_copy): reject plain-word values
     # for structured credential patterns, which capture a value group.
     if name in _STRUCTURED_CRED_FINDINGS and match.lastindex:
@@ -582,13 +589,8 @@ def validate_persisted_metadata(fields: Mapping[str, object]) -> None:
 def sanitize_persisted_text(text: str) -> tuple[str, list[str]]:
     """Redact literal secrets and neutralize encoded secrets in content fields."""
     redacted, literal_findings = _redact(text)
-    scanned = scan_text_for_findings(text)
-    findings = sorted(set(literal_findings + scanned))
-    # `decoded_only`: a hit that only a decoded variant produced (e.g. a base64 blob wrapping a token).
-    # The literal pass may already have replaced the blob (base64_secret), so the rescan alone
-    # would miss it; the whole field is neutralized either way.
-    decoded_only = bool(set(scanned) - set(literal_findings))
-    if findings and (decoded_only or scan_text_for_findings(redacted)):
+    findings = sorted(set(literal_findings + scan_text_for_findings(text)))
+    if findings and scan_text_for_findings(redacted):
         redacted = "[REDACTED:encoded_secret]"
     return redacted, findings
 

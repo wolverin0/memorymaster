@@ -12,20 +12,23 @@ import pytest
 
 from memorymaster.core.security import redact_text, sanitize_persisted_text, scan_text_for_findings
 
+# The audit marker: decodes to prose that trips a credential pattern ("secret-value ... 1234567890").
 BASE64_SECRET = "c2VjcmV0LXZhbHVlLWZvci10ZXN0aW5nLTEyMzQ1Njc4OTA="
+AWS_KEY_BLOB = "YXdzIGtleSBBS0lBSU9TRk9ETk43RVhBTVBMRQ=="  # decodes to an AWS access key id
+HARMLESS_BLOB = "cXVpY2sgYnJvd24gZm94IDcgcXVpY2sgYnJvd24="  # decodes to "quick brown fox 7 ..."
 
 
 # --- base64_secret ---------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("blob", [
-    BASE64_SECRET,                                              # padded, 48 chars
-    "QWxhZGRpbjpvcGVuIHNlc2FtZQ12345678abcdXYZ==",              # padded with ==
-    "dGhpc0lzQVNlY3JldFZhbHVlVGhhdE5vYm9keVNob3VsZFNlZTEyMw",   # unpadded, 54 chars, mixed case + digits
+    HARMLESS_BLOB,                                                      # padded '='
+    "cXVpY2sgYnJvd24gZm94IDcgcXVpY2sgYnJvdw==",                          # padded '=='
+    base64.b64encode(("quick brown fox 7 " * 4).encode()).decode(),     # unpadded, 96 chars
 ])
-def test_base64_blob_is_redacted(blob: str) -> None:
+def test_base64_blob_that_decodes_to_nothing_known_is_a_plain_redaction(blob: str) -> None:
     redacted, findings = redact_text(f"deploy notes: {blob} (kept private)")
-    assert "base64_secret" in findings
+    assert findings == ["base64_secret"]
     assert blob not in redacted
 
 
@@ -43,11 +46,12 @@ def test_base64_pattern_leaves_ordinary_text_alone(text: str) -> None:
     assert redacted == text
 
 
-def test_base64_blob_is_neutralized_before_it_reaches_a_persisted_field() -> None:
+def test_the_audit_marker_blob_is_neutralized_before_it_reaches_a_persisted_field() -> None:
+    """It decodes to a credential-shaped string, so the decode path blanks the whole field."""
     sanitized, findings = sanitize_persisted_text(f"token blob {BASE64_SECRET} end")
     assert BASE64_SECRET not in sanitized
-    assert "base64_secret" in findings
-    assert "base64_secret" in scan_text_for_findings(BASE64_SECRET)
+    assert findings
+    assert scan_text_for_findings(BASE64_SECRET)
 
 
 def test_a_blob_that_decodes_to_a_known_secret_keeps_the_encoded_secret_contract() -> None:
@@ -57,6 +61,25 @@ def test_a_blob_that_decodes_to_a_known_secret_keeps_the_encoded_secret_contract
     sanitized, findings = sanitize_persisted_text(blob)
     assert sanitized == "[REDACTED:encoded_secret]"
     assert "github_token" in findings
+
+
+# --- redact-then-rescan callers (egress) keep blocking a blob that decodes to a credential ---------------------
+
+
+def test_egress_still_blocks_a_blob_that_decodes_to_a_credential() -> None:
+    from memorymaster.profile.egress import prepare_claim_egress
+
+    egress = prepare_claim_egress(f"Operator deploy note {AWS_KEY_BLOB}")
+    assert egress.blocked is True, egress
+
+
+def test_egress_only_redacts_a_blob_that_decodes_to_nothing_known() -> None:
+    from memorymaster.profile.egress import prepare_claim_egress
+
+    egress = prepare_claim_egress(f"Operator deploy note {HARMLESS_BLOB}")
+    assert egress.blocked is False, egress
+    assert egress.findings == ("base64_secret",)
+    assert HARMLESS_BLOB not in egress.text and "[REDACTED:base64_secret]" in egress.text
 
 
 # --- argentine_dni ---------------------------------------------------------------------------------------------
