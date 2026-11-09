@@ -36,17 +36,11 @@ import review_recall_citations  # noqa: E402  (sibling script; reused for the ci
 from memorymaster.core.capture_control import capture_state_path  # noqa: E402
 from memorymaster.core.security import redact_text  # noqa: E402
 from memorymaster.recall.dense_recall import read_events  # noqa: E402
+from memorymaster.recall.machine_traffic import TRANSPORT_NOTICE_PATTERNS  # noqa: E402
 
 # Matched against the left-stripped start of usage_feedback.query_text. Widening a list changes the
 # headline share: do it deliberately, the unmatched-prefix list is there to guide it.
-# transport_notice: the harness/orchestrator pushing a notice into a session (not human demand).
-TRANSPORT_NOTICE_PATTERNS = tuple(re.compile(p) for p in (
-    r"You have \d+ orchestration message",
-    r"\[ficha-ping",
-    r"<task-notification",
-    r"<subagent",
-    r"\[SYSTEM NOTIFICATION",
-))
+# transport_notice: TRANSPORT_NOTICE_PATTERNS, the one list shared with the hooks (recall/machine_traffic.py).
 # internal_process: our own LLM pipelines prompting a CLI (not human demand). Code references:
 INTERNAL_PROCESS_PATTERNS = tuple(re.compile(p) for p in (
     r"Extract at most (five|\d+) ",        # dreaming/providers.py EXTRACTION_INSTRUCTIONS + Gemini/other _prompt;

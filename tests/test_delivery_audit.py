@@ -268,9 +268,6 @@ def test_stop_hook_extraction_sends_no_sensitive_marker_to_the_provider(tmp_path
 # --- 5. T-2273: an internal process does not trigger recall ---------------------------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="T-2273: only the Codex adapter checks MEMORYMASTER_INTERNAL_RUN / "
-                   "MEMORYMASTER_INTERNAL_CODEX; the Claude recall template has no internal-mark gate and calls "
-                   "the ranker (remote.hook_recall) for the extractor's own headless session")
 @pytest.mark.parametrize("marker", ["MEMORYMASTER_INTERNAL_RUN", "MEMORYMASTER_INTERNAL_CODEX"])
 def test_claude_recall_hook_ignores_internal_processes(hooked, monkeypatch, marker) -> None:
     from memorymaster.recall import remote

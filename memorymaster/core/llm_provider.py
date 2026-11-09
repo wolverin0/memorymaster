@@ -472,6 +472,8 @@ def _call_claude_cli(prompt: str, text: str) -> str:
             timeout=timeout_s,
             encoding="utf-8",
             errors="replace",
+            # Our own pipeline (steward, curators, judges, residual): installed hooks must not recall for it (T-2273).
+            env={**os.environ, "MEMORYMASTER_INTERNAL_RUN": "1"},
             **extra_kwargs,
         )
     except subprocess.TimeoutExpired:

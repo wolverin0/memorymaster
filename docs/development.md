@@ -73,6 +73,15 @@ results and errors produce no stdout/stderr and exit zero. Internal Codex
 extractors/workers must inherit `MEMORYMASTER_INTERNAL_CODEX=1` or
 `MEMORYMASTER_INTERNAL_RUN=1`; both events then skip before reading stdin.
 
+Machine traffic never triggers prompt recall (T-2273), for every adapter, through
+`memorymaster/recall/machine_traffic.py`: a process with `MEMORYMASTER_INTERNAL_RUN=1`
+(or `_CODEX`) skips, and so does a prompt that is entirely a transport notice (Orca
+orchestration notice, `[ficha-ping`, `<task-notification>`, `<subagent`, `[SYSTEM NOTIFICATION`).
+Pipelines that spawn a CLI (dreaming extractor, `call_llm` claude_cli) set the mark.
+Coordinator task briefs still recall. Each skip logs `reason=machine-traffic category=...
+adapter=...` in `hook.log` (no prompt text). Rollback per adapter:
+`MEMORYMASTER_RECALL_MACHINE_FILTER_<CLAUDE|CODEX|OPENCODE|AGY>=0`.
+
 On Windows the recall installer writes the same `command` and `commandWindows`.
 Paths use forward slashes. When neither path contains whitespace or Windows
 shell metacharacters, the command is
