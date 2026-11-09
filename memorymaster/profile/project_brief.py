@@ -85,8 +85,13 @@ def _stamp(name: str, state: datetime | None | str, as_of: datetime) -> str:
     return f"{name} (stale {days}d)" if days > STALE_DAYS else f"{name} {days}d"
 
 
+def _cell(value: Any, limit: int) -> str:
+    """Inert one-line text that cannot fake the ` | ` field separator."""
+    return _display(value, limit).replace("|", "/")
+
+
 def _field(label: str, value: Any, limit: int) -> str:
-    text = _display(value, limit) if value else ""
+    text = _cell(value, limit) if value else ""
     return f" | {label}: {text}" if text else ""
 
 
@@ -95,7 +100,7 @@ def _running(cards) -> list[str]:
     live = [c for c in cards if c.get("state") in _RANK]
     live.sort(key=lambda c: (_RANK[c["state"]], -(when(c.get("updated_at")) or floor).timestamp(), str(c["id"])))
     return [
-        f"- {_display(c['id'], 24)} {_display(c['state'], 12)}: {_display(c.get('title'), 60)}"
+        f"- {_display(c['id'], 24)} {_display(c['state'], 12)}: {_cell(c.get('title'), 60)}"
         f"{_field('next', c.get('next_action'), 60)}{_field('blocker', c.get('blocker'), 50)} [{_display(c['id'], 24)}]"
         for c in live[:RUNNING_CARDS]
     ]
@@ -107,7 +112,7 @@ def _card_failures(cards) -> list[Entry]:
         state = c.get("state")
         reason = c.get("blocker") or (c.get("title") if state == "failed" else None)
         if state in _FAIL_STATES and reason:
-            out.append(Entry(when(c.get("updated_at")), f"{_display(c['id'], 24)} {state}: {_display(reason, 80)}", _display(c["id"], 24)))
+            out.append(Entry(when(c.get("updated_at")), f"{_display(c['id'], 24)} {state}: {_cell(reason, 80)}", _display(c["id"], 24)))
     return out
 
 
@@ -117,6 +122,10 @@ def _entry_line(entry: Entry, *, dated: bool) -> str:
 
 
 def render_brief(inputs: BriefInputs) -> str:
+    return render_brief_cut(inputs)[0]
+
+
+def render_brief_cut(inputs: BriefInputs) -> tuple[str, bool]:
     """Header + RUNNING / NEXT / DECISIONS / FAILURES, every line ending in its source tag.
 
     Over the cap, whole lines are cut from the bottom (never mid-line, so a tag is never orphaned).
@@ -138,9 +147,10 @@ def render_brief(inputs: BriefInputs) -> str:
         ("FAILURES", [_entry_line(e, dated=False) for e in failures] or ["- none [claims]"]),
     ]
     text = NL.join([header, *(line for title, body in blocks for line in (title, *body))])
+    cut = False
     while len(text.encode("utf-8")) > BRIEF_MAX_BYTES and NL in text:
-        text = cut_bottom(text)
-    return text
+        text, cut = cut_bottom(text), True
+    return text, cut
 
 
 def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], diagnostics: list[str],
@@ -156,7 +166,7 @@ def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], di
     decisions = tuple(Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["decision"])
     failures = [Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["failure"]]
     seen = [e.when for e in (*decisions, *failures) if e.when]
-    next_item, roadmap_mtime = roadmap_next_item(config.project_root)
+    next_item, roadmap_mtime = roadmap_next_item(config.roadmap_root or config.project_root)
     sources: dict[str, datetime | None | str] = {
         "ledger": None if "ledger_unavailable" in diagnostics else max(stamps, default=EMPTY),
         "roadmap": roadmap_mtime,
@@ -164,7 +174,8 @@ def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], di
     }
     if config.slug in DUE_SLUGS:
         rows, mtime = load_due_failures(config.due_measurements) if config.due_measurements else (None, None)
-        failures += [Entry(r["when"], f"FAIL: {r['text']}", f"due:{r['id']}") for r in rows or ()]
+        # r["text"] already starts with FAIL: do not prefix it again.
+        failures += [Entry(r["when"], r["text"], f"due:{r['id']}") for r in rows or ()]
         sources["due"] = mtime
     return BriefInputs(project=config.slug, as_of=now, cards=cards, next_item=next_item,
                        roadmap_missing=roadmap_mtime is None, decisions=decisions,

@@ -20,7 +20,7 @@ from memorymaster.core.generated_artifacts import (
     GENERATED_CLOSER as CLOSER,
 )
 from memorymaster.profile.egress import prepare_claim_egress
-from memorymaster.profile.project_brief import BRIEF_MAX_BYTES, collect_brief_inputs, cut_bottom, render_brief
+from memorymaster.profile.project_brief import BRIEF_MAX_BYTES, collect_brief_inputs, cut_bottom, render_brief_cut
 from memorymaster.profile.project_repository import (
     _display,
     digest,
@@ -51,6 +51,7 @@ class ProjectProjectionConfig:
     budget_bytes: int = 2200
     brief: bool = False  # publish the project brief with the projection
     due_measurements: Path | None = None  # read-only due-measurements.json; None = source unavailable
+    roadmap_root: Path | None = None  # directory holding ROADMAP.md; None = project_root
 
     def __post_init__(self) -> None:
         if str(self.db_path).startswith(("postgres:", "postgresql:")):
@@ -67,7 +68,7 @@ class ProjectProjectionConfig:
             raise ValueError("invalid aliases")
         if not 400 <= self.budget_bytes <= 2200:
             raise ValueError("project cap must be 400..2200 UTF-8 bytes")
-        for name in ("db_path", "project_root", "output_root", "state_root", "ledger_root", "due_measurements"):
+        for name in ("db_path", "project_root", "output_root", "state_root", "ledger_root", "due_measurements", "roadmap_root"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, Path(value).resolve())
@@ -359,8 +360,16 @@ def render_project_projection(
             lambda item: item["section"] == "Open cards",
         )
         removable = next((item for predicate in optional for item in reversed(selected) if predicate(item)), None)
-        if removable is None and brief and chr(10) in brief:
-            brief = cut_bottom(brief)  # last resort: the brief shrinks from the bottom, never mid-line
+        if removable is None and brief:
+            # Last resort, after every legacy item: the brief shrinks from the bottom (never mid-line),
+            # and a budget too small even for its header drops it rather than failing the projection.
+            if chr(10) in brief:
+                brief = cut_bottom(brief)
+                diagnostics.append("brief_trimmed")
+            else:
+                brief = None
+                diagnostics.append("brief_dropped")
+            diagnostics[:] = list(dict.fromkeys(diagnostics))
             continue
         if removable is None:
             raise ValueError("mandatory_projection_framing_does_not_fit")
@@ -441,7 +450,9 @@ def build_project_projection(config: ProjectProjectionConfig) -> ProjectProjecti
     brief = None
     if config.brief:
         now = datetime.fromisoformat(snapshot["read_at"].replace("Z", "+00:00"))
-        brief = render_brief(collect_brief_inputs(config, snapshot["items"], diagnostics, now))
+        brief, cut = render_brief_cut(collect_brief_inputs(config, snapshot["items"], diagnostics, now))
+        if cut:
+            diagnostics.append("brief_trimmed")
     return render_project_projection(
         config,
         ordered,
@@ -537,7 +548,7 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
         allowed_diagnostics = {
             "source_incomplete", "ledger_unavailable", "ledger_incomplete",
             "claims_unavailable", "coverage_limit", "inactive",
-            "incremental_scan_fence_incomplete",
+            "incremental_scan_fence_incomplete", "brief_trimmed", "brief_dropped",
             *(f"m2_not_ready:{reason}" for reason in (
                 "decisions_incomplete", "purpose_trimmed", "pinned_constraints_trimmed",
                 "open_cards_trimmed", "decisions_trimmed", "ledger_incomplete",

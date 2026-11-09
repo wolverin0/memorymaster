@@ -265,6 +265,26 @@ def _claim_instant(row: dict) -> datetime | None:
         return None
 
 
+# The planner prefers idx_claims_replaced_by (~35k rows on the live 8 GB DB, seconds cold); the
+# (tenant_id, scope) index narrows to the project at once (measured 2 ms-100 ms with the same rows).
+BRIEF_CLAIMS_INDEX = "idx_claims_tuple_key"
+BRIEF_QUERY_SECONDS = 1.0
+
+
+def brief_claims_sql(scope_count: int, type_count: int, *, indexed: bool) -> str:
+    marks = ",".join("?" for _ in range(type_count))
+    return (
+        "SELECT id,text,claim_type,predicate,source_agent,valid_from,valid_until,event_time,created_at "
+        f"FROM claims{' INDEXED BY ' + BRIEF_CLAIMS_INDEX if indexed else ''} "
+        "WHERE tenant_id IS ? AND scope IN (" + ",".join("?" for _ in range(scope_count)) + ") "
+        "AND status='confirmed' AND COALESCE(visibility,'public')='public' AND replaced_by_claim_id IS NULL "
+        f"AND (claim_type IN ({marks}) OR predicate IN ({marks})) "
+        f"AND length(CAST(COALESCE(text,'') AS BLOB)) <= {MAX_FIELD_BYTES} "
+        "AND EXISTS (SELECT 1 FROM citations WHERE citations.claim_id=claims.id) "
+        "ORDER BY COALESCE(event_time,created_at) DESC, id DESC LIMIT ?"
+    )
+
+
 def load_brief_claims(config: Any, *, now: datetime | None = None, per_kind: int = 3):
     """Newest confirmed decision / failure claims for the brief: ({'decision': [...], 'failure': [...]}, ok).
 
@@ -279,22 +299,20 @@ def load_brief_claims(config: Any, *, now: datetime | None = None, per_kind: int
         with closing(sqlite3.connect(Path(config.db_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=0.025)) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA query_only=ON")
-            deadline = time.monotonic() + 0.1
-            conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+            hint = bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
+                                     (BRIEF_CLAIMS_INDEX,)).fetchone())
+
+            def limited(sql: str, args: list) -> list:
+                # Each source query gets its own deadline: one slow scan must not starve the next.
+                deadline = time.monotonic() + BRIEF_QUERY_SECONDS
+                conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+                return conn.execute(sql, args).fetchall()
+
             for kind, types in (("decision", BRIEF_DECISION_TYPES), ("failure", BRIEF_FAILURE_TYPES)):
-                marks = ",".join("?" for _ in types)
-                rows = conn.execute(
-                    "SELECT id,text,claim_type,predicate,source_agent,valid_from,valid_until,event_time,created_at "
-                    "FROM claims WHERE tenant_id IS ? AND scope IN (" + ",".join("?" for _ in scopes) + ") "
-                    "AND status='confirmed' AND COALESCE(visibility,'public')='public' AND replaced_by_claim_id IS NULL "
-                    f"AND (claim_type IN ({marks}) OR predicate IN ({marks})) "
-                    f"AND length(CAST(COALESCE(text,'') AS BLOB)) <= {MAX_FIELD_BYTES} "
-                    "AND EXISTS (SELECT 1 FROM citations WHERE citations.claim_id=claims.id) "
-                    "ORDER BY COALESCE(event_time,created_at) DESC, id DESC LIMIT ?",
-                    [config.tenant_id, *scopes, *types, *types, BRIEF_SCAN_ROWS],
-                ).fetchall()
+                rows = limited(brief_claims_sql(len(scopes), len(types), indexed=hint),
+                               [config.tenant_id, *scopes, *types, *types, BRIEF_SCAN_ROWS])
                 cites: dict[int, list[dict]] = {}
-                for cite in conn.execute(
+                for cite in limited(
                     "SELECT claim_id,source,locator,excerpt FROM citations WHERE claim_id IN ("
                     + ",".join("?" for _ in rows) + ") LIMIT 4096", [row["id"] for row in rows],
                 ) if rows else ():

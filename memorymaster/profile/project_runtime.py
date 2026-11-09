@@ -41,7 +41,8 @@ def load_project_configs() -> list:
         state = os.environ.get("MEMORYMASTER_PROJECT_SESSION_STATE_DIR", "")
         ledger = os.environ.get("MEMORYMASTER_PROJECT_LEDGER_TASKS_DIR", "")
         brief = active(PREFIX + "BRIEF")
-        due = os.environ.get(PREFIX + "DUE_MEASUREMENTS", "")
+        # Brief-only settings: ignored (never fatal) while the brief is off.
+        due = os.environ.get(PREFIX + "DUE_MEASUREMENTS", "") if brief else ""
         if brief and not due:
             due = str(Path.home() / ".memorymaster" / "checkpoints" / "due-measurements.json")
         if due and not Path(due).is_absolute():
@@ -59,6 +60,9 @@ def load_project_configs() -> list:
                 return []
             if not Path(row["project_root"]).is_absolute():
                 return []
+            roadmap = row.get("roadmap_root") if brief else None
+            if roadmap is not None and (not isinstance(roadmap, str) or not Path(roadmap).is_absolute()):
+                return []
             identity = (row["context_key"], row["scope"])
             if identity in seen:
                 return []
@@ -70,7 +74,8 @@ def load_project_configs() -> list:
                 ledger_root=Path(ledger) if ledger else None, ledger_repo=row.get("ledger_repo"),
                 ledger_filtered=row.get("ledger_filtered") is True,
                 aliases=tuple(row.get("aliases", ())), enabled=True,
-                brief=brief, due_measurements=Path(due) if brief and due else None))
+                brief=brief, due_measurements=Path(due) if due else None,
+                roadmap_root=Path(roadmap) if roadmap else None))
         return configs
     except (ValueError, KeyError, TypeError):
         return []
@@ -209,7 +214,8 @@ def cheap_fingerprint(config) -> tuple:
         for path in sorted(paths):
             files.append((path.name, stat(path)))
     if config.brief:
-        files += [stat(config.project_root / "ROADMAP.md"), stat(config.due_measurements) if config.due_measurements else None]
+        files += [stat((config.roadmap_root or config.project_root) / "ROADMAP.md"),
+                  stat(config.due_measurements) if config.due_measurements else None]
     # An elapsed second can cross valid_from/valid_until even without a database writer.
     # Cache stores the next temporal boundary separately after each full source read.
     return (data_version, repr(config), *files)
