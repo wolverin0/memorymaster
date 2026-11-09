@@ -14,6 +14,7 @@ import sys
 from memorymaster.core.text_safety import sanitize_text
 from memorymaster.recall.delivery import is_automated, recall_block
 from memorymaster.recall.hook_policy import is_trivial_prompt
+from memorymaster.recall.machine_traffic import machine_skip
 from memorymaster.recall.recall_format import active_task_text, apply_format, format_mode
 from memorymaster.recall.remote import hook_recall
 
@@ -31,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(prompt, str) or not isinstance(cwd, str) or not cwd:
             return 0
         prompt = sanitize_text(prompt)
-        if is_automated(prompt) or is_trivial_prompt(prompt):
+        if is_automated(prompt) or is_trivial_prompt(prompt) or machine_skip(prompt, args.cli):
             return 0
         data = {"prompt": prompt, "cwd": cwd,
                 "session_id": f"{args.cli}:{data.get('session_id') or ''}"}

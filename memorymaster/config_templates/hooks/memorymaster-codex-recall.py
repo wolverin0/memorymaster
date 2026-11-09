@@ -3,7 +3,8 @@
 The companion scripts are rendered from the same templates as Claude's hooks;
 ranking, scope, sensitivity, projections and delivery policy stay there.
 Internal extractors/workers must inherit MEMORYMASTER_INTERNAL_CODEX=1 (or
-MEMORYMASTER_INTERNAL_RUN=1) so their own Codex sessions never recall recursively.
+MEMORYMASTER_INTERNAL_RUN=1) so their own Codex sessions never recall recursively
+(MEMORYMASTER_RECALL_MACHINE_FILTER_CODEX=0 disables that check and the notice filter).
 """
 from __future__ import annotations
 
@@ -26,15 +27,7 @@ HOOKS = {
 
 def main(event: str) -> int:
     try:
-        if event not in HOOKS or any(
-            os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-            for name in ("MEMORYMASTER_INTERNAL_CODEX", "MEMORYMASTER_INTERNAL_RUN")
-        ):
-            return 0
-        data = json.loads(sys.stdin.read())
-        if not isinstance(data, dict):
-            return 0
-        if any(key in data and not isinstance(data[key], str) for key in ("cwd", "prompt", "session_id")):
+        if event not in HOOKS:
             return 0
         # Script execution only puts the hooks directory on sys.path. Retain
         # the launch root before the shared hooks change cwd, so source-tree
@@ -42,6 +35,25 @@ def main(event: str) -> int:
         # code root for installed hooks, including separate data-root installs.
         sys.path.insert(0, str(Path.cwd()))
         sys.path.insert(0, PROJECT_ROOT)
+        try:
+            from memorymaster.recall.machine_traffic import filter_enabled, internal_run
+        except ImportError:  # a package older than this template: the inline pre-T-2273 check, no rollback flag
+            def internal_run():
+                return any(os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+                           for name in ("MEMORYMASTER_INTERNAL_CODEX", "MEMORYMASTER_INTERNAL_RUN"))
+
+            def filter_enabled(adapter):
+                return True
+
+        # The shared check, before stdin is even read (T-2273). MEMORYMASTER_RECALL_MACHINE_FILTER_CODEX=0
+        # rolls it back too, so the Codex adapter recalls even for internal runs.
+        if filter_enabled("codex") and internal_run():
+            return 0
+        data = json.loads(sys.stdin.read())
+        if not isinstance(data, dict):
+            return 0
+        if any(key in data and not isinstance(data[key], str) for key in ("cwd", "prompt", "session_id")):
+            return 0
         # SessionStart's shared scope resolver uses process cwd; prompt recall
         # uses hook_data.cwd. Normalize both to the actual Codex workspace.
         if data.get("cwd"):
@@ -56,7 +68,8 @@ def main(event: str) -> int:
                     # Only this adapter records the final, capped Codex output.
                     runpy.run_path(
                         str(Path(__file__).with_name(HOOKS[event])), run_name="__main__",
-                        init_globals={"MEMORYMASTER_DEFER_HOOK_EVENT": True},
+                        init_globals={"MEMORYMASTER_DEFER_HOOK_EVENT": True,
+                                      "MEMORYMASTER_RECALL_ADAPTER": "codex"},
                     )
                 except SystemExit as exc:
                     if exc.code not in (None, 0):

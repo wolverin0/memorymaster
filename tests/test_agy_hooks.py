@@ -129,6 +129,39 @@ def test_automated_notification_is_silent(payload, monkeypatch):
     assert hooks.run_hook("SessionStart", payload, db_path="unused") == ""
 
 
+NOTICE = "You have 2 orchestration message(s). Run `orca orchestration check --run run_ab12cd`."
+
+
+def test_pure_transport_notice_is_silent_on_session_start_but_stop_still_captures(payload, tmp_path, monkeypatch):
+    """T-2273: the machine-traffic gate is recall-only; capture on Stop is not recall."""
+    from memorymaster.core import hook_log
+    from memorymaster.dreaming.ledger import DreamLedger
+
+    monkeypatch.setattr(hook_log, "_STATE_DIR", tmp_path)
+    monkeypatch.setattr(hook_log, "_LOG_FILE", tmp_path / "hook.log")
+    payload["lastUserInput"] = NOTICE
+    monkeypatch.setattr("memorymaster.recall.remote.hook_recall", lambda *a, **kw: pytest.fail("ranker reached"))
+    assert hooks.run_hook("SessionStart", payload, db_path="unused") == ""
+    assert not (tmp_path / "events.jsonl").exists()
+    log = (tmp_path / "hook.log").read_text(encoding="utf-8")
+    assert "category=transport_notice" in log and "adapter=agy" in log and "orchestration" not in log
+
+    Path(payload["transcriptPath"]).write_text("\n".join(json.dumps(row) for row in [
+        {"step_index": 0, "type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "SQLite owns the lifecycle."},
+        {"step_index": 1, "type": "PLANNER_RESPONSE", "source": "MODEL", "content": "Confirmed with a cited fixture."},
+    ]) + "\n", encoding="utf-8")
+    assert hooks.run_hook("Stop", payload, db_path="unused") == ""
+    assert DreamLedger(tmp_path / "capture.db").status()["queue"]["captured"] == 1
+
+
+def test_notice_followed_by_a_request_still_recalls_on_session_start(payload, monkeypatch):
+    payload["lastUserInput"] = NOTICE + " Explain why the hook fires on them"
+    seen = []
+    monkeypatch.setattr("memorymaster.recall.remote.hook_recall",
+                        lambda q, d, *, db_path: seen.append(q) or ("\n- [mm-7] x", "shared"))
+    assert "injectSteps" in hooks.run_hook("SessionStart", payload, db_path="unused") and len(seen) == 1
+
+
 def test_stop_queues_fixture_once_and_records_capture_receipt(payload, tmp_path, capsys):
     from memorymaster.dreaming.ledger import DreamLedger
 

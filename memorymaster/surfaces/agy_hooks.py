@@ -49,8 +49,12 @@ def run_hook(event: str, payload: dict, *, db_path: str) -> str:
         return ""
     from memorymaster.recall.delivery import is_automated, recall_block
 
+    from memorymaster.recall.machine_traffic import machine_skip
+
     if is_automated(data["prompt"]):
         return ""
+    if event == "SessionStart" and machine_skip(data["prompt"], "agy", session=data["session_id"][:16]):
+        return ""  # recall only: Stop capture is not recall (T-2273)
     previous = os.environ.get(INTERNAL_ENV)
     os.environ[INTERNAL_ENV] = "1"
     try:

@@ -59,6 +59,15 @@ except ImportError:  # a package older than this template: the block exactly as 
     def active_task_text(cwd):
         return ""
 
+try:  # T-2273: internal runs and pure transport notices never reach the ranker (shared by every adapter)
+    from memorymaster.recall.machine_traffic import machine_skip  # noqa: E402
+except ImportError:  # a package older than this template: no machine-traffic gate
+    def machine_skip(prompt, adapter, session=""):
+        return None
+
+# The Codex adapter runs this file through runpy and passes its own name; a direct Claude run is "claude".
+ADAPTER = globals().get("MEMORYMASTER_RECALL_ADAPTER", "claude")
+
 try:  # T-1648: OS process age = interpreter start-up + imports; absent on an older package or off Windows
     from memorymaster.core.stall_probe import enabled as probe_enabled, process_age_ms  # noqa: E402
 except ImportError:
@@ -79,7 +88,8 @@ try:
     data["prompt"] = query
     session_id = str(data.get("session_id", ""))[:16]
     full_session = data.get("session_id")
-    automated = is_automated(query)
+    machine = machine_skip(query, ADAPTER, session=session_id)  # logs its own skip line, no prompt text
+    automated = bool(machine) or is_automated(query)
     # The first prompt after a compaction is often "continue": the residual is read before the
     # trivial-prompt gate and is delivered by session id, never by similarity search.
     residual = ""
@@ -87,7 +97,8 @@ try:
         residual = residual_state.pending_block(full_session)
     ctx, via, timing = "", "", None
     if automated:
-        log_hook("recall", "skip", session=session_id, reason="automated-event")
+        if not machine:
+            log_hook("recall", "skip", session=session_id, reason="automated-event")
     elif is_trivial_prompt(query):
         log_hook("recall", "skip", session=session_id, reason="trivial-prompt", words=len(query.split()))
     else:
