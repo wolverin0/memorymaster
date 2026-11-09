@@ -523,10 +523,23 @@ class MemoryService(IntegrationService):
             self._qdrant_sync(revived)
         return revived
 
-    def _after_supersession_proposals(self, filed: int) -> None:
-        """A proposal filed now must show in the very next recall: drop the cached pending-supersession set."""
+    def _after_supersession_proposals(
+        self, filed: list[int], governance: Any, report: dict[str, Any] | None
+    ) -> None:
+        """Drop the cached pending set when a proposal was filed, and say what happened to each declared target.
+
+        A proposal filed now must rank in the very next recall of THIS service; another long-lived process
+        (an MCP server) keeps its own cache for up to 300 s. ``report`` is the caller's ``supersession_report``.
+        """
         if filed:
             self.__dict__.pop("_pending_supersession_cache", None)
+        if report is not None:
+            declared = [t.claim.id for t in governance.supersession_targets]
+            report.update(
+                declared=declared, filed=[i for i in declared if i in filed],
+                not_filed=[i for i in declared if i not in filed],  # a live proposal for the target already exists
+                prose_filed=[i for i in filed if i not in declared],
+            )
 
     def ingest(
         self,
@@ -554,6 +567,7 @@ class MemoryService(IntegrationService):
         intake_batch_max: int | None = None,
         _pre_sanitization_findings: list[str] | None = None,
         outcome_receipt: dict[str, Any] | None = None,
+        supersession_report: dict[str, Any] | None = None,
     ) -> Claim:
         prepare_outcome_receipt(outcome_receipt)
         from memorymaster.core.generated_artifacts import contains_generated_marker, strip_generated_spans
@@ -664,7 +678,8 @@ class MemoryService(IntegrationService):
                 revived = self._revive_archived_dedup_match(existing_claim, source_agent)
                 if revived.status != "archived":
                     self._after_supersession_proposals(ingest_governance.queue_supersession_proposals(
-                        self.store, intake_governance.supersession_targets, revived, confidence))
+                        self.store, intake_governance.supersession_targets, revived, confidence),
+                        intake_governance, supersession_report)
                 fill_outcome_receipt(outcome_receipt, revived, created=False,
                                      persisted=self.store.ingest_creation_receipt(revived.id) if outcome_receipt is not None else None)
                 return revived
@@ -695,7 +710,8 @@ class MemoryService(IntegrationService):
             revived = self._revive_archived_dedup_match(existing_by_hash, source_agent)
             if revived.status != "archived":
                 self._after_supersession_proposals(ingest_governance.queue_supersession_proposals(
-                    self.store, intake_governance.supersession_targets, revived, confidence))
+                    self.store, intake_governance.supersession_targets, revived, confidence),
+                    intake_governance, supersession_report)
             fill_outcome_receipt(outcome_receipt, revived, created=False,
                                  persisted=self.store.ingest_creation_receipt(revived.id) if outcome_receipt is not None else None)
             return revived
@@ -796,7 +812,7 @@ class MemoryService(IntegrationService):
             return claim
         self._after_supersession_proposals(ingest_governance.apply_post_ingest_governance(
             self.store, claim, intake_governance, confidence
-        ))
+        ), intake_governance, supersession_report)
 
         # Set entity_id on the claim (best-effort, don't fail ingest — but a
         # dropped write is counted now, not swallowed).

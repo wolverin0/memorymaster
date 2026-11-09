@@ -1491,8 +1491,11 @@ if FastMCP is not None:
         `supersedes`: claims this one corrects or replaces (several allowed, N->1), as
         claim ids or human ids such as "mm-a3f8". Same scope only; an unknown, retired or
         other-scope reference is refused and nothing is written. Files one steward proposal
-        per target (never applied here) and the target stops being served as current at
-        once. Prefer this over writing "supersedes mm-xxxx" in the text.
+        per target (never applied here); until a steward decides, the target is demoted in
+        recall and left out of prompt-hook injection, but it is NOT retired. A target that
+        already has a pending proposal gets no second one (reported in `warnings`). Another
+        agent's claim needs the operator to approve. Max 5 per call, 25 per agent per day.
+        Prefer this over writing "supersedes mm-xxxx" in the text.
         Bi-temporal fields (ISO-8601 strings, all optional):
           - event_time: when the fact occurred in the real world
           - valid_from: start of the claim validity window
@@ -1541,8 +1544,10 @@ if FastMCP is not None:
         if not citations:
             citations = [CitationInput(source="mcp-session", locator=request.scope or "project")]
         svc = _service(request.db, request.workspace)
+        supersession_report: dict[str, Any] = {}
         try:
             claim = svc.ingest(
+                supersession_report=supersession_report,
                 text=request.text,
                 citations=citations,
                 idempotency_key=_empty_to_none(request.idempotency_key),
@@ -1602,8 +1607,13 @@ if FastMCP is not None:
             warnings.append(
                 "mutable state forced to high volatility; supply valid_until"
             )
-        if request.supersedes_claim_id is not None or request.supersedes:
+        if supersession_report.get("filed"):
             warnings.append("supersession queued for steward review")
+        if supersession_report.get("not_filed"):
+            warnings.append(
+                f"supersession NOT queued for {supersession_report['not_filed']}: a pending proposal already "
+                "exists for each; resolve it first"
+            )
         response = {"ok": True, "claim": _claim_to_dict(claim)}
         if warnings:
             response["warnings"] = warnings

@@ -1434,7 +1434,12 @@ OPERATOR_ONLY_SOURCES = frozenset({"jev", "fuzzy", "prose-correction"})
 
 
 def is_operator_only_proposal(payload: Any) -> bool:
-    return isinstance(payload, dict) and str(payload.get("source") or "").strip().lower() in OPERATOR_ONLY_SOURCES
+    """Sources that wait for a human, plus any proposal filed across agents (``cross_identity``): ingest cannot
+    authenticate ``source_agent``, so only a same-agent supersession may be applied by automation (T-2276)."""
+    return isinstance(payload, dict) and (
+        str(payload.get("source") or "").strip().lower() in OPERATOR_ONLY_SOURCES
+        or payload.get("cross_identity") is True
+    )
 
 
 def retire_for_replacement(
@@ -1449,13 +1454,15 @@ def retire_for_replacement(
     """
     new = store.get_claim(new_claim_id, include_citations=False)
     if new is not None and new.supersedes_claim_id not in {None, old_claim_id}:
+        # link first: a link failure then raises before any state changed, so the reported apply error matches the DB
+        try:
+            store.add_claim_link(new_claim_id, old_claim_id, "supersedes")
+        except ValueError as exc:
+            if "already exists" not in str(exc):
+                raise
         transition_claim(
             store, old_claim_id, "superseded", reason, replaced_by_claim_id=new_claim_id, event_payload=event_payload
         )
-        try:
-            store.add_claim_link(new_claim_id, old_claim_id, "supersedes")
-        except ValueError:
-            pass  # link already recorded
         return
     store.mark_superseded(old_claim_id, new_claim_id, reason, event_payload=event_payload)
 

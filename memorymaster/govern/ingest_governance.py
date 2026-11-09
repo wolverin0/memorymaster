@@ -6,11 +6,13 @@ identity-bound replacement proposals, and auditable volatility overrides.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from memorymaster.core.event_scan import PROPOSAL_SCAN_CEILING, window_start
 from memorymaster.core.intake_policy import IntakeRejected
 from memorymaster.core.models import Claim
 from memorymaster.core.temporal_policy import (
@@ -21,11 +23,15 @@ from memorymaster.govern.correction_text import Reference, find_corrected_refere
 
 logger = logging.getLogger(__name__)
 
-MAX_SUPERSEDES = 20
+MAX_SUPERSEDES = 5  # per call; no caller needs more (checkpoint items carry their own list)
+# Declared (`supersedes`) proposals one agent may file per rolling day. `source_agent` is self-declared, so this
+# bounds what a junk or compromised caller can queue; further ones are refused, nothing written.
+MAX_DECLARED_PER_AGENT_PER_DAY = 25
 INACTIVE_STATUSES = frozenset({"archived", "superseded"})
 # Proposal ``source`` values. Text-inferred proposals are operator-only (govern.steward.OPERATOR_ONLY_SOURCES):
 # the curation drain must not apply a guess made from prose.
 SOURCE_DIRECT_INGEST = "direct-ingest"
+PROPOSAL_DETAILS = "steward_proposal:superseded_candidate"
 SOURCE_PROSE_CORRECTION = "prose-correction"
 
 
@@ -74,11 +80,15 @@ def prepare_ingest_governance(
     )
     if legacy is not None:
         targets.append(SupersessionTarget(legacy, cross_identity))
-    for claim in resolve_explicit_supersedes(
+    declared = resolve_explicit_supersedes(
         store, supersedes, tenant_id=tenant_id, scope=scope, visibility=visibility, source_agent=source_agent
-    ):
+    )
+    if declared:
+        enforce_daily_bound(store, source_agent, len(declared))
+    for claim in declared:
         if all(claim.id != known.claim.id for known in targets):
-            targets.append(SupersessionTarget(claim))
+            # another agent's claim: operator-only proposal, never applied by the curation drain
+            targets.append(SupersessionTarget(claim, (claim.visibility, claim.source_agent) != (visibility, source_agent)))
     return IngestGovernanceDecision(mutable_state, tuple(targets), volatility)
 
 
@@ -223,6 +233,55 @@ def resolve_explicit_supersedes(
     return resolved
 
 
+def _is_proposal(event: Any) -> bool:
+    return str(getattr(event, "details", "") or "") == PROPOSAL_DETAILS
+
+
+def has_live_proposal(store: Any, target_id: int) -> bool:
+    """An unresolved supersession proposal exists for the target (resolved or rejected ones do not count).
+
+    Mirrors ``recall.retrieval.pending_supersession_ids``: an approval that failed to apply does not resolve.
+    """
+    resolved: set[int] = set()
+    for event in store.list_events(claim_id=target_id, event_type="audit", limit=200):
+        details = str(getattr(event, "details", "") or "")
+        if details not in {"steward_proposal_approved", "steward_proposal_rejected"}:
+            continue
+        try:
+            payload = json.loads(getattr(event, "payload_json", None) or "{}")
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict) or (details.endswith("approved") and payload.get("applied") is False):
+            continue
+        if isinstance(payload.get("proposal_event_id"), int):
+            resolved.add(payload["proposal_event_id"])
+    return any(
+        _is_proposal(event) and int(event.id) not in resolved
+        for event in store.list_events(claim_id=target_id, event_type="policy_decision", limit=100)
+    )
+
+
+def enforce_daily_bound(store: Any, source_agent: str | None, new_targets: int) -> None:
+    """Refuse a declared supersession past the per-agent daily bound (raises ValueError, nothing written)."""
+    agent = str(source_agent or "")
+    since = window_start(1)
+    filed = 0
+    for event in store.list_events(event_type="policy_decision", limit=PROPOSAL_SCAN_CEILING, since=since):
+        if not _is_proposal(event):
+            continue
+        try:
+            payload = json.loads(getattr(event, "payload_json", None) or "{}")
+        except (ValueError, TypeError):
+            continue
+        if isinstance(payload, dict) and payload.get("source") == SOURCE_DIRECT_INGEST and payload.get("filed_by") == agent:
+            filed += 1
+    if filed + new_targets > MAX_DECLARED_PER_AGENT_PER_DAY:
+        raise ValueError(
+            f"supersedes limit reached: {filed} declared supersessions filed by this agent in the last 24h "
+            f"(max {MAX_DECLARED_PER_AGENT_PER_DAY}); ask the operator to review the queue"
+        )
+
+
 def record_mutable_override(
     store: Any,
     claim: Claim,
@@ -249,8 +308,8 @@ def apply_post_ingest_governance(
     claim: Claim,
     decision: IngestGovernanceDecision,
     confidence: float,
-) -> int:
-    """Record the mutable-state override and file supersession proposals; returns how many were filed."""
+) -> list[int]:
+    """Record the mutable-state override and file supersession proposals; returns the target ids filed."""
     record_mutable_override(
         store,
         claim,
@@ -266,15 +325,17 @@ def queue_supersession_proposals(
     targets: Sequence[SupersessionTarget],
     replacement: Claim,
     confidence: float,
-) -> int:
-    return sum(
-        queue_supersession_proposal(store, t.claim, replacement, confidence, cross_identity=t.cross_identity)
+) -> list[int]:
+    """File one proposal per target; returns the target ids actually filed (a live proposal already there files none)."""
+    return [
+        t.claim.id
         for t in targets
         if t.claim.id != replacement.id
-    )
+        and queue_supersession_proposal(store, t.claim, replacement, confidence, cross_identity=t.cross_identity)
+    ]
 
 
-def queue_prose_corrections(store: Any, claim: Claim, confidence: float) -> int:
+def queue_prose_corrections(store: Any, claim: Claim, confidence: float) -> list[int]:
     """Safety net: the text names an earlier claim id as corrected -> operator-only proposal, never applied.
 
     Why a proposal and not the supersession itself (core.promotion_policy): ``transition_claim`` retires or
@@ -282,11 +343,11 @@ def queue_prose_corrections(store: Any, claim: Claim, confidence: float) -> int:
     caller. Ingest cannot authenticate its author (``source_agent`` is self-declared) and a regex over prose is an
     inference, not a decision, so no ingest path qualifies. The proposal carries source ``prose-correction``, which
     ``steward.OPERATOR_ONLY_SOURCES`` keeps away from the curation drain and every other automation. Meanwhile
-    recall already hides the target (``pending_supersession_ids``).
+    recall demotes the target (``pending_supersession_ids``; the prompt hook does not inject it); it is not retired.
     Never raises: a fault here must not fail the ingest that already persisted the claim.
     """
     try:
-        filed = 0
+        filed: list[int] = []
         for reference in find_corrected_references(claim.text):
             target = resolve_scoped_reference(
                 store, reference, tenant_id=claim.tenant_id, scope=claim.scope,
@@ -294,14 +355,15 @@ def queue_prose_corrections(store: Any, claim: Claim, confidence: float) -> int:
             )
             if target is None or target.id >= claim.id or target.status in INACTIVE_STATUSES:
                 continue
-            filed += queue_supersession_proposal(
+            if queue_supersession_proposal(
                 store, target, claim, confidence, source=SOURCE_PROSE_CORRECTION,
                 cross_identity=target.source_agent != claim.source_agent,
-            )
+            ):
+                filed.append(target.id)
         return filed
     except Exception:  # noqa: BLE001 - see docstring
         logger.warning("prose correction scan failed for claim %s", claim.id, exc_info=True)
-        return 0
+        return []
 
 
 def queue_supersession_proposal(
@@ -327,25 +389,23 @@ def queue_supersession_proposal(
     """
     if target is None:
         return 0
-    # Dedup on the TARGET, not on the (target, replacement) pair. A claim can
-    # only be superseded once: whichever replacement is approved first retires
-    # it, and every further proposal against the same target is then guaranteed
-    # to fail with "already superseded". Two dream-worker proposals filed one
-    # second apart against claim 123737 is exactly how that happened, and the
-    # failure used to latch into an unrecoverable state.
-    for event in store.list_events(
-        claim_id=target.id, event_type="policy_decision", limit=100
-    ):
-        if event.details == "steward_proposal:superseded_candidate":
-            return 0
+    # Dedup on the TARGET, not on the (target, replacement) pair, but only against a LIVE proposal. A claim can
+    # only be superseded once: whichever replacement is approved first retires it, and every further proposal
+    # against the same target is then guaranteed to fail with "already superseded" (two dream-worker proposals
+    # filed one second apart against claim 123737 latched into an unrecoverable state). A RESOLVED or rejected
+    # proposal must not block a new one: a junk proposal that was rejected would otherwise stop the real
+    # correction forever.
+    if has_live_proposal(store, target.id):
+        return 0
     store.record_event(
         claim_id=target.id,
         event_type="policy_decision",
         from_status=target.status,
         to_status="superseded",
-        details="steward_proposal:superseded_candidate",
+        details=PROPOSAL_DETAILS,
         payload={
             "source": source,
+            "filed_by": replacement.source_agent or "",
             "proposal_type": "review_queue_item",
             "decision": "superseded_candidate",
             "proposed_status": "superseded",
