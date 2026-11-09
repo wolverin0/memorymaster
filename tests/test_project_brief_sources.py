@@ -111,7 +111,7 @@ def test_collect_inputs_sources_slug_gate_and_cards(project_config, tmp_path):
     config = replace(project_config, brief=True, due_measurements=due)
     got = collect_brief_inputs(config, cards, [], NOW)
     assert "due" not in got.sources, "due rows have no repo field: only memorymaster/py-apps may show them"
-    assert list(got.sources) == ["ledger", "claims"]
+    assert list(got.sources) == ["ledger", "roadmap", "claims"] and got.sources["roadmap"] is None
     assert got.sources["ledger"].day == 8 and got.sources["claims"].day == 6
     assert sorted(c["id"] for c in got.cards) == ["T-1", "T-2"]
     # slug gate: the same wiring under a memorymaster scope shows the FAIL row, tagged [due:x].
@@ -158,4 +158,6 @@ def test_refresh_republishes_when_only_the_brief_changes_and_fingerprint_sees_th
     (config.project_root / "ROADMAP.md").write_text("## Now\n- [ ] x\n")
     assert runtime.cheap_fingerprint(config) != before
     assert runtime._refresh_one(config)["status"] == "ok"
-    assert "[due:q]" in read_manifest(config)["brief"]
+    published = read_manifest(config)["brief"]
+    assert "[due:q]" in published and "- x [ROADMAP.md#L2]" in published
+    assert "roadmap 0d" in published.splitlines()[0]

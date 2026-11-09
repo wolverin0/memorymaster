@@ -16,6 +16,7 @@ from memorymaster.profile.project_repository import (
     _display,
     load_brief_claims,
     load_due_failures,
+    roadmap_next_item,
 )
 
 BRIEF_MAX_BYTES = 1600
@@ -155,13 +156,16 @@ def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], di
     decisions = tuple(Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["decision"])
     failures = [Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["failure"]]
     seen = [e.when for e in (*decisions, *failures) if e.when]
+    next_item, roadmap_mtime = roadmap_next_item(config.project_root)
     sources: dict[str, datetime | None | str] = {
         "ledger": None if "ledger_unavailable" in diagnostics else max(stamps, default=EMPTY),
+        "roadmap": roadmap_mtime,
         "claims": max(seen, default=EMPTY) if claims_ok else None,
     }
     if config.slug in DUE_SLUGS:
         rows, mtime = load_due_failures(config.due_measurements) if config.due_measurements else (None, None)
         failures += [Entry(r["when"], f"FAIL: {r['text']}", f"due:{r['id']}") for r in rows or ()]
         sources["due"] = mtime
-    return BriefInputs(project=config.slug, as_of=now, cards=cards, decisions=decisions,
+    return BriefInputs(project=config.slug, as_of=now, cards=cards, next_item=next_item,
+                       roadmap_missing=roadmap_mtime is None, decisions=decisions,
                        failures=tuple(failures), sources=sources)

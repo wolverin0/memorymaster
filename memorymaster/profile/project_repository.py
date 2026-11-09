@@ -345,6 +345,51 @@ def load_due_failures(path: Path) -> tuple[list[dict] | None, datetime | None]:
     return failures, datetime.fromtimestamp(stat.st_mtime, timezone.utc)
 
 
+ROADMAP_SECTIONS = ("Delivery-first program", "Lane backlog tracker", "Now")  # priority order
+MAX_ROADMAP_BYTES = 2 * 1024 * 1024
+_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+_OPEN_ITEM = re.compile(r"^\s*[-*]\s+\[ \]\s+(\S.*)$")
+
+
+def roadmap_next_item(project_root: Path) -> tuple[tuple[str, int] | None, datetime | None]:
+    """First unchecked `- [ ]` item under the priority sections of <project_root>/ROADMAP.md.
+
+    Returns ((text, 1-based line) | None, mtime); mtime is None when the file is missing or unreadable.
+    A section runs from its heading to the next heading of equal or higher level, so `###` blocks
+    inside `## Now` count. Heading match is the section name optionally followed by a non-word suffix.
+    """
+    path = Path(project_root) / "ROADMAP.md"
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_ROADMAP_BYTES:
+            return None, None
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None, None
+    fenced = False
+    headings: list[tuple[int, int, str]] = []  # (line index, level, title)
+    items: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        elif not fenced:
+            heading, item = _HEADING.match(line), _OPEN_ITEM.match(line)
+            if heading:
+                headings.append((index, len(heading.group(1)), heading.group(2).strip()))
+            elif item:
+                items.append((index, item.group(1).strip()))
+    for name in ROADMAP_SECTIONS:
+        pattern = re.compile(re.escape(name) + r"(?!\w)", re.IGNORECASE)
+        for position, (start, level, title) in enumerate(headings):
+            if not pattern.match(title):
+                continue
+            end = next((h[0] for h in headings[position + 1:] if h[1] <= level), len(lines))
+            found = next(((index, text) for index, text in items if start < index < end), None)
+            if found:
+                return (found[1], found[0] + 1), mtime
+    return None, mtime
+
+
 def _section(row: dict) -> str | None:
     mapping = {
         "project_purpose": "Purpose",
