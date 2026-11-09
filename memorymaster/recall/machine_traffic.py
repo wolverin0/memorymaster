@@ -7,12 +7,13 @@ every recall adapter (the Claude template, which the Codex adapter also runs; Op
 * **internal run**: a process our own pipelines spawn (dreaming extractor, steward, judges, precompact
   residual) inherits ``MEMORYMASTER_INTERNAL_RUN=1``; the Codex flavour ``MEMORYMASTER_INTERNAL_CODEX=1`` is
   honoured too. Such a session never recalls.
-* **transport notice**: the WHOLE prompt is a harness/orchestrator notice (see :data:`TRANSPORT_NOTICES`).
-  Whole-prompt, not substring or even prefix: a human prompt that merely quotes a notice, or one that
-  continues after it, still gets recall. Coordinator task briefs are legitimate demand and are not here.
+* **transport notice**: the WHOLE prompt has the exact shape of a harness/orchestrator notice (see
+  :data:`TRANSPORT_NOTICES`). Not a substring, not a prefix: a notice followed (or preceded) by anything the
+  agent could act on is a human request and still recalls. Coordinator task briefs are legitimate demand and
+  are not in the list.
 
 Rollback per adapter: ``MEMORYMASTER_RECALL_MACHINE_FILTER_<ADAPTER>=0`` (``CLAUDE``, ``CODEX``, ``OPENCODE``,
-``AGY``) turns both gates off for that adapter only.
+``AGY``) turns both gates off for that adapter only, including the Codex adapter's pre-stdin internal check.
 
 Standard library only (the hook process imports it on every prompt); never raises; logs the category of each
 skip, never the prompt text.
@@ -28,25 +29,28 @@ INTERNAL_ENVS = ("MEMORYMASTER_INTERNAL_RUN", "MEMORYMASTER_INTERNAL_CODEX")
 FILTER_ENV_PREFIX = "MEMORYMASTER_RECALL_MACHINE_FILTER_"
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
-PLAIN_NOTICE_MAX_CHARS = 600  # a bare notice is short; a longer one is a human writing about it
 
 
 class Notice(NamedTuple):
-    start: str        # regex matched at the (left-stripped) start of the prompt
-    end: str | None   # regex the prompt must END with (closing tag/bracket); None = bounded plain notice
+    start: str  # prefix regex: how the metrics script classifies a stored query head
+    whole: str  # full-shape regex: the ENTIRE (stripped) prompt must match it for the hooks to skip
 
 
-# THE one list of transport notices (the harness/orchestrator pushing a notice into a session). The metric
-# script classifies stored query heads with the ``start`` patterns; the hooks skip only whole-prompt notices.
+# THE one list of transport notices (the harness/orchestrator pushing a notice into a session).
 TRANSPORT_NOTICES = (
-    Notice(r"You have \d+ orchestration message", None),
-    Notice(r"\[ficha-ping", r"\]"),
-    Notice(r"<task-notification", r"</task-notification>"),
-    Notice(r"<subagent", r">"),
-    Notice(r"\[SYSTEM NOTIFICATION", None),
+    # Orca: "You have N orchestration message(s). Run `orca orchestration check --run run_<id>`."
+    Notice(r"You have \d+ orchestration message",
+           r"You have \d+ orchestration messages?(?:\(s\))?\. Run `[^`\n]+`\.?"),
+    # A bare ficha ping tag; a ping with a body sentence is addressed to the agent and recalls.
+    Notice(r"\[ficha-ping", r"\[ficha-ping[^\]\n]*\]"),
+    Notice(r"<task-notification", r"<task-notification\b[^>]*>.*</task-notification>"),
+    # A bare opening tag, or an element closed at the very end.
+    Notice(r"<subagent", r"<subagent\b[^>]*>(?:.*</subagent>)?"),
+    # Harness envelope: header line, then a body that ends with the task-notification element.
+    Notice(r"\[SYSTEM NOTIFICATION", r"\[SYSTEM NOTIFICATION[^\]\n]*\].*</task-notification>"),
 )
 TRANSPORT_NOTICE_PATTERNS = tuple(re.compile(n.start) for n in TRANSPORT_NOTICES)
-_ENDS = tuple(re.compile(n.end + r"\s*\Z") if n.end else None for n in TRANSPORT_NOTICES)
+_WHOLE = tuple(re.compile(n.whole, re.DOTALL) for n in TRANSPORT_NOTICES)
 
 
 def internal_run(environ: Mapping[str, str] = os.environ) -> bool:
@@ -59,16 +63,11 @@ def filter_enabled(adapter: str, environ: Mapping[str, str] = os.environ) -> boo
 
 
 def is_transport_notice(prompt: object) -> bool:
-    """Whether the whole prompt is a transport notice (anchored; never a substring)."""
+    """Whether the whole prompt is a transport notice (full-shape match, never a substring or prefix)."""
     if not isinstance(prompt, str):
         return False
     text = prompt.strip()
-    for start, end in zip(TRANSPORT_NOTICE_PATTERNS, _ENDS):
-        if start.match(text):
-            if end is not None:
-                return bool(end.search(text))
-            return len(text) <= PLAIN_NOTICE_MAX_CHARS and "?" not in text  # a notice asks nothing
-    return False
+    return any(whole.fullmatch(text) for whole in _WHOLE)
 
 
 def machine_skip(

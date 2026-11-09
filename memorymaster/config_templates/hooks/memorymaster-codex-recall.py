@@ -3,7 +3,8 @@
 The companion scripts are rendered from the same templates as Claude's hooks;
 ranking, scope, sensitivity, projections and delivery policy stay there.
 Internal extractors/workers must inherit MEMORYMASTER_INTERNAL_CODEX=1 (or
-MEMORYMASTER_INTERNAL_RUN=1) so their own Codex sessions never recall recursively.
+MEMORYMASTER_INTERNAL_RUN=1) so their own Codex sessions never recall recursively
+(MEMORYMASTER_RECALL_MACHINE_FILTER_CODEX=0 disables that check and the notice filter).
 """
 from __future__ import annotations
 
@@ -34,9 +35,19 @@ def main(event: str) -> int:
         # code root for installed hooks, including separate data-root installs.
         sys.path.insert(0, str(Path.cwd()))
         sys.path.insert(0, PROJECT_ROOT)
-        from memorymaster.recall.machine_traffic import internal_run
+        try:
+            from memorymaster.recall.machine_traffic import filter_enabled, internal_run
+        except ImportError:  # a package older than this template: the inline pre-T-2273 check, no rollback flag
+            def internal_run():
+                return any(os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+                           for name in ("MEMORYMASTER_INTERNAL_CODEX", "MEMORYMASTER_INTERNAL_RUN"))
 
-        if internal_run():  # the shared check, before stdin is even read (T-2273)
+            def filter_enabled(adapter):
+                return True
+
+        # The shared check, before stdin is even read (T-2273). MEMORYMASTER_RECALL_MACHINE_FILTER_CODEX=0
+        # rolls it back too, so the Codex adapter recalls even for internal runs.
+        if filter_enabled("codex") and internal_run():
             return 0
         data = json.loads(sys.stdin.read())
         if not isinstance(data, dict):

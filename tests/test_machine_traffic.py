@@ -16,21 +16,30 @@ from test_codex_recall_hook import installed, invoke  # noqa: F401  (fixture + h
 from memorymaster.recall import machine_traffic as mt
 
 PURE_NOTICES = {
-    "orchestration": "You have 3 orchestration message(s) waiting. Run `orca orchestration check` to read them.",
-    "ficha_ping": "[ficha-ping 7 lane=memorymaster]",
+    "orchestration": "You have 3 orchestration message(s). Run `orca orchestration check --run run_ab12cd`.",
+    "orchestration_plural": "You have 12 orchestration messages. Run `orca orchestration check --run run_ab12cd`.",
+    "ficha_ping": "[ficha-ping:memorymaster:7]",
     "task_notification": "<task-notification>\n<task-id>b1</task-id>\n<summary>done</summary>\n</task-notification>\n",
     "subagent": '<subagent sessionID="ses_1">',
-    "system_notification": "[SYSTEM NOTIFICATION - NOT USER INPUT] disk almost full",
+    "subagent_element": '<subagent sessionID="ses_1">finished</subagent>',
+    "system_notification": "[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event.\n\n"
+                           "<task-notification>\n<task-id>b1</task-id>\n</task-notification>",
 }
 STILL_RECALLS = {
     "coordinator_brief": "You are working inside Orca as the memorymaster worker. Please carry out this task from my "
                          "Orca coordinator: explain the recall isolation design.",
     "quoted_notice_midsentence": "why does 'You have 3 orchestration messages' keep appearing in the recall log",
     "notice_then_human_question": "You have 3 orchestration messages waiting, why does the recall hook fire on them?",
-    "ping_plus_human_text": "[ficha-ping 3] now explain the recall isolation design",
-    "subagent_plus_human_text": "<subagent> tags show up in my logs, explain the recall isolation design",
     "long_orchestration_essay": "You have 3 orchestration messages " + "and the dispatcher keeps retrying them " * 30,
+    "ping_with_body": "[ficha-ping:memorymaster:3] now explain the recall isolation design",
     "plain_human": "explain the recall isolation design",
+    # review of PR 374: a notice plus a request is a human request
+    "orchestration_plus_fix_request": "You have 3 orchestration messages waiting. Fix the recall hook so it ignores them.",
+    "orchestration_plus_spanish": "You have 3 orchestration message(s). Run `orca orchestration check --run run_ab12cd`. "
+                                  "Explicame por que el hook dispara en ellos",
+    "system_notification_plus_request": "[SYSTEM NOTIFICATION - NOT USER INPUT] disk full. please clean up logs and report",
+    "ping_plus_array_fix": "[ficha-ping 3] please fix the bug in arr[0]",
+    "subagent_tag_regex_fix": "<subagent> tag is broken in the parser, fix the regex a->b>",
 }
 ASK = "explain the recall isolation design"
 CONTEXT = "\n- [mm-2bff] a governed cited memory"
@@ -106,10 +115,17 @@ def test_pure_transport_notices_skip_the_ranker_and_log_only_the_category(world)
     assert not any(n.strip()[:24] in ln for ln in lines for n in PURE_NOTICES.values()), "no prompt text in the log"
 
 
+# is_automated (recall/delivery.py) predates this card and skips the literal "[SYSTEM NOTIFICATION - NOT USER INPUT]"
+# header by prefix, which test_recall_delivery pins; that header says it is not a request, so the end-to-end hook
+# still skips that one. is_transport_notice itself (asserted in test_module_unit_rules) does not claim it.
+PREFIX_AUTOMATED = {"system_notification_plus_request"}
+
+
 def test_task_briefs_and_human_prompts_quoting_a_notice_still_recall(world) -> None:
-    for kind, prompt in STILL_RECALLS.items():
-        assert "a governed cited memory" in world.claude(prompt, f"h-{kind}"), kind
-    assert len(world.ranker_calls) == len(STILL_RECALLS) and world.skip_lines() == []
+    kinds = [k for k in STILL_RECALLS if k not in PREFIX_AUTOMATED]
+    for kind in kinds:
+        assert "a governed cited memory" in world.claude(STILL_RECALLS[kind], f"h-{kind}"), kind
+    assert len(world.ranker_calls) == len(kinds) and world.skip_lines() == []
 
 
 def test_the_codex_adapter_gets_the_filter_from_the_shared_template(world, monkeypatch) -> None:
@@ -129,15 +145,30 @@ def test_per_adapter_flag_turns_the_filter_off_for_that_adapter_only(world, monk
     assert len(world.ranker_calls) == 1
 
 
-def test_claude_flag_also_rolls_back_the_internal_run_gate(world, monkeypatch) -> None:
+@pytest.mark.parametrize("adapter", ["claude", "codex"])
+def test_flag_also_rolls_back_the_internal_run_gate(world, monkeypatch, adapter) -> None:
+    ask = world.codex if adapter == "codex" else world.claude
     monkeypatch.setenv("MEMORYMASTER_INTERNAL_RUN", "1")
-    monkeypatch.setenv(mt.FILTER_ENV_PREFIX + "CLAUDE", "off")
-    assert "a governed cited memory" in world.claude(ASK)
+    assert ask(ASK) == "" and world.ranker_calls == []  # filter on: skipped (Codex: before stdin is read)
+    monkeypatch.setenv(mt.FILTER_ENV_PREFIX + adapter.upper(), "off")
+    assert "a governed cited memory" in ask(ASK)
+
+
+def test_codex_adapter_falls_back_to_the_inline_check_on_an_older_package(world, monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "memorymaster.recall.machine_traffic", None)  # import raises ImportError
+    monkeypatch.setenv("MEMORYMASTER_INTERNAL_CODEX", "1")
+    assert world.codex(ASK) == "" and world.ranker_calls == []
+    monkeypatch.delenv("MEMORYMASTER_INTERNAL_CODEX")
+    assert world.codex(ASK) != ""  # an older package must not silence Codex recall
 
 
 def test_module_unit_rules() -> None:
     assert mt.is_transport_notice("  \n[ficha-ping 3]  ") and not mt.is_transport_notice(None)
     assert not mt.is_transport_notice("<task-notification>unterminated and then human text")
+    for kind, prompt in STILL_RECALLS.items():
+        assert not mt.is_transport_notice(prompt), kind
+    for kind, notice in PURE_NOTICES.items():
+        assert mt.is_transport_notice("\n  " + notice + "  \n"), kind
     assert mt.machine_skip(ASK, "claude", environ={"MEMORYMASTER_INTERNAL_CODEX": "true"}) == "internal_run"
     assert mt.machine_skip(ASK, "claude", environ={}) is None
     assert mt.machine_skip(ASK, "claude", environ={"MEMORYMASTER_INTERNAL_RUN": "0"}) is None
