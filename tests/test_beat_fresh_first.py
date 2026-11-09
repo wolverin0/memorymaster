@@ -1,4 +1,4 @@
-"""Beat throughput: fresh scanned captures go first, the old backlog keeps a slot, 3 consolidations per tick."""
+"""Beat throughput: fresh scanned captures go first, the old backlog keeps a slot, 12 consolidations per tick by default."""
 
 from __future__ import annotations
 
@@ -84,19 +84,18 @@ def test_the_default_order_is_unchanged_for_the_dream_job(tmp_path: Path) -> Non
     assert DreamConfig().oldest_reserve == 0 and DreamConfig.from_env().oldest_reserve == 0
 
 
-def test_the_beat_tick_reserves_one_backlog_slot_and_consolidates_three_captures() -> None:
-    assert scheduled_task.BEAT_MAX_SESSIONS == 3
-    assert scheduled_task.BEAT_MAX_CONSOLIDATE_CAPTURES == 3
+def test_the_beat_tick_reserves_one_backlog_slot_and_consolidates_twelve_captures() -> None:
+    assert scheduled_task.BEAT_MAX_SESSIONS == 12
+    assert scheduled_task.BEAT_MAX_CONSOLIDATE_CAPTURES == 12
     assert scheduled_task.BEAT_OLDEST_RESERVE == 1
 
 
-def test_one_beat_sized_run_consolidates_three_captures(tmp_path: Path) -> None:
+def test_a_three_slot_run_consolidates_three_captures(tmp_path: Path) -> None:
     ledger = DreamLedger(tmp_path / "capture.db")
     old, new = _queue(ledger, backlog=3, fresh=3)
     consolidator = H["_Consolidator"]()
     config = replace(
-        DreamConfig(), max_sessions=scheduled_task.BEAT_MAX_SESSIONS,
-        max_consolidate_captures_per_run=scheduled_task.BEAT_MAX_CONSOLIDATE_CAPTURES,
+        DreamConfig(), max_sessions=3, max_consolidate_captures_per_run=3,
         oldest_reserve=scheduled_task.BEAT_OLDEST_RESERVE, idle_minutes=0,
     )
     worker = DreamWorker(ledger, H["_service"](tmp_path), EXTRACTOR(), consolidator, config=config, now=lambda: NOW)

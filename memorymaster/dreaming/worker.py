@@ -166,6 +166,10 @@ class Consolidator(Protocol):
     def consolidate(self, candidates: list[DreamCandidate], current_claims: list[dict[str, Any]], *, scope: str) -> ConsolidationResult: ...
 
 
+# Upper bound on candidates per consolidation call, whatever the env/config asks for.
+MAX_CONSOLIDATE_CANDIDATES_CLAMP = 30
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return max(0, int(os.environ.get(name, str(default))))
@@ -220,7 +224,8 @@ class DreamConfig:
     # tokens. 2M/dia por proveedor es holgado contra el consumo diario observado y
     # aun asi corta una fuga como la de openai antes de que llegue a los 9,76M.
     max_input_tokens_daily: int = 2_000_000
-    max_consolidate_candidates: int = 5
+    # Candidates packed into one consolidation call (T-2123: 5 -> 15; batches still split on prompt size).
+    max_consolidate_candidates: int = 15
     max_semantic_attempts: int = 2
     # Absolute cap on counted failures per capture, any stage; stage success
     # does not reset it. Only semantic and unexpected errors count: budget
@@ -253,7 +258,7 @@ class DreamConfig:
                 "MEMORYMASTER_DREAM_MAX_INPUT_TOKENS_DAILY", 2_000_000,
             ),
             max_consolidate_candidates=_env_int(
-                "MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES", 5,
+                "MEMORYMASTER_DREAM_MAX_CONSOLIDATE_CANDIDATES", 15,
             ),
             max_semantic_attempts=_env_int("MEMORYMASTER_DREAM_MAX_SEMANTIC_ATTEMPTS", 2),
             max_capture_errors=_env_int("MEMORYMASTER_DREAM_MAX_CAPTURE_ERRORS", 8),
@@ -1067,7 +1072,7 @@ class DreamWorker:
         self,
         pairs: list[tuple[dict[str, Any], DreamCandidate]],
     ) -> list[list[tuple[dict[str, Any], DreamCandidate]]]:
-        limit = min(5, max(1, self.config.max_consolidate_candidates))
+        limit = min(MAX_CONSOLIDATE_CANDIDATES_CLAMP, max(1, self.config.max_consolidate_candidates))
         batches: list[list[tuple[dict[str, Any], DreamCandidate]]] = []
         for pair in pairs:
             trial = [*batches[-1], pair] if batches and len(batches[-1]) < limit else [pair]
