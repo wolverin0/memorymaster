@@ -293,8 +293,17 @@ def load_brief_claims(config: Any, *, now: datetime | None = None, per_kind: int
                     "ORDER BY COALESCE(event_time,created_at) DESC, id DESC LIMIT ?",
                     [config.tenant_id, *scopes, *types, *types, BRIEF_SCAN_ROWS],
                 ).fetchall()
+                cites: dict[int, list[dict]] = {}
+                for cite in conn.execute(
+                    "SELECT claim_id,source,locator,excerpt FROM citations WHERE claim_id IN ("
+                    + ",".join("?" for _ in rows) + ") LIMIT 4096", [row["id"] for row in rows],
+                ) if rows else ():
+                    cites.setdefault(cite["claim_id"], []).append(dict(cite))
                 for row in map(dict, rows):
                     label = row["claim_type"] if row["claim_type"] in types else row["predicate"]
+                    # Same citation gate as _claim_item: every citation names a source and locator and is safe.
+                    if not cites.get(row["id"]) or not all(c["source"] and c["locator"] and _safe(c) for c in cites[row["id"]]):
+                        continue
                     if (row["source_agent"] in GENERATED_SOURCES or not str(row["text"] or "").strip()
                             or not _safe({k: v for k, v in row.items() if k != "id"})
                             or not claim_is_temporally_current(

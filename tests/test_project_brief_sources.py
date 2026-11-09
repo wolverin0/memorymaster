@@ -63,6 +63,9 @@ def test_brief_claims_require_a_citation_and_current_validity(project_config):
     with sqlite3.connect(project_config.db_path) as conn:
         conn.execute("DELETE FROM citations WHERE claim_id=2")
     claim(project_config, 3, "Fine")
+    claim(project_config, 4, "Citation without locator")
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("UPDATE citations SET locator='' WHERE claim_id=4")
     found, _ = load_brief_claims(project_config, now=NOW)
     assert [r["id"] for r in found["decision"]] == [3]
 
