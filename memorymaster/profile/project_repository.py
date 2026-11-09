@@ -173,7 +173,7 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
                 raw = path.read_bytes()
                 try:
                     tasks, file_complete = _ledger_records(json.loads(raw))
-                except ValueError:  # malformed JSON or shape: skip this file, count it, never crash
+                except (ValueError, RecursionError):  # malformed JSON, shape or nesting depth: skip this file, count it, never crash
                     malformed += 1
                     continue
                 parsed += 1

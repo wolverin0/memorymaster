@@ -111,6 +111,18 @@ def test_only_malformed_files_is_unavailable_not_a_crash(project_config):  # noq
     assert diagnostics == ["ledger_unavailable", "ledger_malformed:1"]
 
 
+def test_deeply_nested_file_is_counted_as_malformed_not_a_crash(project_config):  # noqa: F811
+    root = project_config.ledger_root
+    for stale in root.glob("*.json"):
+        stale.unlink()
+    _write_card(root, 1, "ready", 1)
+    (root / "deep.json").write_text("[" * 100_000)
+    cards, complete, diagnostics = load_ledger(project_config)
+    assert set(cards) == {"T-0001"}
+    assert not complete
+    assert "ledger_malformed:1" in diagnostics and "ledger_incomplete" in diagnostics
+
+
 def test_file_cap_is_4096_and_fails_closed(project_config):  # noqa: F811
     root = project_config.ledger_root
     for stale in root.glob("*.json"):
