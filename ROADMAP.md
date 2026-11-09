@@ -1,4 +1,4 @@
-<!-- doc-head: lane backlog tracker at the top (2026-11-02); sole roadmap; explicit MCP authors restored, client telemetry separated; deployment and live acceptance pending -->
+<!-- doc-head: delivery-first program from the 2026-11-09 adversarial review at the top (cards T-2271..T-2278); lane backlog tracker below it; sole roadmap -->
 # MemoryMaster roadmap
 # Covers: live Jev decision ledger, memory delivery/evaluation, OpenCode hooks, context layer program and deferrals.
 # Key terms: Workflow Intelligence, governed skills, graph observations, user profile, code navigation.
@@ -6,6 +6,114 @@
 # Authority: sole roadmap; planning ledgers implement it and never replace it.
 # Safety: SQLite remains authority; generated user.md is disposable and feature-off by default.
 <!-- /doc-head -->
+
+## Delivery-first program (operator order 2026-11-09)
+
+Source: an external adversarial end-to-end review (ChatGPT, 2026-11-09) of origin/main
+f2e094e plus a slim copy of the live database, and the lane's own read-only
+measurements the same day. Verdict: partial value. The memory keeps useful facts,
+but the next agent does not reliably receive the current fact when it needs it.
+
+**Product goal.** A decision taken in Codex and corrected later reaches Claude in its
+corrected form, and the reverse, without the operator repeating anything; any CLI
+opening a project knows what that project is doing. Work that does not move toward
+this is frozen or pruned.
+
+**Rule for every item.** It starts with its reproducer failing. It closes only with
+the reproducer passing, the nodo02 gate, an independent verifier, deployment, and a
+measurement scheduled in `~/.memorymaster/checkpoints/due-measurements.json`.
+
+### Phase 0: baseline and instruments
+- [x] 0.1 Precompact residual re-enabled (D5 rollback, 2026-11-09). The review found
+  16 of 30 archived residuals useful for resuming a task. The 1,206 archived on
+  2026-11-09 cannot return to active (`archived` is terminal in `core/lifecycle.py`);
+  their rows are kept. The 917 agy stage receipts stay archived; their source is a
+  futuraMAX hook (citation source `fmx-stage-receipt`), routed to that lane.
+- [ ] 0.2 T-2271: the review's five reproducers as `xfail(strict)` regression tests
+  (firmware fact lost with 2 competing claims, Codex to Claude handoff, prose
+  correction not superseding, Stop hook sending sensitive markers intact, internal
+  process calling the ranker).
+- [ ] 0.3 T-2272: daily read-only delivery metrics (table below), first baseline row.
+- [ ] 0.4 T-2123 / PR #370: dreaming batch throughput (6 captures per tick, 15
+  candidates per call, bisected poison batches); nodo02 gate pending.
+
+### Phase 1 (P0): the right fact arrives and nothing leaks
+- [ ] 1.1 T-2273: machine notices (Orca mailbox, pings) and internal processes
+  (extractor, judges) do not trigger recall; the Claude hook honours the internal mark.
+- [ ] 1.2 T-2274: the optional Stop hook sanitizes before the provider, before
+  persisting and on export; its cursor neither drops nor repeats turns.
+- [ ] 1.3 T-2275: per-turn delivery receipts (selected, packed, emitted, observed);
+  a claim is marked seen only after final emission.
+- [ ] 1.4 T-2276: an explicit correction becomes a structured supersession (N to 1),
+  with a fast path that does not wait for dreaming.
+- [ ] 1.5 T-2277: the transcript index reads Codex, agy and OpenCode sessions, not
+  only Claude's.
+
+Exit: the five reproducers pass and the Codex, correction, Claude handoff works by
+hand in a real project.
+
+### Phase 2 (P1): better selection and continuity
+- [ ] 2.1 The best transcript fragment competes for the same hook slots under the same
+  budget (today it only fills an empty slot, `recall/context_hook.py:1245`).
+- [ ] 2.2 Pending-work handoff with expiry and idempotent consumption, replacing the
+  residual once it recovers at least 90% of still-applicable pending items.
+- [ ] 2.3 Dreaming recent-first with a quota for new captures; find the capture that
+  stalls the drain (8 of 10 drain runs on 2026-11-09 failed in seconds).
+- [ ] 2.4 Steward quality gate: archive trivial claims instead of confirming them
+  (905 confirmed against 13 archived from 2026-11-02 to 2026-11-08).
+
+### Phase 3: the A/B that decides whether MemoryMaster helps
+60 real continuations in six classes (exact decision, correction, pending work across
+CLIs, literal detail, facts spread over sessions, abstention or wrong project), at
+least 30 crossing agents. Arms: A no memory, B automatic memory, C full prior history
+when it fits, D BM25 transcript fragments at B's budget. Blind grading on a verifiable
+outcome; paired differences with session bootstrap and McNemar. If B does not beat A,
+automatic injection goes off and manual search stays. If D matches B for less, the
+layers that add nothing are retired.
+
+### Phase 4: prune in shadow
+Graph, profile, wiki, legacy embeddings (which do have a hybrid-recall reader:
+`core/service.py:1585`, `recall/degraded_vectors.py:29`) and detailed telemetry are
+disabled per cohort in shadow; removed only if no required consumer exists and the
+drop stays within -2 points. Database compaction only after a tested restore.
+
+### Track B: project state for every CLI (T-2278, design first)
+A read-only census on 2026-11-09 found the "what is each project doing" layer spread
+over sources that are not wired to memory:
+- the `_intel/tasks` ledger (about 2,250 cards, updated daily) has no MemoryMaster
+  reader;
+- `read_active_tasks` reads a `vault/active_tasks.md` that does not exist and has no
+  caller; `query_for_task` and `volunteer_context` have no caller either;
+- no CLI gets the roadmap or current task injected; agy has no MemoryMaster hook, and
+  the Codex recall hook is installed but missing from `config_templates/hooks`;
+- the GOAL.md layer has two files, last edited in July and August;
+- vanilla memories (`~/.claude/projects/*/memory`, `~/.codex`, `~/.gemini`) overlap
+  with claims by an unmeasured amount.
+
+Direction (to be settled by T-2278): wire, do not rewrite. Each kind of data keeps
+its source of truth (ledger for work, ROADMAP for plan, claims for facts, decisions
+and failures, AGENTS and DOCS-MAP for instructions). MemoryMaster adds one derived,
+disposable `project_brief(project)` view that replaces the dead `read_active_tasks`,
+delivered at SessionStart to every CLI within 400 tokens. No new store and no handoff
+documents (decision mm-2383). Acceptance: 4 CLIs by 4 projects, a fresh session asked
+what the project is doing and what failed last answers with the running card, the
+next roadmap item and three recent failures with sources, at least 14 of 16.
+
+### Daily metrics (T-2272)
+| Metric | 2026-11-09 | Target | Item |
+|---|---|---|---|
+| Codex to Claude handoff in the reproducer | 0/30 | 30/30 | 1.5 |
+| Recall returns triggered by machine notices | 52% | under 5% | 1.1 |
+| Sensitive probes reaching the provider intact (Stop) | 9/9 | 0/9 | 1.2 |
+| Omitted IDs explainable by receipt | not measurable | 100% | 1.3 |
+| Injected claims cited (diagnostic only) | 0.36% | rising | all |
+| Dreaming queue; p95 capture to applied | about 3,750; about 10 days | falling; under 24 h | 0.4, 2.3 |
+| Injected tokens per turn p95; hook latency p95 | to measure | 600 or less; 1 s or less | 2.1 |
+| A/B correct answers, B minus A | not measured | +10 points, lower CI above 0 | 3 |
+| Track B acceptance (CLIs by projects) | not measured | 14/16 | B |
+
+Deliberately excluded: changing the retrieval engine (lexical, dense and hybrid did not
+differ significantly on 58 real queries) and widening automatic capture before 1.2.
 
 ## Lane backlog tracker (updated 2026-11-03)
 
