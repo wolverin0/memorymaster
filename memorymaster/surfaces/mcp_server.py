@@ -133,6 +133,7 @@ class IngestClaimInput(_ToolInput):
     valid_from: str = ""
     valid_until: str = ""
     supersedes_claim_id: int | None = None
+    supersedes: list[int | str] = []
     source_agent: str = ""
     holder: str = ""
 
@@ -828,6 +829,7 @@ def _checkpoint_batch(
                     if item.get("supersedes_claim_id") is not None
                     else None
                 ),
+                supersedes=item.get("supersedes") or None,
                 # holder landed after checkpoint (fresh-eyes audit seam gap):
                 # keep batch items at parity with ingest_claim's fields.
                 holder=_empty_to_none(str(item.get("holder", "") or "")),
@@ -1474,6 +1476,7 @@ if FastMCP is not None:
         supersedes_claim_id: int | None = None,
         source_agent: str = "",
         holder: str = "",
+        supersedes: list[int | str] | None = None,
     ) -> dict[str, Any]:
         """
         Ingest a claim into memory.
@@ -1485,6 +1488,11 @@ if FastMCP is not None:
         `holder` (takes_vs_facts): who holds this belief (e.g. a person/team/agent).
         Omit for holder-agnostic facts. The belief TYPE (take/fact/bet/hunch)
         rides on `claim_type`.
+        `supersedes`: claims this one corrects or replaces (several allowed, N->1), as
+        claim ids or human ids such as "mm-a3f8". Same scope only; an unknown, retired or
+        other-scope reference is refused and nothing is written. Files one steward proposal
+        per target (never applied here) and the target stops being served as current at
+        once. Prefer this over writing "supersedes mm-xxxx" in the text.
         Bi-temporal fields (ISO-8601 strings, all optional):
           - event_time: when the fact occurred in the real world
           - valid_from: start of the claim validity window
@@ -1509,6 +1517,7 @@ if FastMCP is not None:
                 "valid_from": valid_from,
                 "valid_until": valid_until,
                 "supersedes_claim_id": supersedes_claim_id,
+                "supersedes": supersedes or [],
                 "source_agent": source_agent,
                 "holder": holder,
             },
@@ -1548,6 +1557,7 @@ if FastMCP is not None:
                 valid_from=_empty_to_none(request.valid_from),
                 valid_until=_empty_to_none(request.valid_until),
                 supersedes_claim_id=request.supersedes_claim_id,
+                supersedes=request.supersedes or None,
                 source_agent=effective_source,
                 holder=_empty_to_none(request.holder),
                 require_source_agent=True,
@@ -1592,7 +1602,7 @@ if FastMCP is not None:
             warnings.append(
                 "mutable state forced to high volatility; supply valid_until"
             )
-        if request.supersedes_claim_id is not None:
+        if request.supersedes_claim_id is not None or request.supersedes:
             warnings.append("supersession queued for steward review")
         response = {"ok": True, "claim": _claim_to_dict(claim)}
         if warnings:
@@ -1612,7 +1622,7 @@ if FastMCP is not None:
         `claims_json` is a JSON array of objects, each with at least `text` and
         optionally: sources_json, claim_type, subject, predicate, object_value,
         scope, volatility, confidence, event_time, valid_from, valid_until,
-        supersedes_claim_id.
+        supersedes_claim_id, supersedes (list of claim ids / human ids).
         Every item passes through the SAME sensitivity filter + ingest path as
         ingest_claim — this only saves N round-trips, it does not bypass anything.
         Returns a per-item summary (ingested ids, sensitive-skips, per-index

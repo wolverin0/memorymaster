@@ -26,6 +26,13 @@ Canonical statuses are defined in `memorymaster/models.py:CLAIM_STATUSES` — si
 
 Structure policy (T-1591), same gate: a claim with a `predicate` but no `subject` is a shifted field, not a triple, and is never auto-promoted either (`structure_blocks_auto_promotion`). `subject`+`predicate` with no `object_value` is NOT malformed (dream-worker's normal shape). The loopback/docs-URL noise is fixed at the source instead: `govern/jobs/extractor.py:infer_structure` no longer stamps `server/ip_address` for loopback addresses nor `service/url` for loopback or generic docs URLs (`GENERIC_DOCS_DOMAINS`, currently `code.claude.com` only). Existing claims' triples were not rewritten.
 
+## Corrections (T-2276)
+
+- Declared: `ingest(..., supersedes=[<claim id or mm-xxxx>, ...])` (MCP `ingest_claim` / `checkpoint` item key `supersedes`, N->1) resolves each reference INSIDE the new claim's tenant and scope (other scope, unknown or already retired -> `ValueError`, nothing written) and files one `steward_proposal:superseded_candidate` per target (source `direct-ingest`, code `explicit_supersession_intent`). Ingest never applies it; recall hides the target at once (`pending_supersession_ids`, cache dropped on filing) and approval (`resolve_steward_proposal`) sets BOTH pointers. `supersedes_claim_id` (single, cross-identity allowed) is unchanged.
+- N->1: `supersedes_claim_id` is single-valued, so the first predecessor gets the pointer pair; the others get status + `replaced_by_claim_id` and a `supersedes` claim link (`steward.retire_for_replacement`).
+- Prose safety net: text that names an explicit `mm-xxxx` / `claim <id>` next to a correction cue (EN/ES, `govern/correction_text.py`) files the same proposal with source `prose-correction`. That source is in `steward.OPERATOR_ONLY_SOURCES`: the curation drain and every automation skip it. Reason (`promotion_policy`): only an `operator`/`agent` actor of `transition_claim` is an explicit decision, ingest cannot authenticate its author and a regex is an inference. No topic matching: prose naming no id matches nothing.
+- Audit existing data with `scripts/find_prose_corrections.py` (read-only, ids only).
+
 ## Tiers (recall weight, orthogonal to status)
 
 Tiers control recall ordering. Default stored in schema is `working` (see `schema.sql:26` and `_storage_schema.py:463`). The `recompute-tiers` CLI command reports counts for three buckets (see `cli_handlers_basic.py:455`):

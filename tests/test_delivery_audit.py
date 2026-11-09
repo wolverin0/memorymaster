@@ -181,14 +181,15 @@ def test_decision_crosses_cli_in_both_directions(hooked, tmp_path) -> None:
 # --- 3. T-2276: a correction written in prose supersedes the claim it corrects -------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="T-2276: a correction stated only in prose has no supersedes/replaced_by "
-                   "pointers, so the corrected claim is still served as current next to its correction")
 def test_prose_correction_is_not_served_next_to_the_claim_it_corrects(fallback_world, monkeypatch) -> None:
     monkeypatch.setenv(transcript_fallback.ENABLED_ENV, "0")
     ask = "which port does the staging admin panel listen on"
     old = fallback_world.claim("The staging admin panel listens on port 8080")
-    new = fallback_world.claim("Correction: the staging admin panel listens on port 9443; the earlier claim that the "
-                      "staging admin panel listens on port 8080 was wrong and this claim corrects it")
+    # T-2276: the correction must NAME the claim it corrects (the safety net is anchored on an explicit id, never on
+    # topic), so the text carries the old claim's human id.
+    old_id = fallback_world.service.store.get_claim(old, include_citations=False).human_id
+    new = fallback_world.claim(f"Correction: the staging admin panel listens on port 9443; this supersedes {old_id} "
+                               "(the earlier claim that it listens on port 8080 was wrong)")
     text, ids = fallback_world.ask(ask)
     assert new in ids, f"precondition: the correction is served, got {ids}"
     old_lines = [ln for ln in text.splitlines() if f"mm-{old:x}" in ln or f"#{old} " in ln or f"mm-{old}]" in ln]

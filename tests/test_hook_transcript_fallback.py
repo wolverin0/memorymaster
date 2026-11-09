@@ -42,6 +42,7 @@ def world(tmp_path: Path, monkeypatch):
     elsewhere.mkdir()
 
     class World:
+        service = svc
         db = str(svc.store.db_path)
         index = idx
         cwd = str(here)
