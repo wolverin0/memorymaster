@@ -49,6 +49,8 @@ class World:
         monkeypatch.setenv("MEMORYMASTER_LLM_PROVIDER", "ollama")
         self.calls = 0
         self.response = ""
+        self.sent: list[str] = []
+        self.tmp_path = tmp_path
         monkeypatch.setattr(llm_provider, "_http_post", self._post)
         rendered = tmp_path / "hook.py"
         rendered.write_text(TEMPLATE.read_text(encoding="utf-8").replace(
@@ -57,9 +59,22 @@ class World:
         self.hook = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.hook)
 
-    def _post(self, *args, **kwargs) -> str:
+    def _post(self, url, payload, *args, **kwargs) -> str:
         self.calls += 1
+        self.sent.append(str(payload.get("prompt", "")))
         return self.response
+
+    def say(self, text: str) -> None:
+        self.transcript.write_text(json.dumps({"message": {"role": "assistant", "content": [
+            {"type": "text", "text": text}]}}) + "\n", encoding="utf-8")
+
+    def spool_mode(self) -> None:
+        self.monkeypatch.setenv("MEMORYMASTER_WAL_DISCIPLINE", "1")
+        self.monkeypatch.setenv("MEMORYMASTER_SPOOL_DIR", str(self.tmp_path / "spool"))
+
+    def hook_log(self) -> str:
+        path = self.tmp_path / "home" / ".memorymaster" / "hook_state" / "hook.log"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
 
     def stop(self) -> None:
         self.monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({
@@ -142,3 +157,45 @@ def test_a_missing_claims_db_defers_instead_of_dropping_the_turns(world: World) 
     world.stop()
     assert world.outcomes() == ["error"]
     assert world.pending()
+
+
+def test_the_provider_call_is_an_export_private_ips_and_personal_paths_do_not_leave(world: World) -> None:
+    world.say("Root cause: the deploy script on 192.168.10.7 reads C:\\Users\\someone\\proj\\run.py and "
+              "/home/someone/proj/run.py before the steward truncates the WAL.")
+    world.response = "[]"
+    world.stop()
+    body = "\n".join(world.sent)
+    assert world.calls == 1 and "steward truncates the WAL" in body
+    for leaked in ("192.168.10.7", "someone"):
+        assert leaked not in body, leaked
+
+
+def test_a_spool_append_failure_keeps_the_cursor_instead_of_reporting_empty(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from memorymaster.core import spool
+
+    world.spool_mode()
+    world.response = LEARNING
+
+    def broken(*args, **kwargs):
+        raise OSError("spool volume is read-only")
+
+    monkeypatch.setattr(spool, "append", broken)
+    world.stop()
+    assert world.outcomes() == ["error"]
+    assert world.pending()
+
+
+def test_the_failure_cause_in_hook_log_is_redacted(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    world.response = LEARNING
+    leak = "C:\\Users\\someone\\secret-dir and password=" + "hunter2hunter2"
+
+    def crash(self, chunk):
+        raise OSError(leak)
+
+    monkeypatch.setattr(CaptureLedger, "commit_cursor", crash)
+    world.stop()
+    log = world.hook_log()
+    assert "stop-distill failed, cursor kept: OSError" in log
+    assert "someone" not in log and "hunter2hunter2" not in log

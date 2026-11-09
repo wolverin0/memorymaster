@@ -143,7 +143,11 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # key material, a wrapped token). Needs upper + lower + digit so hex hashes, identifiers and prose
     # pass; padded blobs from 24 chars, unpadded from 40 and without '/', so file paths do not match.
     # '_' '-' '=' glued to the blob block the match (sha512-... integrity tags, key=value).
+    # An SSH public key line (`ssh-ed25519 <blob>`, `ssh-rsa <blob>`, ...) is not a secret: exempt by the
+    # key-type word right before the blob (fixed-width lookbehinds, one per type).
     ("base64_secret", re.compile(
+        r"(?<!ssh-ed25519 )(?<!ssh-rsa )(?<!ssh-dss )"
+        r"(?<!ecdsa-sha2-nistp256 )(?<!ecdsa-sha2-nistp384 )(?<!ecdsa-sha2-nistp521 )"
         r"(?<![A-Za-z0-9+/=_\-])"
         r"(?=[A-Za-z0-9+/]*[A-Z])(?=[A-Za-z0-9+/]*[a-z])(?=[A-Za-z0-9+/]*[0-9])"
         r"(?:[A-Za-z0-9+/]{24,}={1,2}|[A-Za-z0-9+]{40,})"
@@ -363,11 +367,21 @@ def _is_low_entropy_value(value: str) -> bool:
     return not (has_digit or has_special or has_upper)
 
 
+_SHA_DIGEST_CONTEXT = re.compile(r"(?i)\bsha[-_ ]?(?:256|512)\s*[:=]?\s*$")
+
+
 def _match_is_suppressed(name: str, match: re.Match[str]) -> bool:
     """Return True if a match should be ignored (placeholder / low-entropy)."""
     if _is_placeholder_match(match.group(0)):
         return True
     if name == "base64_secret":
+        # A bare sha256 (44 chars, one '=') or sha512 (88 chars, '==') base64 digest named as such
+        # right before it is a checksum, not a secret.
+        blob = match.group(0)
+        if (len(blob), blob.count("=")) in ((44, 1), (88, 2)) and _SHA_DIGEST_CONTEXT.search(
+            match.string[max(0, match.start() - 24):match.start()]
+        ):
+            return True
         # A blob that decodes to a recognised secret is left in place on purpose: every caller
         # that redacts and then rescans (profile/decisions egress, local-search snippets,
         # sanitize_persisted_text) must still see the decoded hit in the redacted text to block

@@ -7,6 +7,7 @@ swallow ordinary prose (hashes, long identifiers, money amounts, plain version n
 from __future__ import annotations
 
 import base64
+import hashlib
 
 import pytest
 
@@ -61,6 +62,43 @@ def test_a_blob_that_decodes_to_a_known_secret_keeps_the_encoded_secret_contract
     sanitized, findings = sanitize_persisted_text(blob)
     assert sanitized == "[REDACTED:encoded_secret]"
     assert "github_token" in findings
+
+
+SSH_ED25519 = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+SSH_RSA = "AAAAB3NzaC1yc2EAAAADAQABAAABAQC7vbqajDhA9ZxJ2sP0Qf4nq3yRkLwUe8TgX5MbV1cYhNzGdIoPaS6uE2" + "tW0rJ3LkQ9"
+SHA256_B64 = base64.b64encode(hashlib.sha256(b"release-1.2.3.tar.gz").digest()).decode()
+SHA512_B64 = base64.b64encode(hashlib.sha512(b"release-1.2.3.tar.gz").digest()).decode()
+
+
+@pytest.mark.parametrize("line", [
+    f"authorized key: ssh-ed25519 {SSH_ED25519} deploy@host",
+    f"ssh-rsa {SSH_RSA} deploy@host",
+    f"ecdsa-sha2-nistp256 {SSH_ED25519} laptop",
+])
+def test_an_ssh_public_key_line_is_not_redacted(line: str) -> None:
+    assert redact_text(line) == (line, [])
+
+
+@pytest.mark.parametrize("line", [
+    f"release artifact sha256 {SHA256_B64}",
+    f"sha256: {SHA256_B64}",
+    f"SHA-256={SHA256_B64}",
+    f"sha512 {SHA512_B64}",
+])
+def test_a_named_sha_digest_is_not_redacted(line: str) -> None:
+    assert (len(SHA256_B64), len(SHA512_B64)) == (44, 88)
+    assert redact_text(line) == (line, [])
+
+
+@pytest.mark.parametrize("line", [
+    f"token {SHA256_B64}",                          # same 44-char blob without a sha context word
+    f"sha256 of the file is stored next to {SHA256_B64}",  # context word too far before the blob
+    f"key {SSH_ED25519}",                           # ssh key body without the key-type word
+    f"ssh-ed25519-note {SSH_ED25519}",              # key-type lookalike, not the exact word
+])
+def test_the_exemptions_do_not_widen_beyond_their_context(line: str) -> None:
+    redacted, findings = redact_text(line)
+    assert findings == ["base64_secret"], (line, findings)
 
 
 # --- redact-then-rescan callers (egress) keep blocking a blob that decodes to a credential ---------------------

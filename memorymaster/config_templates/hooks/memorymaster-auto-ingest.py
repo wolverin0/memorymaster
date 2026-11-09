@@ -162,6 +162,20 @@ def _set_last_save(session_id, count):
         pass
 
 
+def _export_safe(text):
+    """Text as it may leave toward the provider, or "" when it must not leave at all.
+
+    The provider call is an export: the canonical credential filter, private IPv4, home and
+    absolute paths and emails are redacted (claims keep private IPs on purpose, egress does not),
+    and a text where a credential-grade finding survives is withheld (profile.egress)."""
+    try:
+        from memorymaster.profile.egress import prepare_claim_egress
+    except Exception as exc:  # fail-closed: without the egress filter nothing may leave
+        raise ExtractionFailed("egress-filter-unavailable") from exc
+    egress = prepare_claim_egress(text)
+    return "" if egress.blocked else egress.text
+
+
 def _recent_assistant_messages(transcript_path, sanitize):
     """Newest-first assistant texts of the chunk, each sanitized BEFORE it is cut to 500 chars:
     truncating first could shave a secret below its pattern's minimum length and leak the prefix."""
@@ -185,7 +199,7 @@ def _recent_assistant_messages(transcript_path, sanitize):
             elif isinstance(content, list):
                 text = " ".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
             if text:
-                text = sanitize(text)[0]
+                text = sanitize(text)
             if text and len(text) > 30:
                 messages.append(text[:500])
                 if sum(len(m) for m in messages) > 3000:
@@ -199,14 +213,9 @@ def _run_gemini_extraction(transcript_path, cwd):
     Returns "ok" (learnings kept) or "empty" (a verdict with nothing worth keeping, including a
     chunk with no assistant text). Raises ExtractionFailed when no verdict was reached, so
     _run_incremental_llm leaves the cursor where it was and the same turns are retried."""
-    try:
-        from memorymaster.core.security import sanitize_persisted_text
-    except ImportError as exc:
-        # Fail-closed: without the canonical filter nothing may leave toward the provider.
-        raise ExtractionFailed("filter-unavailable") from exc
     from memorymaster.core.llm_provider import call_llm, parse_json_response
 
-    messages = _recent_assistant_messages(transcript_path, sanitize_persisted_text)
+    messages = _recent_assistant_messages(transcript_path, _export_safe)
     if not messages or sum(len(m) for m in messages) < 50:
         return "empty"
 
@@ -281,6 +290,10 @@ Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs,
                     idempotency_key=f"llm-stop-{text_hash}",
                 )
                 ingested += 1
+            except OSError as exc:
+                # The spool write itself failed (disk, permissions): retry the chunk rather than
+                # report "empty" and commit the cursor over learnings that were never stored.
+                raise ExtractionFailed("spool-append-failed") from exc
             except Exception:
                 continue  # one bad claim must not abort the rest
     else:
@@ -357,11 +370,21 @@ def _run_rule_extraction(transcript_path, cwd):
 
 
 def _log_extraction_failure(operation, exc):
-    """One hook.log line with the cause: `capture_usage.outcome` only says 'error'."""
+    """One hook.log line with the cause: `capture_usage.outcome` only says 'error'.
+
+    The message goes through the egress redaction first (secrets, home paths, private IPs): an
+    exception text can carry any of them, and hook.log is a plain file."""
+    try:
+        from memorymaster.profile.egress import prepare_claim_egress
+
+        egress = prepare_claim_egress(str(exc))
+        detail = "<withheld>" if egress.blocked else egress.text
+    except Exception:  # swallow-ok: no filter, no detail; the exception type is still logged
+        detail = "<unavailable>"
     try:
         with open(os.path.join(STATE_DIR, "hook.log"), "a", encoding="utf-8") as log:
             log.write(f"[{datetime.now().strftime('%H:%M:%S')}] {operation} failed, cursor kept: "
-                      f"{type(exc).__name__}: {exc}" + chr(10))
+                      f"{type(exc).__name__}: {detail}" + chr(10))
     except OSError:
         pass
 
