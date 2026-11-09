@@ -15,10 +15,12 @@ import time
 from typing import Iterator
 
 from memorymaster.core.generated_artifacts import (
+    contains_generated_marker,
     GENERATED_OPENER as OPENER,
     GENERATED_CLOSER as CLOSER,
 )
 from memorymaster.profile.egress import prepare_claim_egress
+from memorymaster.profile.project_brief import BRIEF_MAX_BYTES, cut_bottom
 from memorymaster.profile.project_repository import (
     _display,
     digest,
@@ -238,6 +240,7 @@ def render_project_projection(
     fingerprints: dict | None = None,
     source_complete: bool = True,
     next_temporal_boundary: str | None = None,
+    brief: str | None = None,
 ) -> ProjectProjection:
     selected = [dict(item) for item in items]
     diagnostics = list(diagnostics or [])
@@ -283,10 +286,13 @@ def render_project_projection(
                 status,
                 omissions,
                 diagnostics,
+                *([brief] if brief else []),
             ]
         )
         lines = [f"Project {_public_identity(config.slug)}", f"View {identity[:16]} | {status}"]
         coordinates = {}
+        # The brief rides after the identity lines, ahead of the legacy sections it will replace.
+        lines.extend(brief.splitlines() if brief else [])
         byte_offset = sum(len(line.encode()) + 1 for line in lines)
 
         def append(line: str) -> None:
@@ -351,6 +357,9 @@ def render_project_projection(
             lambda item: item["section"] == "Open cards",
         )
         removable = next((item for predicate in optional for item in reversed(selected) if predicate(item)), None)
+        if removable is None and brief and chr(10) in brief:
+            brief = cut_bottom(brief)  # last resort: the brief shrinks from the bottom, never mid-line
+            continue
         if removable is None:
             raise ValueError("mandatory_projection_framing_does_not_fit")
         selected.remove(removable)
@@ -406,6 +415,8 @@ def render_project_projection(
         "source_complete": source_complete,
         "next_temporal_boundary": next_temporal_boundary,
     }
+    if brief:
+        manifest["brief"] = brief
     return ProjectProjection(payload, manifest, selected, status)
 
 
@@ -501,6 +512,12 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
             or len(payload.encode()) != manifest["payload_bytes"]
         ):
             return None
+        brief = manifest.get("brief")
+        if brief is not None and (
+            not isinstance(brief, str) or len(brief.encode()) > BRIEF_MAX_BYTES
+            or brief not in payload or contains_generated_marker(brief)
+        ):
+            return None
         records = manifest["items"]
         if (
             len(records) > 64
@@ -565,6 +582,7 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
                 manifest["status"],
                 manifest["omissions"],
                 manifest["diagnostics"],
+                *([brief] if brief else []),
             ]
         )
         if (
@@ -644,6 +662,7 @@ def read_project_projection(config: ProjectProjectionConfig) -> ProjectProjectio
         fingerprints=manifest["source_fingerprints"],
         source_complete=current["complete"],
         next_temporal_boundary=manifest.get("next_temporal_boundary"),
+        brief=manifest.get("brief"),
     )
     result.manifest["checked_at"] = manifest["checked_at"]
     return result
