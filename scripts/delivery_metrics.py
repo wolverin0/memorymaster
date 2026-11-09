@@ -2,7 +2,8 @@
 """Read-only daily delivery metrics (T-2272): the ROADMAP "Daily metrics" table as JSON.
 
 Measures, over a trailing window (default 7 days):
-  a. share of recall returns (usage_feedback rows) triggered by machine notices;
+  a. recall returns (usage_feedback rows) split into transport_notice, internal_process (both = machine_share)
+     and task_brief (legitimate demand);
   b. injected claims cited, via scripts/review_recall_citations.py (diagnostic only);
   c. dreaming queue by status and p95 hours from capture to applied (capture-control ledger);
   d. injected tokens per turn and hook latency, from recall-dense.jsonl (null with a reason if absent).
@@ -36,15 +37,50 @@ from memorymaster.core.capture_control import capture_state_path  # noqa: E402
 from memorymaster.core.security import redact_text  # noqa: E402
 from memorymaster.recall.dense_recall import read_events  # noqa: E402
 
-# Matched against the left-stripped start of usage_feedback.query_text. Widening this list changes
-# the headline share: do it deliberately, the unmatched-prefix list is there to guide it.
-MACHINE_NOTICE_PATTERNS = tuple(re.compile(p) for p in (
+# Matched against the left-stripped start of usage_feedback.query_text. Widening a list changes the
+# headline share: do it deliberately, the unmatched-prefix list is there to guide it.
+# transport_notice: the harness/orchestrator pushing a notice into a session (not human demand).
+TRANSPORT_NOTICE_PATTERNS = tuple(re.compile(p) for p in (
     r"You have \d+ orchestration message",
     r"\[ficha-ping",
     r"<task-notification",
     r"<subagent",
     r"\[SYSTEM NOTIFICATION",
 ))
+# internal_process: our own LLM pipelines prompting a CLI (not human demand). Code references:
+INTERNAL_PROCESS_PATTERNS = tuple(re.compile(p) for p in (
+    r"Extract at most (five|\d+) ",        # dreaming/providers.py EXTRACTION_INSTRUCTIONS + Gemini/other _prompt;
+                                           # surfaces/session_end_ingest.py DISTILL_PROMPT ("Extract at most 3")
+    r"Compare the \d+ candidates",         # dreaming/providers.py consolidation system prompt
+    r"You are a memory (curator|quality evaluator)",  # config_templates/hooks/memorymaster-auto-ingest.py,
+                                           # scripts/agent_session_end_ingest.py, govern/llm_steward.py EXTRACT_PROMPT,
+                                           # govern/jobs/compact_summaries.py, govern/auto_resolver.py RESOLUTION_PROMPT
+    r"You are preserving working context",  # capture/precompact_residual.py PROMPT
+    r"You are a bounded reviewer of recurring",  # knowledge/skills.py _SKILL_REVIEW_PROMPT
+    r"You are a (knowledge curator|knowledge base auditor|wiki editor|technical writer creating a wiki)",
+                                           # knowledge/vault_curator.py, vault_linter.py, wiki_engine.py
+    r"You (judge whether stored memory|are a relevance judge|are auditing the long-term memory)",
+                                           # scripts/eval_index_vs_similarity.py, label_prompts_with_judge.py, judge_claim_value.py
+    # Templates seen in live usage_feedback whose source is outside this repo (workflow/fleet tooling):
+    r"You group failures from AI coding",
+    r"Sos el curador FMX",
+    r"You decide what to do about",
+))
+# task_brief: an Orca coordinator dispatching real work. Legitimate demand: counted apart, NOT machine.
+TASK_BRIEF_PATTERNS = tuple(re.compile(p) for p in (
+    r"You are working inside Orca",
+    r"Please carry out this task from my Orca coordinator",
+    r"Revisa los lanes de FuturaMAX",
+    r"You are a subagent spawned by",
+    r"Ten[eé]s trabajo nuevo del orquestador",
+    r"Trabajo nuevo del orquestador",
+))
+CATEGORIES = {  # checked in order; the first match wins
+    "transport_notice": TRANSPORT_NOTICE_PATTERNS,
+    "internal_process": INTERNAL_PROCESS_PATTERNS,
+    "task_brief": TASK_BRIEF_PATTERNS,
+}
+MACHINE_CATEGORIES = ("transport_notice", "internal_process")  # machine_share = these two
 HEAD_CHARS = 96            # SQL-side head kept per query; every pattern anchors well inside it
 PREFIX_CHARS = 32          # unmatched prefix width reported
 TOP_UNMATCHED = 20
@@ -53,10 +89,13 @@ CHARS_PER_TOKEN = 4        # estimate, same convention as recall/context_hook.py
 LEFT_STRIP = "char(32,9,10,13)"
 
 
-def classify_query(text: str) -> bool:
-    """True when the recall query is a machine notice (pattern list above)."""
+def classify_query(text: str) -> str | None:
+    """Category of a recall query (see CATEGORIES), None when no pattern matches."""
     head = (text or "").lstrip()
-    return any(p.match(head) for p in MACHINE_NOTICE_PATTERNS)
+    for name, patterns in CATEGORIES.items():
+        if any(p.match(head) for p in patterns):
+            return name
+    return None
 
 
 def percentile(values, q: float):
@@ -88,30 +127,44 @@ def machine_notice_share(conn: sqlite3.Connection, since: datetime) -> dict:
             FROM usage_feedback WHERE timestamp >= ? AND was_returned = 1 GROUP BY head""",
         (since.isoformat(),),
     ).fetchall()
-    total = machine = events = machine_events = 0
+    total = events = 0
+    by_returns: Counter = Counter()
+    by_events: Counter = Counter()
     unmatched: Counter = Counter()
     for head, returns, distinct_events in rows:
         total += returns
         events += distinct_events
-        if classify_query(head):
-            machine += returns
-            machine_events += distinct_events
+        category = classify_query(head)
+        if category:
+            by_returns[category] += returns
+            by_events[category] += distinct_events
         else:
             unmatched[head[:PREFIX_CHARS]] += returns
+
+    def share(count: int, whole: int):
+        return round(count / whole, 4) if whole else None
+
+    machine = sum(by_returns[c] for c in MACHINE_CATEGORIES)
+    machine_events = sum(by_events[c] for c in MACHINE_CATEGORIES)
     top = []
     for prefix, count in unmatched.most_common(TOP_UNMATCHED):
         top.append({"prefix": redact_text(prefix)[0], "returns": count,
                     "looks_automated": prefix[:1] in "<[" or count >= AUTOMATED_REPEAT})
     return {
         "source": "memorymaster.db usage_feedback (was_returned=1)",
-        "headline": "share_of_returns",
+        "headline": "machine_share",
+        "machine_share": share(machine, total),
+        "machine_share_of_events": share(machine_events, events),
+        "machine_definition": "+".join(MACHINE_CATEGORIES) + "; task_brief is legitimate demand and excluded",
         "recall_returns": total,
-        "machine_notice_returns": machine,
-        "share_of_returns": round(machine / total, 4) if total else None,
         "recall_events": events,
-        "machine_notice_events": machine_events,
-        "share_of_events": round(machine_events / events, 4) if events else None,
-        "patterns": [p.pattern for p in MACHINE_NOTICE_PATTERNS],
+        "categories": {
+            name: {"returns": by_returns[name], "share_of_returns": share(by_returns[name], total),
+                   "events": by_events[name], "share_of_events": share(by_events[name], events),
+                   "patterns": [p.pattern for p in patterns]}
+            for name, patterns in CATEGORIES.items()
+        },
+        "unmatched_returns": sum(unmatched.values()),
         "top_unmatched_prefixes": top,
     }
 
@@ -214,7 +267,7 @@ def collect(db: Path, ledger: Path, home: Path, dense_log: Path, days: int = 7, 
         "generated_at": now.isoformat(),
         "window_days": days,
         "window_start": since.isoformat(),
-        "machine_notice_recall_share": _with_db(db, machine_notice_share, since),
+        "recall_returns_by_origin": _with_db(db, machine_notice_share, since),
         "injected_claims_cited": _section(citation_rate, home, days, now),
         "dreaming": _with_db(ledger, dream_queue, since, now),
         **(telemetry if "injected_tokens_per_turn" in telemetry else

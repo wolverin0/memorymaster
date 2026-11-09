@@ -27,18 +27,44 @@ def iso(hours_ago: float) -> str:
     '<subagent sessionID="ses_1">',
     "[SYSTEM NOTIFICATION] disk",
 ])
-def test_machine_notices_are_classified(text):
-    assert dm.classify_query(text)
+def test_transport_notices_are_classified(text):
+    assert dm.classify_query(text) == "transport_notice"
+
+
+@pytest.mark.parametrize("text", [
+    "Extract at most five candidates that will change future work.",
+    "Extract at most five stable facts, decisions",
+    "Extract at most 3 non-obvious bug causes",
+    "Compare the 5 candidates with governed current claims.",
+    "You group failures from AI coding sessions",
+    "Sos el curador FMX (Haiku). Repo",
+    "You are a memory curator. Extract max 3 non-obvious learnings.",
+    "You are a memory quality evaluator. Two claims contradict each other.",
+    "You are preserving working context that a conversation compaction",
+])
+def test_internal_pipeline_prompts_are_classified(text):
+    assert dm.classify_query(text) == "internal_process"
+
+
+@pytest.mark.parametrize("text", [
+    "You are working inside Orca, a multi-agent terminal",
+    "Please carry out this task from my Orca coordinator by following the brief",
+    "Revisa los lanes de FuturaMAX y reporta",
+])
+def test_orca_task_briefs_are_demand_not_machine(text):
+    assert dm.classify_query(text) == "task_brief"
+    assert "task_brief" not in dm.MACHINE_CATEGORIES
 
 
 @pytest.mark.parametrize("text", [
     "Dame las win de las últimas 12 horas",
     "Check PowerBeam PtP OpenWrt BQL",
-    "what does the <subagent> tag mean?",  # pattern must anchor at the start
+    "what does the <subagent> tag mean?",  # patterns anchor at the start
+    "can you Extract at most five candidates for me",
     "",
 ])
-def test_human_prompts_are_not_notices(text):
-    assert not dm.classify_query(text)
+def test_human_prompts_are_unclassified(text):
+    assert dm.classify_query(text) is None
 
 
 def test_percentile_is_nearest_rank():
@@ -84,17 +110,24 @@ def test_machine_notice_share_counts_returns_and_events(tmp_path):
         (5, "You have 1 orchestration message", iso(24 * 30), 1),  # outside the window
         (6, "You have 1 orchestration message", t, 0),  # not returned
         (7, "Extract at most five candidates", t, 1),
+        (8, "Compare the 3 candidates with governed claims", t, 1),
+        (9, "You are working inside Orca, a terminal", t, 1),
+        (10, "You are working inside Orca, a terminal", t, 1),
     ])
     conn = dm.open_ro(db)
     result = dm.machine_notice_share(conn, SINCE)
     conn.close()
-    assert result["recall_returns"] == 5
-    assert result["machine_notice_returns"] == 2
-    assert result["share_of_returns"] == 0.4
-    assert result["recall_events"] == 4 and result["machine_notice_events"] == 1
+    cats = result["categories"]
+    assert result["recall_returns"] == 8
+    assert cats["transport_notice"]["returns"] == 2 and cats["transport_notice"]["events"] == 1
+    assert cats["internal_process"]["returns"] == 2 and cats["internal_process"]["events"] == 2
+    assert cats["task_brief"]["returns"] == 2 and cats["task_brief"]["share_of_returns"] == 0.25
+    assert result["machine_share"] == 0.5  # transport + internal; the Orca briefs are excluded
+    assert result["recall_events"] == 6  # 1 notice + 2 internal + 1 brief + 2 human
+    assert result["machine_share_of_events"] == 0.5
+    assert result["unmatched_returns"] == 2
     prefixes = {p["prefix"]: p for p in result["top_unmatched_prefixes"]}
     assert prefixes["Dame las win de hoy"]["returns"] == 2
-    assert "Extract at most five candid" in "".join(prefixes)
 
 
 def test_dream_queue_and_p95_hours(tmp_path):
@@ -145,7 +178,7 @@ def test_collect_end_to_end_is_read_only(tmp_path):
     before = (db.stat().st_mtime_ns, ledger_db.stat().st_mtime_ns)
     report = dm.collect(db, ledger_db, tmp_path, tmp_path / "recall-dense.jsonl", 7, NOW)
     assert (db.stat().st_mtime_ns, ledger_db.stat().st_mtime_ns) == before
-    assert report["machine_notice_recall_share"]["share_of_returns"] == 1.0
+    assert report["recall_returns_by_origin"]["machine_share"] == 1.0
     assert report["injected_claims_cited"]["injected_claims"] == 0
     assert report["hook_latency"]["value"] is None
     json.dumps(report)
@@ -153,5 +186,5 @@ def test_collect_end_to_end_is_read_only(tmp_path):
 
 def test_missing_database_becomes_null_section(tmp_path):
     report = dm.collect(tmp_path / "no.db", tmp_path / "no2.db", tmp_path, tmp_path / "x.jsonl", 7, NOW)
-    assert report["machine_notice_recall_share"]["value"] is None
+    assert report["recall_returns_by_origin"]["value"] is None
     assert report["dreaming"]["value"] is None
