@@ -130,6 +130,25 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("card_number_pan", re.compile(
         r"\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2})[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"
     )),
+    # T-2274 argentine_dni: Argentine national id, only with a document keyword in front
+    # (DNI / D.N.I. / Documento [Nacional de Identidad] [N° / nro]) and 7-8 digits, dotted or not.
+    # shortcut: a bare 12.345.678 stays readable (it is indistinguishable from an ARS amount);
+    # upgrade only with a context-free signal.
+    ("argentine_dni", re.compile(
+        r"(?i)\b(?:d\.?\s?n\.?\s?i\.?|documento(?:\s+nacional\s+de\s+identidad)?)"
+        r"(?:\s*(?:n[°º]|nro\.?|n[úu]mero|n\.?))?\s*[:#\-]?\s*"
+        r"\d{1,2}[. ]?\d{3}[. ]?\d{3}\b"
+    )),
+    # T-2274 base64_secret: a standalone base64 blob that no vendor pattern names (an encoded password,
+    # key material, a wrapped token). Needs upper + lower + digit so hex hashes, identifiers and prose
+    # pass; padded blobs from 24 chars, unpadded from 40 and without '/', so file paths do not match.
+    # '_' '-' '=' glued to the blob block the match (sha512-... integrity tags, key=value).
+    ("base64_secret", re.compile(
+        r"(?<![A-Za-z0-9+/=_\-])"
+        r"(?=[A-Za-z0-9+/]*[A-Z])(?=[A-Za-z0-9+/]*[a-z])(?=[A-Za-z0-9+/]*[0-9])"
+        r"(?:[A-Za-z0-9+/]{24,}={1,2}|[A-Za-z0-9+]{40,})"
+        r"(?![A-Za-z0-9+/=_\-])"
+    )),
 ]
 
 # Claim memory has a stricter contract than user-selected raw source/evidence:

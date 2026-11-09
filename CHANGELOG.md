@@ -8,6 +8,24 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### Stop-hook extraction no longer sends sensitive text to the provider (T-2274)
+
+- `_run_gemini_extraction` (optional `MEMORYMASTER_STOP_EXTRACT`) now runs each assistant message through
+  `core.security.sanitize_persisted_text` before it is cut to 500 chars and handed to `call_llm`; it fails
+  closed (no provider call) when the filter cannot be imported. The claim drop switched from `redact_text` to the
+  decoded-variant `scan_text_for_findings`.
+- New canonical patterns in `core/security.py`: `base64_secret` (standalone base64 blob with upper+lower+digit,
+  padded from 24 chars or unpadded from 40, no `/`) and `argentine_dni` (only with a `DNI` / `D.N.I.` /
+  `Documento` keyword before 7-8 digits). A bare `12.345.678` stays readable (it is an ARS amount too). Tests in
+  `tests/test_sensitivity_filter.py`. Private IPs stay ingested on purpose.
+- The Stop cursor now moves only on a verdict: a provider timeout/outage, an unparseable answer, a missing claims
+  DB or a busy DB leave it where it was (`capture_usage.outcome='error'`, cause in `hook.log`) and the same turns
+  are retried; an answer with nothing worth keeping is recorded as `outcome='empty'`. Learnings keep their
+  text-hash idempotency key, so a retry or a crash before the commit stores them once. The rule-mining stream
+  (`stop-correction`) follows the same contract through the new `deferred` stat of `mine_transcript_rules`.
+  The installed hook must be refreshed (`memorymaster-setup-hooks`) for this to take effect.
+  Tests: `tests/test_stop_hook_cursor.py`, `tests/test_delivery_audit.py`.
+
 ### Verbatim storage no longer stops silently (T-2116)
 
 - The Stop hook skipped `verbatim_memories` storage whenever `plan_retention(...)["within_bounds"]` was false.
