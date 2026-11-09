@@ -40,7 +40,6 @@ EXPECTED_TOOLS = {
     "query_memory",
     "query_meta_decisions",
     "query_rules",
-    "read_active_tasks",
     "recall_analysis",
     "recompute_tiers",
     "redact_claim_payload",
