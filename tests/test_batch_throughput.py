@@ -28,11 +28,11 @@ def _batch_sizes(config: DreamConfig, count: int) -> list[int]:
     return [len(batch) for batch in worker._candidate_batches(_pairs(count))]
 
 
-def test_defaults_are_fifteen_candidates_per_call_and_twelve_captures_per_tick(monkeypatch) -> None:
+def test_defaults_are_fifteen_candidates_per_call_and_six_captures_per_tick(monkeypatch) -> None:
     monkeypatch.delenv(CANDIDATES_ENV, raising=False)
     assert DreamConfig().max_consolidate_candidates == DreamConfig.from_env().max_consolidate_candidates == 15
     assert _batch_sizes(DreamConfig(), 16) == [15, 1]
-    assert scheduled_task.BEAT_MAX_SESSIONS == scheduled_task.BEAT_MAX_CONSOLIDATE_CAPTURES == 12
+    assert scheduled_task.BEAT_MAX_SESSIONS == scheduled_task.BEAT_MAX_CONSOLIDATE_CAPTURES == 6
 
 
 def test_candidates_per_call_env_override_and_clamp(monkeypatch) -> None:
@@ -62,7 +62,7 @@ def test_the_old_hard_limit_of_five_is_gone_and_one_call_carries_the_whole_scope
 
 
 @pytest.mark.parametrize(("raw", "expected"), [
-    (None, 12), ("5", 5), ("0", 1), ("-3", 1), ("999", scheduled_task.BEAT_MAX_PER_TICK_CLAMP), ("abc", 12),
+    (None, 6), ("5", 5), ("0", 1), ("-3", 1), ("999", scheduled_task.BEAT_MAX_PER_TICK_CLAMP), ("abc", 6),
 ])
 def test_beat_limits_read_env_and_are_clamped(monkeypatch, raw, expected) -> None:
     env = scheduled_task.BEAT_MAX_CONSOLIDATE_CAPTURES_ENV
@@ -117,3 +117,35 @@ def test_daily_budgets_still_defer_with_the_higher_throughput_defaults(tmp_path,
     assert consolidator.scopes == []  # the exhausted cap stopped every call
     assert summary["consolidated"] == 0 and summary["deferred_consolidate_budget"] == 3
     assert {ledger.get_capture(i)["state"] for i in ids} == {"extracted"}
+
+
+@pytest.mark.parametrize("bad", [0, 7, 11])
+def test_a_failing_packed_batch_is_bisected_not_retried_per_capture(tmp_path, bad) -> None:
+    """One bad candidate in a 12-capture, 12-candidate batch must not burn a call per capture."""
+    import math
+
+    ledger = DreamLedger(tmp_path / "capture.db")
+    ids = [H["_extracted_capture"](ledger, session_hash=f"s{n}", candidate_id=f"c{n:02d}") for n in range(12)]
+
+    class Poisoned(H["_Consolidator"]):
+        sizes: list[int] = []
+        failed = 0
+
+        def consolidate(self, candidates, current_claims, *, scope):
+            type(self).sizes.append(len(candidates))
+            if any(c.candidate_id == f"c{bad:02d}" for c in candidates):
+                type(self).failed += 1
+                raise ValueError("invalid candidate")
+            return super().consolidate(candidates, current_claims, scope=scope)
+
+    summary = DreamWorker(ledger, H["_service"](tmp_path), H["_NoCall"](), Poisoned(),
+                          config=DreamConfig(jev_triage_enabled=False), now=lambda: NOW).run(apply_candidates=False)
+
+    depth = math.ceil(math.log2(12))
+    assert Poisoned.sizes[0] == 12  # one packed call carried every capture
+    assert Poisoned.failed <= depth + 1  # failing calls follow the bisection path
+    assert len(Poisoned.sizes) <= 2 * depth + 1  # the old per-capture retry used 13 calls here
+    states = [ledger.get_capture(i)["state"] for i in ids]
+    assert states[bad] == "retryable"
+    assert [s for n, s in enumerate(states) if n != bad] == ["consolidated"] * 11  # the good captures still apply
+    assert summary["consolidated"] == 11

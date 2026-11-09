@@ -940,12 +940,16 @@ class DreamWorker:
                     summary["errors"] += 1
                     continue
                 if len(capture_ids) > 1:
-                    # A packed call failed as a whole: retry each capture alone
-                    # (budget permitting) so only the offending capture is charged.
-                    batches.extendleft(
-                        (effective_scope, capture_pairs)
-                        for capture_pairs in reversed(self._by_capture(pairs))
-                    )
+                    # A packed call failed as a whole: bisect it by capture (T-2123) so only the offending
+                    # capture is finally charged. Per-capture retries cost one call per capture (up to 12 with
+                    # 15-candidate batches); halves bound the failing calls to ceil(log2(captures)) + 1, and
+                    # the good halves are productive calls that were needed anyway.
+                    by_capture = self._by_capture(pairs)
+                    mid = len(by_capture) // 2
+                    batches.extendleft((
+                        (effective_scope, [pair for group in half for pair in group])
+                        for half in (by_capture[mid:], by_capture[:mid])
+                    ))
                     continue
                 self._hold_lease()
                 self._fail_group(

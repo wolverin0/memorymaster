@@ -1,4 +1,4 @@
-"""Beat throughput: fresh scanned captures go first, the old backlog keeps a slot, 12 consolidations per tick by default."""
+"""Beat throughput: fresh scanned captures go first, the old backlog keeps a slot, 6 consolidations per tick by default."""
 
 from __future__ import annotations
 
@@ -84,9 +84,9 @@ def test_the_default_order_is_unchanged_for_the_dream_job(tmp_path: Path) -> Non
     assert DreamConfig().oldest_reserve == 0 and DreamConfig.from_env().oldest_reserve == 0
 
 
-def test_the_beat_tick_reserves_one_backlog_slot_and_consolidates_twelve_captures() -> None:
-    assert scheduled_task.BEAT_MAX_SESSIONS == 12
-    assert scheduled_task.BEAT_MAX_CONSOLIDATE_CAPTURES == 12
+def test_the_beat_tick_reserves_one_backlog_slot_and_consolidates_six_captures() -> None:
+    assert scheduled_task.BEAT_MAX_SESSIONS == 6
+    assert scheduled_task.BEAT_MAX_CONSOLIDATE_CAPTURES == 6
     assert scheduled_task.BEAT_OLDEST_RESERVE == 1
 
 
