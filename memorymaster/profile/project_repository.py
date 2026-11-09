@@ -25,6 +25,14 @@ MAX_CLAIMS = 512
 MAX_CITATIONS = 2048
 MAX_FIELD_BYTES = 16384
 MAX_SOURCE_BYTES = 8 * 1024 * 1024
+# Ledger selection (T-2278): the live ledger holds ~2.3k one-card files (~10 MB) across every
+# repo. Open cards and cards touched in the last LEDGER_RECENT_DAYS are kept; the rest are only
+# read to learn their state, so the byte cap applies to the kept set, not to the whole directory.
+LEDGER_MAX_FILES = 4096
+LEDGER_SCAN_BYTES = 32 * 1024 * 1024
+LEDGER_RECENT_DAYS = 30
+LEDGER_MAX_RECORDS = 4096
+LEDGER_MAX_CARDS = 1024
 GENERATED_SOURCES = frozenset(
     {"project-projection", "compiled-profile", "cockpit", "operational-review", "beat-narrative", "graph-summary"}
 )
@@ -124,57 +132,69 @@ def _ledger_paths(config: Any) -> list[Path]:
     for path in root.iterdir():
         if path.suffix == ".json" and path.is_file():
             paths.append(path)
-            if len(paths) > 1024:
+            if len(paths) > LEDGER_MAX_FILES:
                 raise ValueError("ledger_file_limit")
     return sorted(paths)
+
+
+def _ledger_records(data: Any) -> tuple[list, bool]:
+    """Task records of one parsed ledger file plus that file's own completeness claim."""
+    if isinstance(data, dict) and "tasks" in data:
+        tasks, complete = data["tasks"], data.get("complete") is True
+    else:
+        tasks, complete = (data if isinstance(data, list) else [data]), True
+    if not isinstance(tasks, list) or not all(isinstance(row, dict) for row in tasks):
+        raise ValueError("invalid_ledger")
+    return tasks, complete
 
 
 def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict, bool, list[str]]:
     if not config.ledger_root or not config.ledger_repo or not config.ledger_filtered:
         return {}, False, ["ledger_unavailable"]
-    consumed = 0
-
-    def read_bytes(path: Path) -> bytes:
-        nonlocal consumed
-        remaining = max_bytes - consumed
-        if remaining < 0:
-            raise ValueError("ledger_byte_limit")
-        with path.open("rb") as stream:
-            raw = stream.read(remaining + 1)
-        consumed += len(raw)
-        if consumed > max_bytes:
-            raise ValueError("ledger_byte_limit")
-        return raw
 
     for attempt in range(2):
         try:
             paths = _ledger_paths(config)
             if not paths:
                 raise ValueError("no_ledger_input")
-            before = [(path.stat().st_mtime_ns, path.stat().st_size) for path in paths]
-            if sum(size for _, size in before) > max_bytes:
-                raise ValueError("ledger_byte_limit")
-            records = []
-            complete = True
-            content_hashes = []
+            before = []
             for path in paths:
-                raw = read_bytes(path)
+                stat = path.stat()
+                before.append((stat.st_mtime_ns, stat.st_size))
+            if sum(size for _, size in before) > LEDGER_SCAN_BYTES:
+                raise ValueError("ledger_byte_limit")
+            recent_ns = time.time_ns() - LEDGER_RECENT_DAYS * 86_400 * 1_000_000_000
+            kept: list[Path] = []
+            records: list = []
+            content_hashes = []
+            complete = True
+            malformed = parsed = consumed = 0
+            for path, (mtime_ns, _) in zip(paths, before):
+                raw = path.read_bytes()
+                try:
+                    tasks, file_complete = _ledger_records(json.loads(raw))
+                except ValueError:  # malformed JSON or shape: skip this file, count it, never crash
+                    malformed += 1
+                    continue
+                parsed += 1
+                mine = [row for row in tasks if row.get("repo") == config.ledger_repo]
+                if not mine or not (mtime_ns >= recent_ns or any(row.get("state") in OPEN_STATES for row in mine)):
+                    continue
+                consumed += len(raw)
+                if consumed > max_bytes:
+                    raise ValueError("ledger_byte_limit")
+                kept.append(path)
                 content_hashes.append(hashlib.sha256(raw).digest())
-                data = json.loads(raw)
-                if isinstance(data, dict) and "tasks" in data:
-                    complete = complete and data.get("complete") is True
-                    tasks = data["tasks"]
-                else:
-                    tasks = data if isinstance(data, list) else [data]
-                if not isinstance(tasks, list):
-                    raise ValueError("invalid_ledger")
+                complete = complete and file_complete
                 records.extend(tasks)
-                if len(records) > 1024:
+                if len(records) > LEDGER_MAX_RECORDS:
                     raise ValueError("ledger_record_limit")
+            if malformed:
+                complete = False
+                if not parsed:
+                    return {}, False, ["ledger_unavailable", f"ledger_malformed:{malformed}"]
             cards = {}
             for row in records:
-                if not isinstance(row, dict):
-                    raise ValueError("invalid_ledger_record")
                 if row.get("repo") != config.ledger_repo:
                     continue
                 if row.get("blind") or row.get("is_blind") or row.get("visibility", "public") != "public":
@@ -205,15 +225,22 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
                     "open": selected["state"] in OPEN_STATES,
                     "sort": [selected["state"], card_id],
                 }
-                if len(cards) > 256:
+                if len(cards) > LEDGER_MAX_CARDS:
                     raise ValueError("ledger_card_limit")
-            after_hashes = [hashlib.sha256(read_bytes(path)).digest() for path in paths]
-            after = [(path.stat().st_mtime_ns, path.stat().st_size) for path in paths]
+            # Skipped files are only re-statted; the kept set is re-hashed byte for byte.
+            after_hashes = [hashlib.sha256(path.read_bytes()).digest() for path in kept]
+            after = []
+            for path in paths:
+                stat = path.stat()
+                after.append((stat.st_mtime_ns, stat.st_size))
             if before != after or content_hashes != after_hashes or paths != _ledger_paths(config):
                 if attempt == 0:
                     continue
                 raise ValueError("ledger_changed_during_read")
-            return cards, complete, [] if complete else ["ledger_incomplete"]
+            diagnostics = [] if complete else ["ledger_incomplete"]
+            if malformed:
+                diagnostics.append(f"ledger_malformed:{malformed}")
+            return cards, complete, diagnostics
         except (OSError, ValueError, TypeError, KeyError):
             return {}, False, ["ledger_unavailable"]
     return {}, False, ["ledger_unavailable"]
