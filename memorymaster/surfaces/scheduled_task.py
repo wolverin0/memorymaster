@@ -33,11 +33,27 @@ _JOB_LOG = logging.getLogger("memorymaster.jobs")
 BEAT_ENABLED_ENV = "MEMORYMASTER_BEAT_ENABLED"
 # One tick must end before the next 5-minute tick starts: the lease outlives a stuck run by at most this.
 BEAT_LEASE_TTL_SECONDS = 270
-# Three slots are enough for three consolidations: every picked capture is extracted first or already waiting.
-# Two slots go to freshly scanned sessions, one stays oldest-first so the old backlog still drains.
-BEAT_MAX_SESSIONS = 3
-BEAT_MAX_CONSOLIDATE_CAPTURES = 3
+# Slots equal consolidations: every picked capture is extracted first or already waiting. T-2123: 3 per tick
+# left the backlog growing (252 consolidated in 37h against ~370 arrivals), so the defaults are 6. Spend stays
+# bounded by the daily call/token caps, not by these; the clamp only bounds the ask.
+# shortcut: a tick that outlasts the 5-minute cadence holds the lease, so the next tick skips its transcript scan;
+# lower the env limits if beat.log shows worker_busy ticks, or move the scan out of the lease if that persists.
+# BEAT_OLDEST_RESERVE slots stay oldest-first so the old backlog still drains; the rest go to freshly scanned sessions.
+BEAT_MAX_SESSIONS = 6
+BEAT_MAX_CONSOLIDATE_CAPTURES = 6
+BEAT_MAX_SESSIONS_ENV = "MEMORYMASTER_BEAT_MAX_SESSIONS"
+BEAT_MAX_CONSOLIDATE_CAPTURES_ENV = "MEMORYMASTER_BEAT_MAX_CONSOLIDATE_CAPTURES"
+BEAT_MAX_PER_TICK_CLAMP = 30
 BEAT_OLDEST_RESERVE = 1
+
+
+def _beat_limit(env: str, default: int) -> int:
+    """Per-tick limit from ``env``, clamped to 1..BEAT_MAX_PER_TICK_CLAMP (0 must never mean "uncapped")."""
+    try:
+        value = int(os.environ.get(env, str(default)))
+    except ValueError:
+        value = default
+    return max(1, min(BEAT_MAX_PER_TICK_CLAMP, value))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -179,8 +195,8 @@ def _run_capture_beat(args: argparse.Namespace, outcomes: list[str] | None = Non
     Off unless MEMORYMASTER_BEAT_ENABLED is truthy. The guard is asked first; on ``skip`` nothing
     else is touched. Otherwise the tick holds the shared ``dream-worker`` lease while it scans, and
     releases it before ``run_dream``, which takes that same lease itself. Hourly Dreaming holding it is a normal no-op for the beat, not a failure.
-    ``allow`` runs the worker with ``max_sessions`` 3 (two fresh, one oldest-first) and three consolidated captures, under the
-    existing daily token ceiling; ``capture_only`` and ``skip`` never call a model.
+    ``allow`` runs the worker with ``max_sessions`` and consolidated captures from ``BEAT_MAX_SESSIONS`` /
+    ``BEAT_MAX_CONSOLIDATE_CAPTURES`` (6 each, env-configurable; one slot oldest-first), under the existing daily caps; ``capture_only`` and ``skip`` never call a model.
     Claims are applied only if the operator passes ``--apply-candidates``.
     """
     if not _beat_enabled():
@@ -216,8 +232,9 @@ def _run_capture_beat(args: argparse.Namespace, outcomes: list[str] | None = Non
             config = replace(
                 DreamConfig.from_env(),
                 lease_ttl_seconds=BEAT_LEASE_TTL_SECONDS,
-                max_sessions=BEAT_MAX_SESSIONS,
-                max_consolidate_captures_per_run=BEAT_MAX_CONSOLIDATE_CAPTURES,
+                max_sessions=_beat_limit(BEAT_MAX_SESSIONS_ENV, BEAT_MAX_SESSIONS),
+                max_consolidate_captures_per_run=_beat_limit(
+                    BEAT_MAX_CONSOLIDATE_CAPTURES_ENV, BEAT_MAX_CONSOLIDATE_CAPTURES),
                 oldest_reserve=BEAT_OLDEST_RESERVE,
             )
             dream = run_dream(args.db, args.workspace, apply_candidates=bool(args.apply_candidates), config=config)

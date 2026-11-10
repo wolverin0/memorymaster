@@ -79,8 +79,8 @@ def test_allow_asks_the_guard_then_scans_then_runs_a_bounded_dream(beat, monkeyp
     assert [name for name, _ in beat["calls"]] == ["guard", "scan", "dream"]
     dream_kwargs = beat["calls"][2][1]
     config = dream_kwargs["config"]
-    assert config.max_sessions == 3
-    assert config.max_consolidate_captures_per_run == 3
+    assert config.max_sessions == 6
+    assert config.max_consolidate_captures_per_run == 6
     assert config.oldest_reserve == 1
     assert config.lease_ttl_seconds == 270
     assert config.max_input_tokens_daily == 2_000_000  # the shared daily ceiling is kept

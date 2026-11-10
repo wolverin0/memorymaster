@@ -34,7 +34,7 @@ def test_backfill_packing_fills_five_across_capture_boundaries_preserving_owners
     candidate = _Extractor().extract([], scope="project:test", capture_hash="hash").candidates[0]
     pairs = [({"id": 1 if index < 3 else 2, "scope": "project:test"},
               replace(candidate, candidate_id=f"candidate-{index}")) for index in range(6)]
-    worker = DreamWorker(None, None, None, _Consolidator(), config=DreamConfig(max_consolidate_candidates=20))
+    worker = DreamWorker(None, None, None, _Consolidator(), config=DreamConfig(max_consolidate_candidates=5))
     batches = worker._candidate_batches(pairs)
     assert [len(batch) for batch in batches] == [5, 1]
     assert [pair for batch in batches for pair in batch] == pairs
@@ -121,7 +121,7 @@ def test_backfill_partial_capture_failure_withdraws_dependent_peer_decisions(tmp
             return super().consolidate(candidates, current_claims, scope=scope)
 
     summary = DreamWorker(ledger, service, _NoCall(), FailTail(),
-                          config=DreamConfig(jev_triage_enabled=False), now=lambda: NOW).run(apply_candidates=False)
+                          config=DreamConfig(jev_triage_enabled=False, max_consolidate_candidates=5), now=lambda: NOW).run(apply_candidates=False)
     assert ledger.get_capture(ids[1])["state"] == "retryable"
     assert summary["deferred_consolidate_dependencies"] == 2
     for capture_id in (ids[0], ids[2]):
@@ -1042,7 +1042,7 @@ def test_consolidation_packs_captures_under_default_call_budget(tmp_path):
 
     summary = DreamWorker(ledger, service, _NoCall(), Counting(), config=DreamConfig(),
                           now=lambda: NOW).run(apply_candidates=False)
-    assert Counting.sizes == [5, 5, 5, 5]
+    assert Counting.sizes == [15, 5]  # T-2123: 15 candidates per call, was 5
     assert [ledger.get_capture(i)["state"] for i in ids] == ["consolidated"] * 20
     assert summary["consolidated"] == 20
     assert summary["deferred_consolidate_budget"] == 0
