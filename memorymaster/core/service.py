@@ -540,6 +540,7 @@ class MemoryService(IntegrationService):
         valid_from: str | None = None,
         valid_until: str | None = None,
         supersedes_claim_id: int | None = None,
+        supersedes: list[str | int] | str | int | None = None,
         source_agent: str | None = None,
         visibility: str = "public",
         holder: str | None = None,
@@ -548,6 +549,7 @@ class MemoryService(IntegrationService):
         intake_batch_max: int | None = None,
         _pre_sanitization_findings: list[str] | None = None,
         outcome_receipt: dict[str, Any] | None = None,
+        supersession_report: dict[str, Any] | None = None,
     ) -> Claim:
         prepare_outcome_receipt(outcome_receipt)
         from memorymaster.core.generated_artifacts import contains_generated_marker, strip_generated_spans
@@ -638,7 +640,7 @@ class MemoryService(IntegrationService):
             claim_type = claim_type.strip().lower() or None
         intake_governance = ingest_governance.prepare_ingest_governance(
             self.store, text=sanitized.text, claim_type=claim_type,
-            supersedes_claim_id=supersedes_claim_id, tenant_id=self.tenant_id,
+            supersedes_claim_id=supersedes_claim_id, supersedes=supersedes, tenant_id=self.tenant_id,
             scope=scope, volatility=volatility, valid_until=valid_until,
             visibility=visibility, source_agent=source_agent,
         )
@@ -657,8 +659,7 @@ class MemoryService(IntegrationService):
                 observability.bump_claim_ingested(source_agent)
                 revived = self._revive_archived_dedup_match(existing_claim, source_agent)
                 if revived.status != "archived":
-                    ingest_governance.queue_supersession_proposal(
-                        self.store, intake_governance.supersession_target, revived, confidence)
+                    ingest_governance.queue_for_revived(self, intake_governance, revived, confidence, supersession_report)
                 fill_outcome_receipt(outcome_receipt, revived, created=False,
                                      persisted=self.store.ingest_creation_receipt(revived.id) if outcome_receipt is not None else None)
                 return revived
@@ -688,9 +689,7 @@ class MemoryService(IntegrationService):
             observability.bump_claim_ingested(source_agent)
             revived = self._revive_archived_dedup_match(existing_by_hash, source_agent)
             if revived.status != "archived":
-                ingest_governance.queue_supersession_proposal(
-                    self.store, intake_governance.supersession_target, revived, confidence
-                )
+                ingest_governance.queue_for_revived(self, intake_governance, revived, confidence, supersession_report)
             fill_outcome_receipt(outcome_receipt, revived, created=False,
                                  persisted=self.store.ingest_creation_receipt(revived.id) if outcome_receipt is not None else None)
             return revived
@@ -789,9 +788,7 @@ class MemoryService(IntegrationService):
                                  persisted=self.store.ingest_creation_receipt(claim.id))
             observability.bump_claim_ingested(source_agent)
             return claim
-        ingest_governance.apply_post_ingest_governance(
-            self.store, claim, intake_governance, confidence
-        )
+        ingest_governance.govern_created(self, claim, intake_governance, confidence, supersession_report)
 
         # Set entity_id on the claim (best-effort, don't fail ingest — but a
         # dropped write is counted now, not swallowed).

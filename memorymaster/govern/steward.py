@@ -869,11 +869,9 @@ def _apply_decision(service: MemoryService, claim: Any, decision: Decision) -> N
     if decision.decision == "superseded_candidate":
         if decision.replaced_by_claim_id is None or claim.status == "superseded":
             return
-        service.store.mark_superseded(
-            old_claim_id=claim.id,
-            new_claim_id=decision.replaced_by_claim_id,
-            reason="steward_apply:superseded_candidate",
-            event_payload=dict(_CYCLE_EVENT_PAYLOAD),
+        retire_for_replacement(
+            service.store, claim.id, decision.replaced_by_claim_id,
+            "steward_apply:superseded_candidate", dict(_CYCLE_EVENT_PAYLOAD),
         )
         decision.applied = True
 
@@ -1429,13 +1427,44 @@ def is_jev_proposal(payload: Any) -> bool:
 
 
 # Proposal sources that wait for a human verdict: Jev's model judgments (F-21) and
-# rapidfuzz near-duplicates (T-0773, "only proposes, never merges"). Automation
-# (curation_drain) must never approve them.
-OPERATOR_ONLY_SOURCES = frozenset({"jev", "fuzzy"})
+# rapidfuzz near-duplicates (T-0773, "only proposes, never merges"), and corrections
+# inferred from a claim's prose (T-2276: a regex guess, not a declared supersession).
+# Automation (curation_drain) must never approve them.
+OPERATOR_ONLY_SOURCES = frozenset({"jev", "fuzzy", "prose-correction"})
 
 
 def is_operator_only_proposal(payload: Any) -> bool:
-    return isinstance(payload, dict) and str(payload.get("source") or "").strip().lower() in OPERATOR_ONLY_SOURCES
+    """Sources that wait for a human, plus any proposal filed across agents (``cross_identity``): ingest cannot
+    authenticate ``source_agent``, so only a same-agent supersession may be applied by automation (T-2276)."""
+    return isinstance(payload, dict) and (
+        str(payload.get("source") or "").strip().lower() in OPERATOR_ONLY_SOURCES
+        or payload.get("cross_identity") is True
+    )
+
+
+def retire_for_replacement(
+    store: Any, old_claim_id: int, new_claim_id: int, reason: str, event_payload: dict[str, object] | None = None
+) -> None:
+    """Supersede ``old`` by ``new`` with both pointers; N -> 1 (T-2276) is the exception.
+
+    ``supersedes_claim_id`` holds a single id, so when ``new`` already supersedes another claim a further
+    predecessor gets only its status and ``replaced_by_claim_id`` (through the lifecycle helper), plus a
+    ``supersedes`` link from ``new`` so the relation stays queryable.
+    shortcut: the extra predecessors have no pair pointer; upgrade if a multi-predecessor column is ever added.
+    """
+    new = store.get_claim(new_claim_id, include_citations=False)
+    if new is not None and new.supersedes_claim_id not in {None, old_claim_id}:
+        # link first: a link failure then raises before any state changed, so the reported apply error matches the DB
+        try:
+            store.add_claim_link(new_claim_id, old_claim_id, "supersedes")
+        except ValueError as exc:
+            if "already exists" not in str(exc):
+                raise
+        transition_claim(
+            store, old_claim_id, "superseded", reason, replaced_by_claim_id=new_claim_id, event_payload=event_payload
+        )
+        return
+    store.mark_superseded(old_claim_id, new_claim_id, reason, event_payload=event_payload)
 
 
 def _apply_steward_approval(
@@ -1460,12 +1489,7 @@ def _apply_steward_approval(
 
     try:
         if decision == "superseded_candidate" and isinstance(replaced_by_claim_id, int):
-            service.store.mark_superseded(
-                old_claim_id=target_claim_id,
-                new_claim_id=int(replaced_by_claim_id),
-                reason=reason,
-                event_payload=event_payload,
-            )
+            retire_for_replacement(service.store, target_claim_id, int(replaced_by_claim_id), reason, event_payload)
             applied = True
         elif proposed_status in {"stale", "conflicted", "superseded"}:
             transition_claim(
