@@ -706,6 +706,9 @@ def mine_transcript_rules(
                     # Budget hit or provider returned empty — stop this best-effort
                     # Stop-hook pass. No watermark here, so nothing to skip; a
                     # later session re-mines its own corrections.
+                    # `deferred` lets the Stop hook keep its cursor (T-2274): this was a
+                    # failure to judge, not a "no correction" verdict.
+                    stats["deferred"] = True
                     break
                 stats["llm_calls"] += 1
                 if rule is None or _is_sensitive_rule(rule):

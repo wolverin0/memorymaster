@@ -89,18 +89,24 @@ def _spool_enabled() -> bool:
     raw = os.environ.get("MEMORYMASTER_WAL_DISCIPLINE", "0").strip()
     return raw not in ("0", "false", "False", "no", "off", "")
 
-# Sensitivity filtering delegated to memorymaster.core.security.redact_text — the
-# canonical 25+ pattern set. The previous local SENSITIVE regex covered ~6 of
-# them and missed bearer/JWT/AWS/Stripe/Slack tokens, home path username
-# leaks, and card numbers. Discovered 2026-05-04 by overnight audit (F-2).
-# Import is deferred into _is_sensitive_claim() because sys.path.insert above
-# runs at module load — keeping the import lazy avoids ImportError at hook
-# install time when the package isn't on PYTHONPATH yet.
+# Sensitivity filtering delegated to the canonical memorymaster.core.security
+# filter. The previous local SENSITIVE regex covered ~6 of its patterns and
+# missed bearer/JWT/AWS/Stripe/Slack tokens, home path username leaks, and
+# card numbers. Discovered 2026-05-04 by overnight audit (F-2).
+# Imports are deferred because sys.path.insert above runs at module load —
+# keeping them lazy avoids ImportError at hook install time when the package
+# isn't on PYTHONPATH yet.
+class ExtractionFailed(RuntimeError):
+    """The extraction did not run to a verdict (provider timeout/outage, unparseable answer,
+    claims DB missing, filter unavailable). The cursor must stay put so the turns are retried."""
+
+
 def _is_sensitive_claim(c: dict) -> bool:
     """Return True if any of (text, subject, predicate, object_value) trips
-    the canonical sensitivity filter. Caller drops the claim entirely."""
+    the canonical sensitivity filter (literal and decoded variants).
+    Caller drops the claim entirely."""
     try:
-        from memorymaster.core.security import redact_text
+        from memorymaster.core.security import scan_text_for_findings
     except ImportError:
         # Fail-closed: if the canonical filter can't be imported, refuse the
         # claim. Prevents shipping unreviewed text on a broken install.
@@ -109,8 +115,7 @@ def _is_sensitive_claim(c: dict) -> bool:
         str(c.get(k, "") or "")
         for k in ("text", "subject", "predicate", "object_value")
     )
-    _, findings = redact_text(joined)
-    return bool(findings)
+    return bool(scan_text_for_findings(joined))
 
 
 def _count_human_messages(transcript_path):
@@ -157,144 +162,183 @@ def _set_last_save(session_id, count):
         pass
 
 
-def _run_gemini_extraction(transcript_path, cwd):
-    """Fallback: run Gemini extraction on non-block turns."""
+def _export_safe(text):
+    """Text as it may leave toward the provider, or "" when it must not leave at all.
+
+    The provider call is an export: the canonical credential filter, private IPv4, home and
+    absolute paths and emails are redacted (claims keep private IPs on purpose, egress does not),
+    and a text where a credential-grade finding survives is withheld (profile.egress)."""
     try:
-        from memorymaster.core.llm_provider import call_llm, parse_json_response
+        from memorymaster.profile.egress import prepare_claim_egress
+    except Exception as exc:  # fail-closed: without the egress filter nothing may leave
+        raise ExtractionFailed("egress-filter-unavailable") from exc
+    egress = prepare_claim_egress(text)
+    return "" if egress.blocked else egress.text
 
-        # Read last assistant messages
-        messages = []
-        if transcript_path and os.path.exists(transcript_path):
-            lines = Path(transcript_path).read_text(encoding="utf-8", errors="replace").splitlines()
-            for line in reversed(lines[-100:]):
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                # Claude Code transcripts wrap role+content inside `message`.
-                # Fall back to top-level for older/alternate schemas.
-                msg = entry.get("message") if isinstance(entry.get("message"), dict) else entry
-                if msg.get("role") != "assistant":
-                    continue
-                content = msg.get("content", "")
-                text = ""
-                if isinstance(content, str):
-                    text = content
-                elif isinstance(content, list):
-                    text = " ".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
-                if text and len(text) > 30:
-                    messages.append(text[:500])
-                    if sum(len(m) for m in messages) > 3000:
-                        break
 
-        if not messages or sum(len(m) for m in messages) < 50:
-            return
+def _recent_assistant_messages(transcript_path, sanitize):
+    """Newest-first assistant texts of the chunk, each sanitized BEFORE it is cut to 500 chars:
+    truncating first could shave a secret below its pattern's minimum length and leak the prefix."""
+    messages = []
+    if transcript_path and os.path.exists(transcript_path):
+        lines = Path(transcript_path).read_text(encoding="utf-8", errors="replace").splitlines()
+        for line in reversed(lines[-100:]):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # Claude Code transcripts wrap role+content inside `message`.
+            # Fall back to top-level for older/alternate schemas.
+            msg = entry.get("message") if isinstance(entry.get("message"), dict) else entry
+            if msg.get("role") != "assistant":
+                continue
+            content = msg.get("content", "")
+            text = ""
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                text = " ".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+            if text:
+                text = sanitize(text)
+            if text and len(text) > 30:
+                messages.append(text[:500])
+                if sum(len(m) for m in messages) > 3000:
+                    break
+    return messages
 
-        assistant_text = "\n---\n".join(reversed(messages))
 
-        prompt = """You are a memory curator. Extract max 3 non-obvious learnings.
+def _run_gemini_extraction(transcript_path, cwd):
+    """Fallback: run Gemini extraction on non-block turns.
+
+    Returns "ok" (learnings kept) or "empty" (a verdict with nothing worth keeping, including a
+    chunk with no assistant text). Raises ExtractionFailed when no verdict was reached, so
+    _run_incremental_llm leaves the cursor where it was and the same turns are retried."""
+    from memorymaster.core.llm_provider import call_llm, parse_json_response
+
+    messages = _recent_assistant_messages(transcript_path, _export_safe)
+    if not messages or sum(len(m) for m in messages) < 50:
+        return "empty"
+
+    # Checked before the provider call so a missing DB neither spends a call nor drops the turns.
+    if not _spool_enabled() and not os.path.exists(DB_PATH):
+        raise ExtractionFailed("db-missing")
+
+    assistant_text = "\n---\n".join(reversed(messages))
+
+    prompt = """You are a memory curator. Extract max 3 non-obvious learnings.
 Return JSON array: [{"text": "one-line", "claim_type": "fact|decision|constraint", "subject": "entity", "predicate": "aspect"}]
 Only: bug root causes, decisions, gotchas, constraints. Never: credentials, IPs, paths, code. Empty array if nothing worth remembering."""
 
-        response = call_llm(prompt, assistant_text)
-        claims = parse_json_response(response)
-        claims = [c for c in claims if not _is_sensitive_claim(c)][:3]
+    response = call_llm(prompt, assistant_text)
+    # call_llm returns "" on a timeout / transport error / HTTP error: that is a failure, not a verdict.
+    if not response or not response.strip():
+        raise ExtractionFailed("provider-empty-response")
+    claims = parse_json_response(response)
+    if not claims and not re.search(r"\[\s*\]", response):
+        raise ExtractionFailed("unparseable-response")
+    claims = [c for c in claims if isinstance(c, dict) and not _is_sensitive_claim(c)][:3]
 
-        if not claims:
-            return
+    if not claims:
+        return "empty"
 
-        from memorymaster.core.scope_utils import scope_from_cwd_or_user
+    from memorymaster.core.scope_utils import scope_from_cwd_or_user
 
-        scope = scope_from_cwd_or_user(cwd)
+    scope = scope_from_cwd_or_user(cwd)
 
-        # Per-invocation batch fence (P3 intake policy Rule D). The intake policy
-        # rejects the (N+1)th claim carrying the same intake_batch_id, so an
-        # edited hook or a compromised LLM response cannot flood past the
-        # documented "max 3 learnings per Stop" norm even if the [:3] slice above
-        # is removed. A fresh id per Stop keeps batches independent.
-        import uuid as _uuid
+    # Per-invocation batch fence (P3 intake policy Rule D). The intake policy
+    # rejects the (N+1)th claim carrying the same intake_batch_id, so an
+    # edited hook or a compromised LLM response cannot flood past the
+    # documented "max 3 learnings per Stop" norm even if the [:3] slice above
+    # is removed. A fresh id per Stop keeps batches independent.
+    import uuid as _uuid
 
-        intake_batch_id = "stop-" + _uuid.uuid4().hex[:16]
-        intake_batch_max = 3
+    intake_batch_id = "stop-" + _uuid.uuid4().hex[:16]
+    intake_batch_max = 3
 
-        if _spool_enabled():
-            # Spool regime (P1 spec §2.3): append op:"ingest" envelopes instead
-            # of opening the multi-GB DB from a per-stop hook. The steward
-            # drain replays them through svc.ingest, so the canonical
-            # sensitivity sanitize + idempotency dedup still apply (on top of
-            # the _is_sensitive_claim drop above).
-            from memorymaster.core import spool
+    if _spool_enabled():
+        # Spool regime (P1 spec §2.3): append op:"ingest" envelopes instead
+        # of opening the multi-GB DB from a per-stop hook. The steward
+        # drain replays them through svc.ingest, so the canonical
+        # sensitivity sanitize + idempotency dedup still apply (on top of
+        # the _is_sensitive_claim drop above).
+        from memorymaster.core import spool
 
-            ingested = 0
-            for c in claims:
-                text = c.get("text", "")
-                if not text or len(text) < 10:
-                    continue
-                text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
-                try:
-                    spool.append(
-                        DB_PATH,
-                        "ingest",
-                        {
-                            "text": text,
-                            "claim_type": c.get("claim_type", "fact"),
-                            "subject": c.get("subject", "codebase"),
-                            "predicate": c.get("predicate", "observation"),
-                            "scope": scope,
-                            "confidence": 0.6,
-                            "source_agent": "llm-stop-hook",
-                            "intake_batch_id": intake_batch_id,
-                            "intake_batch_max": intake_batch_max,
-                            "citations": [
-                                {"source": "llm-stop-hook", "locator": scope, "excerpt": text[:200]}
-                            ],
-                        },
-                        idempotency_key=f"llm-stop-{text_hash}",
-                    )
-                    ingested += 1
-                except Exception:
-                    continue  # one bad claim must not abort the rest
-        else:
-            if not os.path.exists(DB_PATH):
-                return
+        ingested = 0
+        for c in claims:
+            text = c.get("text", "")
+            if not text or len(text) < 10:
+                continue
+            text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
+            try:
+                spool.append(
+                    DB_PATH,
+                    "ingest",
+                    {
+                        "text": text,
+                        "claim_type": c.get("claim_type", "fact"),
+                        "subject": c.get("subject", "codebase"),
+                        "predicate": c.get("predicate", "observation"),
+                        "scope": scope,
+                        "confidence": 0.6,
+                        "source_agent": "llm-stop-hook",
+                        "intake_batch_id": intake_batch_id,
+                        "intake_batch_max": intake_batch_max,
+                        "citations": [
+                            {"source": "llm-stop-hook", "locator": scope, "excerpt": text[:200]}
+                        ],
+                    },
+                    idempotency_key=f"llm-stop-{text_hash}",
+                )
+                ingested += 1
+            except OSError as exc:
+                # The spool write itself failed (disk, permissions): retry the chunk rather than
+                # report "empty" and commit the cursor over learnings that were never stored.
+                raise ExtractionFailed("spool-append-failed") from exc
+            except Exception:
+                continue  # one bad claim must not abort the rest
+    else:
+        # Route through MemoryService.ingest instead of raw SQL so claims gain
+        # the canonical ingest path: sensitivity sanitize (defense-in-depth on
+        # top of the _is_sensitive_claim drop above), content-hash + idempotency
+        # dedup, entity resolution, auto-citation, observability, and webhook.
+        # Mirrors _run_rule_extraction, which already uses the service.
+        import sqlite3
 
-            # Route through MemoryService.ingest instead of raw SQL so claims gain
-            # the canonical ingest path: sensitivity sanitize (defense-in-depth on
-            # top of the _is_sensitive_claim drop above), content-hash + idempotency
-            # dedup, entity resolution, auto-citation, observability, and webhook.
-            # Mirrors _run_rule_extraction, which already uses the service.
-            from memorymaster.core.service import MemoryService
-            from memorymaster.core.models import CitationInput
+        from memorymaster.core.service import MemoryService
+        from memorymaster.core.models import CitationInput
 
-            svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
-            ingested = 0
-            for c in claims:
-                text = c.get("text", "")
-                if not text or len(text) < 10:
-                    continue
-                text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
-                try:
-                    svc.ingest(
-                        text=text,
-                        citations=[CitationInput(source="llm-stop-hook", locator=scope, excerpt=text[:200])],
-                        idempotency_key=f"llm-stop-{text_hash}",
-                        claim_type=c.get("claim_type", "fact"),
-                        subject=c.get("subject", "codebase"),
-                        predicate=c.get("predicate", "observation"),
-                        scope=scope,
-                        confidence=0.6,
-                        source_agent="llm-stop-hook",
-                        intake_batch_id=intake_batch_id,
-                        intake_batch_max=intake_batch_max,
-                    )
-                    ingested += 1
-                except Exception:
-                    continue  # one bad claim must not abort the rest
+        svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
+        ingested = 0
+        for c in claims:
+            text = c.get("text", "")
+            if not text or len(text) < 10:
+                continue
+            text_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
+            try:
+                svc.ingest(
+                    text=text,
+                    citations=[CitationInput(source="llm-stop-hook", locator=scope, excerpt=text[:200])],
+                    idempotency_key=f"llm-stop-{text_hash}",
+                    claim_type=c.get("claim_type", "fact"),
+                    subject=c.get("subject", "codebase"),
+                    predicate=c.get("predicate", "observation"),
+                    scope=scope,
+                    confidence=0.6,
+                    source_agent="llm-stop-hook",
+                    intake_batch_id=intake_batch_id,
+                    intake_batch_max=intake_batch_max,
+                )
+                ingested += 1
+            except sqlite3.OperationalError as exc:
+                # A locked/busy DB is transient: retry the chunk (idempotency keys make the
+                # claims already applied a no-op) instead of advancing past unstored turns.
+                raise ExtractionFailed("db-busy") from exc
+            except Exception:
+                continue  # one bad claim must not abort the rest
 
-        provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER", "google")
-        sys.stderr.write(f"[MemoryMaster] {provider} extracted {ingested} learnings\n")
-    except Exception:
-        pass
+    provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER", "google")
+    sys.stderr.write(f"[MemoryMaster] {provider} extracted {ingested} learnings\n")
+    return "ok" if ingested else "empty"
 
 
 def _run_rule_extraction(transcript_path, cwd):
@@ -302,24 +346,55 @@ def _run_rule_extraction(transcript_path, cwd):
 
     Reuses memorymaster.knowledge.rule_miner.mine_transcript_rules (single source of truth
     for the correction->rule prompt + ingest path). Bounded to one window per
-    stop to keep the hook fast; rules land as low-confidence candidates."""
-    try:
-        if not transcript_path or not os.path.exists(transcript_path) or not os.path.exists(DB_PATH):
-            return
-        from memorymaster.knowledge.rule_miner import mine_transcript_rules
-        from memorymaster.core.service import MemoryService
-        from memorymaster.core.scope_utils import scope_from_cwd_or_user
+    stop to keep the hook fast; rules land as low-confidence candidates.
 
-        scope = scope_from_cwd_or_user(cwd)
-        svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
-        stats = mine_transcript_rules(transcript_path, svc, scope=scope, max_windows=1)
-        if stats.get("ingested"):
-            sys.stderr.write(f"[MemoryMaster] mined {stats['ingested']} rule(s) from corrections\n")
-    except Exception:
+    Returns "ok" / "empty"; raises ExtractionFailed when the miner was cut short by the provider
+    or the claims DB is missing, so the cursor stays and the correction is mined again."""
+    if not transcript_path or not os.path.exists(transcript_path):
+        return "empty"
+    if not os.path.exists(DB_PATH):
+        raise ExtractionFailed("db-missing")
+    from memorymaster.knowledge.rule_miner import mine_transcript_rules
+    from memorymaster.core.service import MemoryService
+    from memorymaster.core.scope_utils import scope_from_cwd_or_user
+
+    scope = scope_from_cwd_or_user(cwd)
+    svc = MemoryService(DB_PATH, workspace_root=Path(cwd or PROJECT_ROOT))
+    stats = mine_transcript_rules(transcript_path, svc, scope=scope, max_windows=1)
+    if stats.get("deferred"):
+        raise ExtractionFailed("provider-unavailable")
+    if stats.get("ingested"):
+        sys.stderr.write(f"[MemoryMaster] mined {stats['ingested']} rule(s) from corrections\n")
+        return "ok"
+    return "empty"
+
+
+def _log_extraction_failure(operation, exc):
+    """One hook.log line with the cause: `capture_usage.outcome` only says 'error'.
+
+    The message goes through the egress redaction first (secrets, home paths, private IPs): an
+    exception text can carry any of them, and hook.log is a plain file."""
+    try:
+        from memorymaster.profile.egress import prepare_claim_egress
+
+        egress = prepare_claim_egress(str(exc))
+        detail = "<withheld>" if egress.blocked else egress.text
+    except Exception:  # swallow-ok: no filter, no detail; the exception type is still logged
+        detail = "<unavailable>"
+    try:
+        with open(os.path.join(STATE_DIR, "hook.log"), "a", encoding="utf-8") as log:
+            log.write(f"[{datetime.now().strftime('%H:%M:%S')}] {operation} failed, cursor kept: "
+                      f"{type(exc).__name__}: {detail}" + chr(10))
+    except OSError:
         pass
 
 
 def _run_incremental_llm(ledger, transcript_path, session_id, cwd, provider, operation, runner):
+    """Run `runner` over the unread transcript increment; commit the cursor only on a verdict.
+
+    Outcome recorded in capture_usage: "ok" (kept something), "empty" (the provider answered and
+    nothing was worth keeping) or "error" (no verdict: the cursor stays and the same turns are
+    retried by the next Stop; claims already applied are no-ops through their idempotency keys)."""
     chunk = ledger.read_increment(transcript_path, f"{session_id}:{operation}")
     if not chunk.text:
         return
@@ -329,19 +404,17 @@ def _run_incremental_llm(ledger, transcript_path, session_id, cwd, provider, ope
     temp_path = ""
     try:
         temp_path = _temporary_chunk(chunk.text)
-        runner(temp_path, cwd)
+        outcome = runner(temp_path, cwd)
+        ledger.commit_cursor(chunk)
         ledger.finish_llm(
             reservation,
             input_bytes=len(chunk.text.encode("utf-8")),
             output_bytes=0,
-            outcome="ok",
+            outcome=outcome if outcome in ("ok", "empty") else "ok",
         )
-        ledger.commit_cursor(chunk)
-    except Exception:  # swallow-ok: hook quiet-by-contract; `capture_usage.outcome`
-    # es vocabulario de contabilidad ('ok'/'error'), no un campo de diagnostico.
-    # Guardar la causa pide una columna nueva en capture_usage, que es otro
-    # subsistema. Deuda anotada, no escondida.
+    except Exception as exc:  # swallow-ok: hook quiet-by-contract; the cause goes to hook.log
         ledger.finish_llm(reservation, input_bytes=0, output_bytes=0, outcome="error")
+        _log_extraction_failure(operation, exc)
     finally:
         if temp_path:
             Path(temp_path).unlink(missing_ok=True)

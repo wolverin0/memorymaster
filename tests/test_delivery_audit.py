@@ -215,9 +215,6 @@ CARRIER = {
 }
 
 
-@pytest.mark.xfail(strict=True, reason="T-2274: _run_gemini_extraction hands the raw assistant text to call_llm; "
-                   "nothing sanitizes it before the provider request (redact_text alone also misses the base64 "
-                   "blob and the DNI)")
 def test_stop_hook_extraction_sends_no_sensitive_marker_to_the_provider(tmp_path, monkeypatch) -> None:
     from memorymaster.core import llm_provider
 
