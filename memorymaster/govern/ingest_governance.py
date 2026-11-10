@@ -320,6 +320,40 @@ def apply_post_ingest_governance(
     return filed + queue_prose_corrections(store, claim, confidence)
 
 
+def _finish_supersession(
+    service: Any, filed: list[int], governance: IngestGovernanceDecision, report: dict[str, Any] | None
+) -> None:
+    """Drop the service's cached pending set when a proposal was filed; say what happened to each declared target.
+
+    A proposal filed now ranks in the very next recall of THIS service; another long-lived process (an MCP server)
+    keeps its own cache for up to 300 s. ``report`` is the caller's ``supersession_report``.
+    """
+    if filed:
+        service.__dict__.pop("_pending_supersession_cache", None)
+    if report is not None:
+        declared = [t.claim.id for t in governance.supersession_targets]
+        report.update(
+            declared=declared, filed=[i for i in declared if i in filed],
+            not_filed=[i for i in declared if i not in filed],  # a live proposal for the target already exists
+            prose_filed=[i for i in filed if i not in declared],
+        )
+
+
+def queue_for_revived(
+    service: Any, governance: IngestGovernanceDecision, revived: Claim, confidence: float, report: dict[str, Any] | None
+) -> None:
+    """Dedup-hit path: the matched claim is the replacement; file the declared proposals against it."""
+    filed = queue_supersession_proposals(service.store, governance.supersession_targets, revived, confidence)
+    _finish_supersession(service, filed, governance, report)
+
+
+def govern_created(
+    service: Any, claim: Claim, governance: IngestGovernanceDecision, confidence: float, report: dict[str, Any] | None
+) -> None:
+    """Post-create governance: mutable-state override, declared and prose-named supersession proposals."""
+    _finish_supersession(service, apply_post_ingest_governance(service.store, claim, governance, confidence), governance, report)
+
+
 def queue_supersession_proposals(
     store: Any,
     targets: Sequence[SupersessionTarget],
