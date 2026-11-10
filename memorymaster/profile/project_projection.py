@@ -15,10 +15,12 @@ import time
 from typing import Iterator
 
 from memorymaster.core.generated_artifacts import (
+    contains_generated_marker,
     GENERATED_OPENER as OPENER,
     GENERATED_CLOSER as CLOSER,
 )
 from memorymaster.profile.egress import prepare_claim_egress
+from memorymaster.profile.project_brief import BRIEF_MAX_BYTES, collect_brief_inputs, cut_bottom, render_brief_cut
 from memorymaster.profile.project_repository import (
     _display,
     digest,
@@ -47,6 +49,9 @@ class ProjectProjectionConfig:
     aliases: tuple[str, ...] = ()
     enabled: bool = False
     budget_bytes: int = 2200
+    brief: bool = False  # publish the project brief with the projection
+    due_measurements: Path | None = None  # read-only due-measurements.json; None = source unavailable
+    roadmap_root: Path | None = None  # directory holding ROADMAP.md; None = project_root
 
     def __post_init__(self) -> None:
         if str(self.db_path).startswith(("postgres:", "postgresql:")):
@@ -63,7 +68,7 @@ class ProjectProjectionConfig:
             raise ValueError("invalid aliases")
         if not 400 <= self.budget_bytes <= 2200:
             raise ValueError("project cap must be 400..2200 UTF-8 bytes")
-        for name in ("db_path", "project_root", "output_root", "state_root", "ledger_root"):
+        for name in ("db_path", "project_root", "output_root", "state_root", "ledger_root", "due_measurements", "roadmap_root"):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, Path(value).resolve())
@@ -238,6 +243,7 @@ def render_project_projection(
     fingerprints: dict | None = None,
     source_complete: bool = True,
     next_temporal_boundary: str | None = None,
+    brief: str | None = None,
 ) -> ProjectProjection:
     selected = [dict(item) for item in items]
     diagnostics = list(diagnostics or [])
@@ -283,10 +289,13 @@ def render_project_projection(
                 status,
                 omissions,
                 diagnostics,
+                *([brief] if brief else []),
             ]
         )
         lines = [f"Project {_public_identity(config.slug)}", f"View {identity[:16]} | {status}"]
         coordinates = {}
+        # The brief rides after the identity lines, ahead of the legacy sections it will replace.
+        lines.extend(brief.splitlines() if brief else [])
         byte_offset = sum(len(line.encode()) + 1 for line in lines)
 
         def append(line: str) -> None:
@@ -351,6 +360,17 @@ def render_project_projection(
             lambda item: item["section"] == "Open cards",
         )
         removable = next((item for predicate in optional for item in reversed(selected) if predicate(item)), None)
+        if removable is None and brief:
+            # Last resort, after every legacy item: the brief shrinks from the bottom (never mid-line),
+            # and a budget too small even for its header drops it rather than failing the projection.
+            if chr(10) in brief:
+                brief = cut_bottom(brief)
+                diagnostics.append("brief_trimmed")
+            else:
+                brief = None
+                diagnostics.append("brief_dropped")
+            diagnostics[:] = list(dict.fromkeys(diagnostics))
+            continue
         if removable is None:
             raise ValueError("mandatory_projection_framing_does_not_fit")
         selected.remove(removable)
@@ -406,6 +426,8 @@ def render_project_projection(
         "source_complete": source_complete,
         "next_temporal_boundary": next_temporal_boundary,
     }
+    if brief:
+        manifest["brief"] = brief
     return ProjectProjection(payload, manifest, selected, status)
 
 
@@ -425,9 +447,16 @@ def build_project_projection(config: ProjectProjectionConfig) -> ProjectProjecti
     if any(diagnostic.startswith("ledger_") for diagnostic in diagnostics):
         diagnostics.append("m2_not_ready:ledger_incomplete")
     generation = digest([config.scope, config.context_key, config.epoch, snapshot["read_at"], snapshot["coverage"]])
+    brief = None
+    if config.brief:
+        now = datetime.fromisoformat(snapshot["read_at"].replace("Z", "+00:00"))
+        brief, cut = render_brief_cut(collect_brief_inputs(config, snapshot["items"], diagnostics, now))
+        if cut:
+            diagnostics.append("brief_trimmed")
     return render_project_projection(
         config,
         ordered,
+        brief=brief,
         generation=generation,
         read_at=snapshot["read_at"],
         coverage=snapshot["coverage"],
@@ -501,6 +530,12 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
             or len(payload.encode()) != manifest["payload_bytes"]
         ):
             return None
+        brief = manifest.get("brief")
+        if brief is not None and (
+            not isinstance(brief, str) or len(brief.encode()) > BRIEF_MAX_BYTES
+            or brief not in payload or contains_generated_marker(brief)
+        ):
+            return None
         records = manifest["items"]
         if (
             len(records) > 64
@@ -513,7 +548,7 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
         allowed_diagnostics = {
             "source_incomplete", "ledger_unavailable", "ledger_incomplete",
             "claims_unavailable", "coverage_limit", "inactive",
-            "incremental_scan_fence_incomplete",
+            "incremental_scan_fence_incomplete", "brief_trimmed", "brief_dropped",
             *(f"m2_not_ready:{reason}" for reason in (
                 "decisions_incomplete", "purpose_trimmed", "pinned_constraints_trimmed",
                 "open_cards_trimmed", "decisions_trimmed", "ledger_incomplete",
@@ -565,6 +600,7 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
                 manifest["status"],
                 manifest["omissions"],
                 manifest["diagnostics"],
+                *([brief] if brief else []),
             ]
         )
         if (
@@ -644,6 +680,7 @@ def read_project_projection(config: ProjectProjectionConfig) -> ProjectProjectio
         fingerprints=manifest["source_fingerprints"],
         source_complete=current["complete"],
         next_temporal_boundary=manifest.get("next_temporal_boundary"),
+        brief=manifest.get("brief"),
     )
     result.manifest["checked_at"] = manifest["checked_at"]
     return result

@@ -216,7 +216,12 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
                     "version": selected["version"],
                     "state": selected["state"],
                 }
+                # Display-only brief fields. Deliberately outside `selected`: they must not move support.hash.
+                shown = {name: _display(row[name], 160) for name in ("next_action", "blocker")
+                         if isinstance(row.get(name), str) and row[name].strip() and _safe({name: row[name]})}
                 cards[card_id] = {
+                    **shown,
+                    "updated_at": row["updated_at"] if isinstance(row.get("updated_at"), str) else None,
                     "key": "card:" + card_id,
                     "section": "Open cards",
                     "text": f"{_display(card_id, 48)} [{_display(selected['state'], 24)}] {_display(selected['title'], 80)}",
@@ -244,6 +249,172 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
         except (OSError, ValueError, TypeError, KeyError):
             return {}, False, ["ledger_unavailable"]
     return {}, False, ["ledger_unavailable"]
+
+
+BRIEF_DECISION_TYPES = ("decision", "architecture_decision")
+BRIEF_FAILURE_TYPES = ("bug", "bug_cause", "gotcha")
+BRIEF_SCAN_ROWS = 60
+BRIEF_MAX_DUE_BYTES = 4 * 1024 * 1024
+
+
+def _claim_instant(row: dict) -> datetime | None:
+    name = "event_time" if row.get("event_time") else "created_at"
+    try:
+        return _parse_iso_strict(name, row.get(name)) if isinstance(row.get(name), str) else None
+    except ValueError:
+        return None
+
+
+# The planner prefers idx_claims_replaced_by (~35k rows on the live 8 GB DB, seconds cold); the
+# (tenant_id, scope) index narrows to the project at once (measured 2 ms-100 ms with the same rows).
+BRIEF_CLAIMS_INDEX = "idx_claims_tuple_key"
+BRIEF_QUERY_SECONDS = 1.0
+
+
+def brief_claims_sql(scope_count: int, type_count: int, *, indexed: bool) -> str:
+    marks = ",".join("?" for _ in range(type_count))
+    return (
+        "SELECT id,text,claim_type,predicate,source_agent,valid_from,valid_until,event_time,created_at "
+        f"FROM claims{' INDEXED BY ' + BRIEF_CLAIMS_INDEX if indexed else ''} "
+        "WHERE tenant_id IS ? AND scope IN (" + ",".join("?" for _ in range(scope_count)) + ") "
+        "AND status='confirmed' AND COALESCE(visibility,'public')='public' AND replaced_by_claim_id IS NULL "
+        f"AND (claim_type IN ({marks}) OR predicate IN ({marks})) "
+        f"AND length(CAST(COALESCE(text,'') AS BLOB)) <= {MAX_FIELD_BYTES} "
+        "AND EXISTS (SELECT 1 FROM citations WHERE citations.claim_id=claims.id) "
+        "ORDER BY COALESCE(event_time,created_at) DESC, id DESC LIMIT ?"
+    )
+
+
+def load_brief_claims(config: Any, *, now: datetime | None = None, per_kind: int = 3):
+    """Newest confirmed decision / failure claims for the brief: ({'decision': [...], 'failure': [...]}, ok).
+
+    Same trust gates as the projection (confirmed, public, unsuperseded, cited, temporally current, not
+    generated, `_safe`), but a narrow read-only query instead of the 512-claim full scan, so a large
+    project scope still yields a brief. Each row is {'id', 'when', 'text'}; failure text is `<type>: <text>`.
+    """
+    now = now or datetime.now(timezone.utc)
+    scopes = (config.scope, *config.aliases)
+    found: dict[str, list[dict]] = {"decision": [], "failure": []}
+    try:
+        with closing(sqlite3.connect(Path(config.db_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=0.025)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA query_only=ON")
+            hint = bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
+                                     (BRIEF_CLAIMS_INDEX,)).fetchone())
+
+            def limited(sql: str, args: list) -> list:
+                # Each source query gets its own deadline: one slow scan must not starve the next.
+                deadline = time.monotonic() + BRIEF_QUERY_SECONDS
+                conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+                return conn.execute(sql, args).fetchall()
+
+            for kind, types in (("decision", BRIEF_DECISION_TYPES), ("failure", BRIEF_FAILURE_TYPES)):
+                rows = limited(brief_claims_sql(len(scopes), len(types), indexed=hint),
+                               [config.tenant_id, *scopes, *types, *types, BRIEF_SCAN_ROWS])
+                cites: dict[int, list[dict]] = {}
+                for cite in limited(
+                    "SELECT claim_id,source,locator,excerpt FROM citations WHERE claim_id IN ("
+                    + ",".join("?" for _ in rows) + ") LIMIT 4096", [row["id"] for row in rows],
+                ) if rows else ():
+                    cites.setdefault(cite["claim_id"], []).append(dict(cite))
+                for row in map(dict, rows):
+                    label = row["claim_type"] if row["claim_type"] in types else row["predicate"]
+                    # Same citation gate as _claim_item: every citation names a source and locator and is safe.
+                    if not cites.get(row["id"]) or not all(c["source"] and c["locator"] and _safe(c) for c in cites[row["id"]]):
+                        continue
+                    if (row["source_agent"] in GENERATED_SOURCES or not str(row["text"] or "").strip()
+                            or not _safe({k: v for k, v in row.items() if k != "id"})
+                            or not claim_is_temporally_current(
+                                SimpleNamespace(valid_from=row["valid_from"], valid_until=row["valid_until"]), now=now)):
+                        continue
+                    found[kind].append({"id": int(row["id"]), "when": _claim_instant(row),
+                                        "text": (f"{label}: " if kind == "failure" else "") + _display(row["text"], 110)})
+                floor = datetime.min.replace(tzinfo=timezone.utc)
+                found[kind] = sorted(found[kind], key=lambda r: (r["when"] or floor, r["id"]), reverse=True)[:per_kind]
+        return found, True
+    except (sqlite3.Error, OSError, ValueError, TypeError):
+        return {"decision": [], "failure": []}, False
+
+
+# shortcut: due-measurements rows carry no repo field, so only these slugs may show them; drop the gate
+# when Fleet adds `repo` to the file (T-2278 ask).
+DUE_SLUGS = frozenset({"memorymaster", "py-apps"})
+
+
+def load_due_failures(path: Path) -> tuple[list[dict] | None, datetime | None]:
+    """FAIL rows of the due-measurements file plus its mtime; (None, None) when missing/unreadable."""
+    try:
+        stat = Path(path).stat()
+        if stat.st_size > BRIEF_MAX_DUE_BYTES:
+            raise ValueError("due_measurements_size")
+        data = json.loads(Path(path).read_bytes())
+        rows = data["items"] if isinstance(data, dict) else data
+        if not isinstance(rows, list):
+            raise ValueError("due_measurements_shape")
+    except (OSError, ValueError, KeyError, RecursionError):
+        return None, None
+    failures = []
+    for row in rows:
+        result = row.get("result") if isinstance(row, dict) else None
+        if not (isinstance(result, str) and result.strip().startswith("FAIL") and isinstance(row.get("id"), str)):
+            continue
+        if not _safe({"id": row["id"], "result": result}):
+            continue
+        instant = None
+        for name in ("done_at", "checked_at"):
+            try:
+                instant = _parse_iso_strict(name, row[name]) if isinstance(row.get(name), str) else None
+            except ValueError:
+                instant = None
+            if instant:
+                break
+        failures.append({"id": _display(row["id"], 48), "when": instant, "text": _display(result, 110)})
+    return failures, datetime.fromtimestamp(stat.st_mtime, timezone.utc)
+
+
+ROADMAP_SECTIONS = ("Delivery-first program", "Lane backlog tracker", "Now")  # priority order
+MAX_ROADMAP_BYTES = 2 * 1024 * 1024
+_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+_OPEN_ITEM = re.compile(r"^\s*[-*]\s+\[ \]\s+(\S.*)$")
+
+
+def roadmap_next_item(project_root: Path) -> tuple[tuple[str, int] | None, datetime | None]:
+    """First unchecked `- [ ]` item under the priority sections of <project_root>/ROADMAP.md.
+
+    Returns ((text, 1-based line) | None, mtime); mtime is None when the file is missing or unreadable.
+    A section runs from its heading to the next heading of equal or higher level, so `###` blocks
+    inside `## Now` count. Heading match is the section name optionally followed by a non-word suffix.
+    """
+    path = Path(project_root) / "ROADMAP.md"
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_ROADMAP_BYTES:
+            return None, None
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None, None
+    fenced = False
+    headings: list[tuple[int, int, str]] = []  # (line index, level, title)
+    items: list[tuple[int, str]] = []
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        elif not fenced:
+            heading, item = _HEADING.match(line), _OPEN_ITEM.match(line)
+            if heading:
+                headings.append((index, len(heading.group(1)), heading.group(2).strip()))
+            elif item:
+                items.append((index, item.group(1).strip()))
+    for name in ROADMAP_SECTIONS:
+        pattern = re.compile(re.escape(name) + r"(?!\w)", re.IGNORECASE)
+        for position, (start, level, title) in enumerate(headings):
+            if not pattern.match(title):
+                continue
+            end = next((h[0] for h in headings[position + 1:] if h[1] <= level), len(lines))
+            found = next(((index, text) for index, text in items if start < index < end), None)
+            if found:
+                return (found[1], found[0] + 1), mtime
+    return None, mtime
 
 
 def _section(row: dict) -> str | None:

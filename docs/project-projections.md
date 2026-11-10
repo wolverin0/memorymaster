@@ -1,5 +1,5 @@
 <!-- doc-head: AO-3 configuration, incremental source cursor and local acceptance -->
-<!-- Covers: default-off gates, pilot limits, incremental reads and dated source verification. -->
+<!-- Covers: default-off gates, pilot limits, incremental reads, the opt-in project brief (sources, tags, stale window, roadmap_root) and dated source verification. -->
 <!-- Read when: reviewing or later authorizing the AO-3 pilot; no installation is implied. -->
 <!-- /doc-head -->
 # Project projections
@@ -54,6 +54,36 @@ Both require explicit database, scope, tenant, context, epoch, repository,
 projection and state roots. Use `--tenant legacy-null` only for NULL tenancy.
 Ledger arguments identify the filtered input. The master flag is still required.
 These commands do not enable automatic refresh or consumers.
+
+## Project brief (T-2278)
+
+An opt-in, fixed-shape digest published inside the projection: header (project, `as_of`, one
+freshness stamp per source), then RUNNING (top three cards), NEXT (first unchecked ROADMAP item),
+DECISIONS (three newest confirmed decision claims) and FAILURES (three newest bug / bug_cause /
+gotcha claims, failed or blocked cards with blocker text, and `FAIL` due-measurements). Every line
+ends with its source tag (`[T-NNNN]`, `[ROADMAP.md#L<n>]`, `[mm-<id>]`, `[due:<id>]`). A source
+older than 14 days shows `(stale Nd)`, a missing one `unavailable`, a readable-but-empty one `empty`.
+The cap is 1,600 UTF-8 bytes; the brief is cut from the bottom by whole lines.
+
+| Setting | Meaning |
+|---|---|
+| `MEMORYMASTER_PROJECT_PROJECTION_BRIEF` | Turns the brief on (default off; off leaves projections byte-identical) |
+| `MEMORYMASTER_PROJECT_PROJECTION_DUE_MEASUREMENTS` | Absolute path of `due-measurements.json`; default `~/.memorymaster/checkpoints/due-measurements.json` when the brief is on. Read-only, only for the `memorymaster` / `py-apps` slugs (the file has no repo field). Ignored while the brief is off |
+| mapping key `roadmap_root` | Absolute directory holding the `ROADMAP.md` to read; default is the mapping's `project_root`. Point memorymaster at the live-main checkout (`_wt/live-main`) so the brief does not read a stale working copy. Ignored while the brief is off; a relative value rejects the allowlist when the brief is on |
+
+Everything above is collected on the refresh path only. SessionStart reads the published file and
+never queries the database, so a brief line is not rehydrated at read time. The exposure window for
+a claim that was forgotten (archived), privatized or superseded after publication is therefore
+bounded by the refresh cycle plus the read TTL: any such write is a database commit, which changes
+the refresher's `PRAGMA data_version` fingerprint, so the next refresh tick (the in-process cache
+lives at most 60 s) rebuilds and republishes the brief without that line. If the refresher stops, the
+60-minute read TTL expires the whole projection and the brief disappears with it. A brief that does
+not fit the budget is shrunk from the bottom (`brief_trimmed`) and, if even its header cannot fit,
+dropped (`brief_dropped`); neither fails the projection.
+
+The claim query pins `idx_claims_tuple_key` (tenant, scope) when that index exists: without it the
+planner chose `idx_claims_replaced_by` (about 35k rows on the live database, seconds cold) against
+the per-query deadline (1 s each for the claim query and its citation lookup).
 
 ## Integrity and budgets
 

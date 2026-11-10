@@ -40,6 +40,13 @@ def load_project_configs() -> list:
         output = os.environ.get(PREFIX + "DIR", "")
         state = os.environ.get("MEMORYMASTER_PROJECT_SESSION_STATE_DIR", "")
         ledger = os.environ.get("MEMORYMASTER_PROJECT_LEDGER_TASKS_DIR", "")
+        brief = active(PREFIX + "BRIEF")
+        # Brief-only settings: ignored (never fatal) while the brief is off.
+        due = os.environ.get(PREFIX + "DUE_MEASUREMENTS", "") if brief else ""
+        if brief and not due:
+            due = str(Path.home() / ".memorymaster" / "checkpoints" / "due-measurements.json")
+        if due and not Path(due).is_absolute():
+            return []
         if (not isinstance(mappings, list) or not 1 <= len(mappings) <= MAX_PROJECTS or not epoch
                 or len(epoch) > 128 or not output or not state
                 or not Path(output).is_absolute() or not Path(state).is_absolute()
@@ -53,6 +60,9 @@ def load_project_configs() -> list:
                 return []
             if not Path(row["project_root"]).is_absolute():
                 return []
+            roadmap = row.get("roadmap_root") if brief else None
+            if roadmap is not None and (not isinstance(roadmap, str) or not Path(roadmap).is_absolute()):
+                return []
             identity = (row["context_key"], row["scope"])
             if identity in seen:
                 return []
@@ -63,7 +73,9 @@ def load_project_configs() -> list:
                 output_root=Path(output), state_root=Path(state),
                 ledger_root=Path(ledger) if ledger else None, ledger_repo=row.get("ledger_repo"),
                 ledger_filtered=row.get("ledger_filtered") is True,
-                aliases=tuple(row.get("aliases", ())), enabled=True))
+                aliases=tuple(row.get("aliases", ())), enabled=True,
+                brief=brief, due_measurements=Path(due) if due else None,
+                roadmap_root=Path(roadmap) if roadmap else None))
         return configs
     except (ValueError, KeyError, TypeError):
         return []
@@ -201,6 +213,9 @@ def cheap_fingerprint(config) -> tuple:
             raise ValueError("ledger_capacity")
         for path in sorted(paths):
             files.append((path.name, stat(path)))
+    if config.brief:
+        files += [stat((config.roadmap_root or config.project_root) / "ROADMAP.md"),
+                  stat(config.due_measurements) if config.due_measurements else None]
     # An elapsed second can cross valid_from/valid_until even without a database writer.
     # Cache stores the next temporal boundary separately after each full source read.
     return (data_version, repr(config), *files)
@@ -252,7 +267,8 @@ def _refresh_one(config, *, skip: bool = False) -> dict:
     if (previous and previous["source_coverage"] == manifest["source_coverage"]
             and item_keys(previous) == item_keys(manifest)
             and previous["diagnostics"] == manifest["diagnostics"]
-            and previous["budget_bytes"] == manifest["budget_bytes"]):
+            and previous["budget_bytes"] == manifest["budget_bytes"]
+            and previous.get("brief") == manifest.get("brief")):
         # A complete source validation just ran, so the read TTL may be renewed even on a SKIP
         # tick; the write is still skipped while the stored check is fresh (half the 60-minute TTL).
         checked = datetime.fromisoformat(previous["checked_at"])
