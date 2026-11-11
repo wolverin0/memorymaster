@@ -82,7 +82,7 @@ _EMITTED_NAMES = frozenset(
     {name for name, _ in _SECRET_PATTERNS}
     | {name for name, _ in _CLAIM_ONLY_PATTERNS}
     | {name for name, _ in _EGRESS_PATTERNS}
-    | {"encoded_secret", "structured_secret", "absolute_path", "home_path", "numeric"}
+    | {"encoded_secret", "structured_secret", "absolute_path", "home_path", "numeric", "private_ip"}
 )
 _INDEXED_MARKER = re.compile(r"\[REDACTED:[A-Za-z0-9_]+(?:#\d+)?\]")
 

@@ -64,7 +64,8 @@ def classify_pending(store: WorkflowStore, *, limit: int = 50) -> dict[str, obje
     for row in rows:
         from memorymaster.core.provider_egress import export_stored
 
-        request = export_stored(public_excerpt(row["initial_request_excerpt"]))
+        # public_excerpt is our own redactor and can leave a marker touching letters: trusted names only
+        request = export_stored(public_excerpt(row["initial_request_excerpt"]), trusted=True)
         if request is None:  # withheld by the egress gate: no call, counted like any failed classification
             failures += 1
             continue
