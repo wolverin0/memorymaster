@@ -140,8 +140,8 @@ def prepare_indexed_egress(texts: list[str]) -> list[ClaimEgress]:
     out: list[ClaimEgress] = []
     for text in texts:
         neutral, restore = _neutralise(text, trusted=False)
-        redacted, literal = redact_text(neutral)
-        findings = list(literal)
+        redacted, findings = neutral, []
+        # Indexed substitution first: the literal redactor also masks home paths without an index.
         for name, pattern in _EGRESS_PATTERNS:
 
             def index(match: re.Match[str], name: str = name) -> str:
@@ -150,6 +150,8 @@ def prepare_indexed_egress(texts: list[str]) -> list[ClaimEgress]:
             redacted, count = pattern.subn(index, redacted)
             if count:
                 findings.append(name)
+        redacted, literal = redact_text(redacted)
+        findings.extend(literal)
         blocked = bool(scan_text_for_findings(redacted))
         if "[redacted" in neutral.lower() or _DREAM_EXTRA_PATTERNS.search(_INDEXED_MARKER.sub(" ", redacted)):
             findings.append("export_refused")

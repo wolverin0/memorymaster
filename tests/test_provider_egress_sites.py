@@ -209,14 +209,15 @@ def test_contradiction_probe_pseudonyms_keep_swapped_values_distinguishable(monk
     ]
 
 
-def test_contradiction_probe_skips_a_blocked_pair_and_a_pair_with_a_literal_credential(monkeypatch):
+def test_contradiction_probe_skips_a_blocked_pair_and_masks_a_literal_credential(monkeypatch):
     from memorymaster.govern import contradiction_probe as probe
 
     seen: list[str] = []
     monkeypatch.setattr(probe.llm_provider, "call_llm", lambda prompt, body: seen.append(body) or "[]")
     assert probe._judge_llm(_claim("deploy " + BLOCKED), _claim(BENIGN)) is None
-    assert probe._judge_llm(_claim("the key is " + TOKEN), _claim("the key is another")) is None
     assert seen == []
+    probe._judge_llm(_claim("the key is " + TOKEN), _claim("the key is another"))
+    assert len(seen) == 1 and TOKEN not in seen[0]  # substituted, as in the claim gate
 
 
 # ---- entity graph ---------------------------------------------------------------------------

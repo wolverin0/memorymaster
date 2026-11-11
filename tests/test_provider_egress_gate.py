@@ -265,6 +265,7 @@ def test_a_huge_unbroken_token_is_replaced_fast_and_a_long_prose_message_still_g
     from memorymaster.core.provider_egress import LONG_TOKEN, export_messages, export_text
 
     blob = "A1" * 10_000
+    export_text("warm the lazy pattern caches")
     started = time.monotonic()
     assert export_text(blob) == LONG_TOKEN
     prose = "The service retries three times. " * 2_000  # ~66k chars
