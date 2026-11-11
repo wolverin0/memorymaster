@@ -1276,7 +1276,7 @@ def _correction_check(svc, injected: list[int], flagged: bool):
             from memorymaster.recall.retrieval import pending_supersession_ids
 
             return bool(injected and set(injected) & pending_supersession_ids(
-                svc, use_cache=False, strict=True, deliverable_only=False))  # strict: a scan fault raises
+                svc, use_cache=False, deliverable_only=False))  # strict: a scan fault raises
         except Exception:  # noqa: BLE001 - an unverifiable correction state admits nothing
             return True
 
