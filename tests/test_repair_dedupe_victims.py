@@ -13,7 +13,7 @@ import repair_dedupe_victims as repair  # noqa: E402
 from memorymaster.core import lifecycle  # noqa: E402
 from memorymaster.core.models import CitationInput  # noqa: E402
 from memorymaster.core.service import MemoryService  # noqa: E402
-from memorymaster.stores.storage import ConcurrentModificationError  # noqa: E402
+from memorymaster.stores._storage_shared import ConcurrentModificationError  # noqa: E402
 
 SCOPE = "project:x1repair"
 DEDUP = "dedupe-archived: jaccard>=0.80 canonical-status=confirmed"
