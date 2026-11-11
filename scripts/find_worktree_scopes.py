@@ -13,14 +13,18 @@ text. Applies nothing: the database is opened ``mode=ro``. To move the listed cl
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from memorymaster.core.scope_utils import (  # noqa: E402
     _alias_slug,
+    SCOPE_REGISTRY_ENV,
     _scope_aliases,
     canonicalize_slug,
     scope_from_cwd,
@@ -46,6 +50,21 @@ def target_scope(scope: str, roots: list[Path]) -> str | None:
             if resolved is not None:
                 break
     return resolved if resolved not in (None, "global", scope) else None
+
+
+@contextlib.contextmanager
+def _scratch_registry():
+    """scope_from_cwd registers every git root it meets; point that registry at a throwaway file so a sweep writes nothing."""
+    with tempfile.TemporaryDirectory(prefix="mm-scope-sweep-") as tmp:
+        saved = os.environ.get(SCOPE_REGISTRY_ENV)
+        os.environ[SCOPE_REGISTRY_ENV] = str(Path(tmp) / "scope-registry.json")
+        try:
+            yield
+        finally:
+            if saved is None:
+                os.environ.pop(SCOPE_REGISTRY_ENV, None)
+            else:
+                os.environ[SCOPE_REGISTRY_ENV] = saved
 
 
 def sweep(db: str, roots: list[Path]) -> dict:
@@ -75,7 +94,8 @@ def main(argv: list[str] | None = None) -> int:
     if not Path(args.db).is_file():
         print(f"error: database not found: {args.db}", file=sys.stderr)
         return 2
-    result = sweep(args.db, args.root)
+    with _scratch_registry():
+        result = sweep(args.db, args.root)
     if args.counts:
         per_scope: dict[tuple[str, str], int] = {}
         for _, scope, target in result["moves"]:

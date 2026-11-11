@@ -494,6 +494,24 @@ def test_a_recovery_notice_keeps_the_voz_line_lint_clean_and_digit_free(tmp_path
     assert not re.search(r"\d", voz) and voz.endswith(".")
 
 
+def test_age_is_never_a_severity_so_a_red_age_check_is_not_re_announced_as_time_passes(tmp_path, orchestrators):
+    results = alerts(tmp_path, orchestrators,
+                     failing_report("steward.recency", age_h=12.5, day="2026-11-03"),
+                     failing_report("steward.recency", age_h=36.5, day="2026-11-04"),
+                     failing_report("steward.recency", age_h=60.5, day="2026-11-05"))
+    assert [r[0] for r in results] == [True, False, False]
+
+
+def test_a_non_numeric_severity_in_the_state_file_is_ignored_and_the_state_is_rewritten(tmp_path, orchestrators):
+    (tmp_path / "alert-state.json").write_text(json.dumps(
+        {"utc_date": "2026-11-03", "failures": ["a"], "checks": {"a": {"on": "2026-11-03", "severity": "high"}}}), encoding="utf-8")
+    results = alerts(tmp_path, orchestrators, failing_report("a", waiting=5000, day="2026-11-04"),
+                     failing_report("a", waiting=5000, day="2026-11-10"))
+    assert [r[0] for r in results] == [False, True], "no crash; unknown baseline means only the reminder fires"
+    state = json.loads((tmp_path / "alert-state.json").read_text(encoding="utf-8"))
+    assert state["checks"]["a"]["severity"] == 5000.0
+
+
 def test_the_old_alert_state_file_is_still_read(tmp_path, orchestrators):
     (tmp_path / "alert-state.json").write_text(json.dumps({"utc_date": "2026-11-03", "failures": ["a", "b"]}), encoding="utf-8")
     results = alerts(tmp_path, orchestrators,
@@ -711,6 +729,16 @@ def test_an_allowlisted_hook_is_reported_as_customised_not_failed(hooks):
     assert check["data"]["drifted"] == 0 and check["data"]["customised"] == 1
 
 
+def test_an_allowlist_with_a_bom_keeps_its_first_entry_and_a_typo_is_reported(hooks):
+    (hooks["claude"] / "memorymaster-x.py").write_text("print('operator edit')\n", encoding="utf-8")
+    hooks["allow"].write_bytes(b"\xef\xbb\xbfmemorymaster-x.py\nmemorymaster-typo.py\n")
+    assert probe.read_hook_allowlist(hooks["allow"]) == {"memorymaster-x.py", "memorymaster-typo.py"}
+    check = drift(hooks)
+    assert check["status"] == probe.PASS and check["data"]["customised"] == 1
+    assert "unknown allowlist entry (matches no installed hook): memorymaster-typo.py" in check["detail"]
+    assert "(+1/-" in check["detail"], "the diff size of a customised hook stays visible"
+
+
 def test_a_missing_allowlist_is_empty_and_a_template_with_no_installed_copy_is_a_note(hooks):
     assert probe.read_hook_allowlist(hooks["allow"]) == set() and probe.read_hook_allowlist(None) == set()
     check = drift(hooks)  # nothing installed at all
@@ -798,6 +826,11 @@ def drain(world, **cfg):
     return check
 
 
+def age_waiting(world, hours):
+    with edit(world.capture) as conn:
+        conn.execute("UPDATE dream_captures SET last_activity_at=? WHERE state='captured'", (iso(hours),))
+
+
 def set_capture(world, state, hours_ago, turns=3):
     with edit(world.capture) as conn:
         conn.execute("INSERT INTO dream_captures (state, captured_at, last_activity_at, turn_count, updated_at) VALUES (?,?,?,?,?)",
@@ -805,6 +838,7 @@ def set_capture(world, state, hours_ago, turns=3):
 
 
 def test_drain_is_red_when_work_waits_and_nothing_reached_a_terminal_state_in_the_window(world):
+    age_waiting(world, 5)
     set_capture(world, "applied", 20)  # an exit, but older than the 12 h window
     check = drain(world)  # the fixture already holds one waiting capture
     assert check["status"] == probe.FAIL and check["data"] == {"exited": 0, "waiting_now": 1}, check
@@ -820,7 +854,15 @@ def test_drain_is_green_with_an_exit_in_the_window_or_with_nothing_waiting(world
     assert drain(world)["status"] == probe.PASS, "an empty queue is not a stall"
 
 
+def test_a_young_waiting_capture_after_a_quiet_window_is_not_a_stall(world):
+    age_waiting(world, 1.5)
+    assert drain(world)["status"] == probe.PASS
+    age_waiting(world, 2.5)
+    assert drain(world)["status"] == probe.FAIL
+
+
 def test_drain_ignores_captures_below_the_scheduling_threshold(world):
+    age_waiting(world, 5)
     set_capture(world, "skipped", 1, turns=1)  # the below-two-turns sweep is not throughput
     set_capture(world, "captured", 30, turns=1)
     assert drain(world)["status"] == probe.FAIL  # the fixture's real waiting capture still has no exit
@@ -830,6 +872,7 @@ def test_the_probe_names_the_stall_when_runs_are_abandoned_and_nothing_drains(wo
     canaries = world.tmp / "c.json"
     canaries.write_text(json.dumps({"canaries": []}), encoding="utf-8")
     add_runs(world, ["abandoned"] * 6)
+    age_waiting(world, 5)
     report = probe.run_probe(world.db, workspace=world.tmp, canaries_path=canaries, transcripts_db=world.transcripts,
                              capture_db=world.capture, now=NOW, cfg=CFG, recallers={})
     assert {"dreaming.runs", "dreaming.drain"} <= set(report["failures"]), report["failures"]
@@ -878,6 +921,16 @@ def test_only_a_completed_steward_cycle_counts(tmp_path):
 def test_a_missing_steward_log_is_red(tmp_path):
     (check,) = probe.check_steward_recency(tmp_path / "nope.log", NOW, CFG)
     assert check["status"] == probe.FAIL and check["data"]["newest"] == "none"
+    assert "no completed steward cycle found" in check["detail"] and "None" not in check["detail"]
+
+
+def test_runs_beyond_five_hundred_are_still_counted(world):
+    with edit(world.capture) as conn:
+        conn.executemany("INSERT INTO dream_runs VALUES (?,?,?,?,?,?,?,?,?)",
+                         [(f"b{i}", "abandoned" if i % 4 else "ok", 0, "m", "m", iso(0.01 + i / 1000), iso(1), iso(1), "{}")
+                          for i in range(576)])  # 48 h of five-minute ticks
+    check = runs(world)
+    assert check["data"]["total"] == 576 and check["data"]["abandoned"] == 432 and check["status"] == probe.FAIL
 
 
 # --------------------------------------------------------------------------- G-6 composite scenario

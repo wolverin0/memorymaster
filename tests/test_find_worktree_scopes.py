@@ -44,3 +44,20 @@ def test_lists_confirmed_claims_whose_scope_resolves_elsewhere_and_never_writes(
     assert tool.main(["--db", str(db), "--counts"]) == 0
     assert "1\tproject:wt-copy\tproject:real" in capsys.readouterr().out
     assert tool.main(["--db", str(tmp_path / "missing.db")]) == 2
+
+
+def test_a_sweep_never_writes_the_scope_registry(tmp_path, monkeypatch):
+    registry = tmp_path / "scope-registry.json"
+    registry.write_text(json.dumps({"roots": {}}), encoding="utf-8")
+    monkeypatch.setenv(scope_utils.SCOPE_REGISTRY_ENV, str(registry))
+    monkeypatch.setenv(scope_utils.SCOPE_ALIASES_ENV, str(tmp_path / "none.json"))
+    roots = tmp_path / "roots"
+    (roots / "linked" / ".git").mkdir(parents=True)  # a git root: scope_from_cwd would register it
+    db = tmp_path / "m.db"
+    make_db(db)
+    before = registry.read_bytes()
+    assert tool.main(["--db", str(db), "--root", str(roots)]) == 0
+    assert registry.read_bytes() == before and not list(tmp_path.glob("scope-registry.json.*"))
+    assert not list(tmp_path.glob("*.lock")), "no lock file either"
+    import os
+    assert os.environ[scope_utils.SCOPE_REGISTRY_ENV] == str(registry), "the env is restored"

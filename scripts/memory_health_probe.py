@@ -66,6 +66,7 @@ CONFIG: dict = {
     "dream_runs_min_sample": 4,  # fewer runs than this in the window: judge only the newest run
     "dream_schedule_h": 1,  # the beat ticks every 5 min; an unhealthy newest run older than this means nothing ran since
     "dream_drain_window_h": 12,  # red when captures wait and none reached applied/skipped/quarantined in this window
+    "dream_drain_min_age_h": 2,  # a stall needs the oldest waiting capture past this age (a young one is just new)
     "steward_max_age_h": 12,  # the steward is scheduled every 6 h: red after two missed cycles
     "alert_reminder_days": 7,  # a check that stays red is re-announced at most this often
     "alert_worse_factor": 1.5,  # a red check is "materially worse" at this multiple of its level at the last alert
@@ -393,7 +394,7 @@ def _hook_candidates(dirs: dict[str, Path]):
 def read_hook_allowlist(path: Path | None) -> set[str]:
     """Operator-owned list of deliberately customised hooks: one file name (or ``cli/name``) per line, ``#`` comments."""
     try:
-        lines = Path(path).read_text(encoding="utf-8").splitlines() if path else []
+        lines = Path(path).read_text(encoding="utf-8-sig").splitlines() if path else []
     except OSError:  # missing file = empty list
         return set()
     return {line.split("#", 1)[0].strip() for line in lines if line.split("#", 1)[0].strip()}
@@ -403,10 +404,12 @@ def check_hook_drift(dirs: dict[str, Path], allowlist_path: Path | None) -> list
     """Installed hooks must equal their template, placeholders and line endings aside (a stale hook ran for weeks unseen)."""
     allowed = read_hook_allowlist(allowlist_path)
     drifted, customised, same, absent = [], [], 0, 0
+    present: set[str] = set()  # every spelling of an installed hook an allowlist entry may use
     for label, templates, installed in _hook_candidates(dirs):
         if not installed.is_file():
             absent += 1  # a template with no installed copy is a note, not a failure
             continue
+        present |= {label, Path(label).name}
         text = installed.read_text(encoding="utf-8", errors="replace")
         deltas = [compare_hook(t.read_text(encoding="utf-8"), text) for t in templates]
         if None in deltas:
@@ -416,35 +419,38 @@ def check_hook_drift(dirs: dict[str, Path], allowlist_path: Path | None) -> list
         (customised if label in allowed or Path(label).name in allowed else drifted).append(entry)
     detail = f"{same} installed hooks match their template; {absent} templates not installed (note)"
     if customised:
-        detail += f"; customised by the operator: {', '.join(customised)}"
+        detail += f"; customised by the operator (diff size shown, a change means real drift): {', '.join(customised)}"
+    unknown = sorted(allowed - present)
+    if unknown:
+        detail += f"; unknown allowlist entry (matches no installed hook): {', '.join(unknown)}"
     if drifted:
         detail = f"installed hooks differ from the templates: {', '.join(drifted)}; " + detail
     return [_result("hooks.template_drift", not drifted, detail,
-                    drifted=len(drifted), customised=len(customised), matching=same, not_installed=absent)]
+                    drifted=len(drifted), customised=len(customised), matching=same, not_installed=absent, unknown_allowlist=len(unknown))]
 
 
 def check_dream_runs(capture_db: Path, now: datetime, cfg: dict) -> list[dict]:
     """Finished (non-dry) dreaming runs in the window; ``failed`` and ``abandoned`` (killed by the scheduler's time
     limit) both count as not ok. With enough runs, red above half; with fewer, red when the newest one is not ok
     and older than the schedule."""
-    cutoff = now.timestamp() - cfg["dream_runs_window_h"] * 3600
+    since = (now - timedelta(hours=cfg["dream_runs_window_h"])).isoformat()
     with contextlib.closing(ro_connect(capture_db)) as conn:
-        rows = conn.execute("SELECT status, started_at FROM dream_runs WHERE dry_run=0 ORDER BY started_at DESC LIMIT 500").fetchall()
-    finished = [(status, parse_ts(started) or now) for status, started in rows
-                if status != "running" and (parse_ts(started) or now).timestamp() >= cutoff]
-    statuses = [status for status, _ in finished]
-    failed, abandoned = statuses.count("failed"), statuses.count("abandoned")
+        counts = dict(conn.execute("SELECT status, COUNT(*) FROM dream_runs WHERE dry_run=0 AND status != 'running' "
+                                   "AND started_at >= ? GROUP BY status", (since,)).fetchall())
+        newest = conn.execute("SELECT status, started_at FROM dream_runs WHERE dry_run=0 AND status != 'running' "
+                              "AND started_at >= ? ORDER BY started_at DESC LIMIT 1", (since,)).fetchone()
+    total = sum(counts.values())
+    failed, abandoned = counts.get("failed", 0), counts.get("abandoned", 0)
     bad = failed + abandoned
-    if len(finished) >= cfg["dream_runs_min_sample"]:
-        ok, rule = bad * 2 <= len(finished), "red above half"
+    if total >= cfg["dream_runs_min_sample"]:
+        ok, rule = bad * 2 <= total, "red above half"
     else:
-        newest_status, newest_at = finished[0] if finished else ("ok", now)
+        newest_status, newest_at = (newest[0], parse_ts(newest[1]) or now) if newest else ("ok", now)
         ok = newest_status not in ("failed", "abandoned") or (now - newest_at).total_seconds() <= cfg["dream_schedule_h"] * 3600
         rule = f"under {cfg['dream_runs_min_sample']} runs: red when the newest is not ok and older than {cfg['dream_schedule_h']}h"
     return [_result("dreaming.runs", ok,
-                    f"{failed} failed and {abandoned} abandoned of {len(finished)} dreaming runs in the last {cfg['dream_runs_window_h']}h ({rule})",
-                    failed=failed, abandoned=abandoned, total=len(finished),
-                    failed_share=round(bad / len(finished), 2) if finished else 0.0)]
+                    f"{failed} failed and {abandoned} abandoned of {total} dreaming runs in the last {cfg['dream_runs_window_h']}h ({rule})",
+                    failed=failed, abandoned=abandoned, total=total, failed_share=round(bad / total, 2) if total else 0.0)]
 
 
 def check_dream_drain(capture_db: Path, now: datetime, cfg: dict) -> list[dict]:
@@ -452,11 +458,15 @@ def check_dream_drain(capture_db: Path, now: datetime, cfg: dict) -> list[dict]:
     reached a terminal state (applied / skipped / quarantined) in the window."""
     since = (now - timedelta(hours=cfg["dream_drain_window_h"])).isoformat()
     with contextlib.closing(ro_connect(capture_db)) as conn:
-        waiting = conn.execute("SELECT COUNT(*) FROM dream_captures WHERE state IN ('captured','retryable') AND turn_count >= 2").fetchone()[0]
+        waiting, oldest = conn.execute("SELECT COUNT(*), MIN(last_activity_at) FROM dream_captures "
+                                       "WHERE state IN ('captured','retryable') AND turn_count >= 2").fetchone()
         exited = conn.execute("SELECT COUNT(*) FROM dream_captures WHERE state IN ('applied','skipped','quarantined') "
                               "AND turn_count >= 2 AND updated_at >= ?", (since,)).fetchone()[0]
-    return [_result("dreaming.drain", not (waiting and not exited),
-                    f"{exited} captures reached a terminal state in the last {cfg['dream_drain_window_h']}h with {waiting} waiting",
+    oldest_age = _age_h(parse_ts(oldest), now)
+    stalled = bool(waiting) and not exited and (oldest_age is None or oldest_age > cfg["dream_drain_min_age_h"])
+    return [_result("dreaming.drain", not stalled,
+                    f"{exited} captures reached a terminal state in the last {cfg['dream_drain_window_h']}h with {waiting} waiting "
+                    f"(oldest {oldest_age}h; judged once it is over {cfg['dream_drain_min_age_h']}h)",
                     exited=exited, waiting_now=waiting)]
 
 
@@ -479,6 +489,8 @@ def check_steward_recency(log: Path, now: datetime, cfg: dict) -> list[dict]:
                     newest = stamp
     except OSError:
         pass  # no log: no completed cycle on record, reported by _fresh as "none"
+    if newest is None:
+        return [_result("steward.recency", False, "no completed steward cycle found in the log", newest="none", age_h=None)]
     return [_fresh("steward.recency", newest, cfg["steward_max_age_h"], now, "last completed steward cycle")]
 
 
@@ -585,16 +597,16 @@ def send_orca(run_id: str, subject: str, body: str) -> None:
 
 
 # Severity of a red check, for "materially worse": the first of these numbers a check reports.
-SEVERITY_KEYS = ("waiting", "waiting_now", "drifted", "failed_share", "age_h")
+SEVERITY_KEYS = ("waiting", "waiting_now", "drifted", "failed_share")  # counts, never ages: age grows with time alone
+
+
+def _number(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
 def _severity(check: dict | None) -> float | None:
     data = (check or {}).get("data") or {}
-    for key in SEVERITY_KEYS:
-        value = data.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-    return None
+    return next((n for n in (_number(data.get(key)) for key in SEVERITY_KEYS) if n is not None), None)
 
 
 def _load_alert_state(path: Path) -> dict[str, dict]:
@@ -603,7 +615,8 @@ def _load_alert_state(path: Path) -> dict[str, dict]:
     with contextlib.suppress(OSError, ValueError, AttributeError, TypeError):
         state = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(state.get("checks"), dict):
-            return {name: dict(entry) for name, entry in state["checks"].items() if isinstance(entry, dict)}
+            return {name: {**entry, "severity": _number(entry.get("severity"))}
+                    for name, entry in state["checks"].items() if isinstance(entry, dict)}
         return {name: {"on": state.get("utc_date"), "severity": None} for name in state.get("failures", [])}
     return {}
 
