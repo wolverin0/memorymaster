@@ -33,14 +33,14 @@ def test_transport_notices_are_classified(text):
 
 @pytest.mark.parametrize("text", [
     "Extract at most five candidates that will change future work.",
-    "Extract at most five stable facts, decisions",
-    "Extract at most 3 non-obvious bug causes",
+    "Extract at most five stable facts, decisions, preferences, profiles, or constraints.",
+    "Extract at most 3 non-obvious bug causes, decisions, gotchas, or constraints.",
     "Compare the 5 candidates with governed current claims.",
-    "You group failures from AI coding sessions",
+    "You group failures from AI coding-agent sessions",
     "Sos el curador FMX (Haiku). Repo",
     "You are a memory curator. Extract max 3 non-obvious learnings.",
     "You are a memory quality evaluator. Two claims contradict each other.",
-    "You are preserving working context that a conversation compaction",
+    "You are preserving working context that a conversation compaction is about to destroy.",
 ])
 def test_internal_pipeline_prompts_are_classified(text):
     assert dm.classify_query(text) == "internal_process"
@@ -109,8 +109,8 @@ def test_machine_notice_share_counts_returns_and_events(tmp_path):
         (4, "Dame las win de hoy", iso(2), 1),
         (5, "You have 1 orchestration message", iso(24 * 30), 1),  # outside the window
         (6, "You have 1 orchestration message", t, 0),  # not returned
-        (7, "Extract at most five candidates", t, 1),
-        (8, "Compare the 3 candidates with governed claims", t, 1),
+        (7, "Extract at most five candidates that will change future work.", t, 1),
+        (8, "Compare the 3 candidates with governed current claims.", t, 1),
         (9, "You are working inside Orca, a terminal", t, 1),
         (10, "You are working inside Orca, a terminal", t, 1),
     ])

@@ -151,3 +151,48 @@ def test_real_process_emits_only_codex_json(installed, tmp_path, event):
     rows = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text().splitlines()]
     assert len(rows) == 1
     assert (rows[0]["cli"], rows[0]["event"], rows[0]["count"]) == ("codex", event, 1)
+
+
+# --- audit D-15: cut at a whole line, mark the cut --------------------------------------------------------------
+def _fit():
+    ns = runpy.run_path(str(TEMPLATES / "memorymaster-codex-recall.py"))
+    return ns["fit_context"], ns["MAX_CONTEXT_BYTES"], ns["TRUNCATED_LINE"]
+
+
+def test_fit_context_multi_line_over_budget_cuts_at_a_whole_line_and_marks_it():
+    fit, cap, marker = _fit()
+    lines = [f"- [mm-{i:04d}] " + "x" * 90 for i in range(40)]
+    out = fit("\n".join(lines) + "\n## END")
+    assert len(out.encode("utf-8")) <= cap
+    assert out.endswith("\n" + marker)
+    body = out[: -len(marker) - 1].split("\n")
+    assert body == lines[: len(body)] and 0 < len(body) < 40  # only whole lines survive
+    assert "## END" not in out
+
+
+def test_fit_context_exactly_at_budget_is_untouched():
+    fit, cap, marker = _fit()
+    text = "a" * 899 + "\n" + "a" * 900
+    assert len(text.encode("utf-8")) == cap
+    assert fit(text) == text
+    assert fit(text + "b") == "a" * 899 + "\n" + marker  # one byte over: the last line goes whole
+
+
+def test_fit_context_one_huge_first_line_keeps_the_byte_safe_cut():
+    fit, cap, marker = _fit()
+    out = fit("\n- [mm-42] " + "🧠" * 5000)
+    assert out.startswith("\n- [mm-42]") and 0 < len(out.encode("utf-8")) <= cap
+    assert marker not in out
+    out.encode("utf-8")  # whole UTF-8 sequences only
+
+
+@pytest.mark.parametrize("pad", range(0, 4))
+def test_fit_context_multibyte_at_the_boundary_never_splits_a_character(pad):
+    fit, cap, marker = _fit()
+    first = "- [mm-1] " + "é" * 600  # 2-byte characters, several lines of them
+    text = "\n".join([first, "x" * pad + "日" * 300, "日" * 300])
+    out = fit(text)
+    assert len(out.encode("utf-8")) <= cap
+    assert "�" not in out
+    assert out.endswith("\n" + marker)
+    assert all(line in text.split("\n") for line in out.split("\n")[:-1])

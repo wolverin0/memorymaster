@@ -65,10 +65,42 @@ def test_first_session_without_prompt_recalls_workspace_context(payload, monkeyp
     assert seen == ["Project context for project:fixture"]
 
 
-@pytest.mark.parametrize("event", ["PreInvocation", "PostInvocation", "UserPromptSubmit", "SessionEnd"])
-def test_no_per_prompt_injection(event, payload, monkeypatch):
+@pytest.mark.parametrize("event", ["PostInvocation", "UserPromptSubmit", "SessionEnd"])
+def test_unmanaged_events_never_recall(event, payload, monkeypatch):
     monkeypatch.setattr("memorymaster.recall.remote.hook_recall", lambda *a, **kw: pytest.fail("unexpected recall"))
     assert hooks.run_hook(event, payload, db_path="unused") == ""
+
+
+def test_pre_invocation_recalls_the_prompt_through_the_shared_entry_point(payload, monkeypatch):
+    seen = []
+    monkeypatch.setattr("memorymaster.recall.remote.hook_recall",
+                        lambda q, d, *, db_path: seen.append((q, d["session_id"])) or ("\n- [mm-7] x", "shared"))
+    out = json.loads(hooks.run_hook("PreInvocation", payload, db_path="unused"))
+    assert list(out) == ["injectSteps"] and "[mm-7]" in out["injectSteps"][0]["ephemeralMessage"]
+    assert seen == [("Explain how governed citations work", "fixture-session")]
+
+
+def test_pre_invocation_without_a_prompt_does_not_recall(payload, monkeypatch):
+    payload["lastUserInput"] = "  "
+    monkeypatch.setattr("memorymaster.recall.remote.hook_recall", lambda *a, **kw: pytest.fail("unexpected recall"))
+    assert hooks.run_hook("PreInvocation", payload, db_path="unused") == ""
+
+
+def test_pre_invocation_machine_traffic_is_skipped_with_adapter_agy(payload, tmp_path, monkeypatch):
+    from memorymaster.core import hook_log
+
+    monkeypatch.setattr(hook_log, "_STATE_DIR", tmp_path)
+    monkeypatch.setattr(hook_log, "_LOG_FILE", tmp_path / "hook.log")
+    payload["lastUserInput"] = "You have 2 orchestration messages. Run `orca orchestration check --run run_ab12cd`.\n" * 2
+    monkeypatch.setattr("memorymaster.recall.remote.hook_recall", lambda *a, **kw: pytest.fail("ranker reached"))
+    assert hooks.run_hook("PreInvocation", payload, db_path="unused") == ""
+    assert "category=transport_notice" in (tmp_path / "hook.log").read_text(encoding="utf-8")
+
+
+def test_pre_invocation_internal_job_does_not_recall(payload, monkeypatch):
+    monkeypatch.setenv(hooks.INTERNAL_ENV, "1")
+    monkeypatch.setattr("memorymaster.recall.remote.hook_recall", lambda *a, **kw: pytest.fail("unexpected recall"))
+    assert hooks.run_hook("PreInvocation", payload, db_path="unused") == ""
 
 
 @pytest.mark.parametrize("marker,value", [
@@ -88,7 +120,8 @@ def test_internal_jobs_do_not_read_or_capture(marker, value, event, payload, tmp
 
 @pytest.mark.parametrize("change", [
     {"workspacePaths": []}, {"workspacePaths": ["relative"]}, {"workspacePaths": "bad"},
-    {"workspacePaths": ["/one", "/two"]}, {"conversationId": None}, {"lastUserInput": []},
+    {"workspacePaths": ["/", "/"]}, {"workspacePaths": ["relative", "also-relative"]},
+    {"conversationId": None}, {"lastUserInput": []},
 ])
 def test_invalid_identity_never_falls_back_to_config_cwd(change, payload, monkeypatch):
     payload.update(change)
@@ -193,3 +226,12 @@ def test_stop_failure_or_disabled_capture_is_silent(mode, payload, tmp_path, mon
         monkeypatch.setattr("memorymaster.dreaming.capture.capture_hook_payload", fail)
     assert hooks.run_hook("Stop", payload, db_path="unused") == ""
     assert not (tmp_path / "events.jsonl").exists()
+
+
+def test_multi_root_workspace_uses_the_first_root_with_a_project_scope(payload, tmp_path, monkeypatch):
+    seen = []
+    payload["workspacePaths"] = ["/", str(tmp_path / "second-root"), str(tmp_path / "third-root")]
+    monkeypatch.setattr("memorymaster.recall.remote.hook_recall",
+                        lambda q, d, *, db_path: seen.append(d["cwd"]) or ("\n- [mm-7] x", "shared"))
+    assert "injectSteps" in hooks.run_hook("PreInvocation", payload, db_path="unused")
+    assert seen == [str(tmp_path / "second-root")]
