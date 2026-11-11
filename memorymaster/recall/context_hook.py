@@ -1220,8 +1220,7 @@ def recall(
             _fallback_found=fallback_found,
         )
         if hook_data is not None:
-            rendered = _with_transcript_fallback(rendered, fallback_found, len(rendered_ids), budget, query,
-                                              hook_policy.session_id_of(hook_data))
+            rendered = _with_transcript_fallback(rendered, fallback_found, len(rendered_ids), budget, query, hook_data)
         if return_ids:
             return rendered, rendered_ids
         return rendered
@@ -1283,13 +1282,13 @@ def _correction_check(svc, injected: list[int], flagged: bool):
     return check
 
 
-def _evidence_fragment_key(rendered: str, top, query: str, session: str | None) -> int | None:
+def _evidence_fragment_key(rendered: str, top, query: str) -> int | None:
     """Session key when the top fragment earns the reserved slot beyond the claim cap, else ``None``.
 
     The fragment already passed query coverage and ranking in ``transcript_fallback.fragments``. It earns the
     slot when at least :data:`MIN_NEW_TOKENS` content tokens of its query-relevant sentences are absent from the
-    question and the injected claims (so it is not a restatement) and it was not delivered earlier in this
-    session. The caller adds the budget and correction checks. Known limit: a correction that is not linked to
+    question and the injected claims (so it is not a restatement). The caller adds the session, budget and
+    correction checks. Known limit: a correction that is not linked to
     what it replaces (no supersedes pointer, no proposal) and states no new token cannot be recognised; nor can
     a correction whose replaced claim is already retired when neither is injected. The fragment (dated, labelled
     raw and possibly outdated) is then delivered below the claims.
@@ -1302,10 +1301,7 @@ def _evidence_fragment_key(rendered: str, top, query: str, session: str | None) 
             new |= _content_tokens(sentence)
     if len(new - _content_tokens(_MM_ID.sub("", rendered)) - _content_tokens(query)) < MIN_NEW_TOKENS:
         return None
-    key = _fragment_key(excerpt)
-    if session and key in hook_policy.seen_ids(session):
-        return None
-    return key
+    return _fragment_key(excerpt)
 
 
 def _fragment_key(excerpt: str) -> int:
@@ -1314,7 +1310,7 @@ def _fragment_key(excerpt: str) -> int:
 
 
 def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: int, query: str = "",
-                              session: str | None = None) -> str:
+                              hook_data: dict | None = None) -> str:
     """Append raw past conversation (dated, labelled, this project only) when the hook has free slots AND room.
 
     With no free slot the top fragment may still be added (never in place of a claim) when it carries a value
@@ -1326,15 +1322,16 @@ def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: i
     Fragments are not claims: they are never recorded as accesses nor as session-seen ids. Fails open.
     """
     slots = hook_policy.max_claims() - claims
+    session = hook_policy.session_id_of(hook_data)
     if found and session:  # an extra-slot fragment delivered earlier in this session is not repeated by a free slot
-        delivered = hook_policy.seen_ids(session)
+        delivered = _session_seen(hook_data)
         found = [hit for hit in found if _fragment_key(getattr(hit, "excerpt", "")) not in delivered]
     if not found:
         return rendered
     room = max(0, budget) * 4 - (len(rendered) + 2 if rendered else 0)
     evidence_key = None
     if slots <= 0:  # claims filled the cap: the top fragment may still earn ONE extra slot (never displaces a claim)
-        evidence_key = _evidence_fragment_key(rendered, found[0], query, session)
+        evidence_key = _evidence_fragment_key(rendered, found[0], query)
         if evidence_key is not None and (check := _CORRECTION_CHECK.get()) is not None and check():
             evidence_key = None  # a correction is in play: the fragment may quote the value it replaced
         if evidence_key is None:
@@ -1345,7 +1342,11 @@ def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: i
 
         block = transcript_fallback.render(found[:slots], room)
         if evidence_key is not None and block and session:
-            hook_policy.remember(session, [evidence_key])
+            if hook_policy.defers_delivery(hook_data):  # the adapter confirms the emitted text (T-2275)
+                hook_policy.stage_fragment(session, hook_policy.turn_id_of(hook_data), evidence_key,
+                                           transcript_fallback.CLOSE_TAG)
+            else:
+                hook_policy.remember(session, [evidence_key])
     except Exception as exc:  # noqa: BLE001 - optional evidence never breaks the hook
         logger.debug("transcript fallback unavailable: %s", type(exc).__name__)
         return rendered

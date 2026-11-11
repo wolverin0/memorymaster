@@ -450,7 +450,7 @@ def _frag(text: str):
 ])
 def test_d5_whatever_the_claims_mention_the_answer_fragment_wins(noise) -> None:
     claims = _PLAIN_CLAIMS + chr(10) + "- [mm-0099] " + noise
-    assert context_hook._evidence_fragment_key(claims, _frag(_FW_FRAGMENT), _FW_QUERY, None) is not None
+    assert context_hook._evidence_fragment_key(claims, _frag(_FW_FRAGMENT), _FW_QUERY) is not None
 
 
 @pytest.mark.parametrize(("query", "excerpt"), [
@@ -460,17 +460,17 @@ def test_d5_whatever_the_claims_mention_the_answer_fragment_wins(noise) -> None:
     ("when did we roll back the router firmware", "We rolled back the router firmware on 2026-08-01 at 10:22"),
 ], ids=["port-after-host", "version-in-url", "model-name", "date-and-clock"])
 def test_d5_answers_a_token_taxonomy_would_have_missed_win(query, excerpt) -> None:
-    assert context_hook._evidence_fragment_key(_PLAIN_CLAIMS, _frag(excerpt), query, None) is not None
+    assert context_hook._evidence_fragment_key(_PLAIN_CLAIMS, _frag(excerpt), query) is not None
 
 
 def test_d5_a_restatement_of_the_claims_does_not_win() -> None:
     restating = _frag("The router firmware version setting belongs in the deploy page")
-    assert context_hook._evidence_fragment_key(_PLAIN_CLAIMS, restating, _FW_QUERY, None) is None
+    assert context_hook._evidence_fragment_key(_PLAIN_CLAIMS, restating, _FW_QUERY) is None
 
 
 def test_d5_a_fragment_irrelevant_to_the_query_does_not_win() -> None:
     assert context_hook._evidence_fragment_key(_PLAIN_CLAIMS, _frag("Lunch was pasta with 4 cheeses today"),
-                                               _FW_QUERY, None) is None
+                                               _FW_QUERY) is None
 
 
 def test_d5_evidence_slot_cost_is_under_5ms_per_prompt() -> None:
@@ -478,9 +478,9 @@ def test_d5_evidence_slot_cost_is_under_5ms_per_prompt() -> None:
 
     frag = _frag(_FW_FRAGMENT + ". " + "The deploy page lists filler words and more filler words. " * 70)  # ~4000 chars
     key = context_hook._evidence_fragment_key
-    assert len(frag.excerpt) >= 4000 and key(_PLAIN_CLAIMS, frag, _FW_QUERY, None) is not None
+    assert len(frag.excerpt) >= 4000 and key(_PLAIN_CLAIMS, frag, _FW_QUERY) is not None
     started = time.perf_counter()
     for _ in range(20):
-        key(_PLAIN_CLAIMS, frag, _FW_QUERY, None)
+        key(_PLAIN_CLAIMS, frag, _FW_QUERY)
     per_prompt_ms = (time.perf_counter() - started) * 1000 / 20
     assert per_prompt_ms < 5.0, f"evidence-slot decision took {per_prompt_ms:.3f} ms per prompt (limit 5 ms)"
