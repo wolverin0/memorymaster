@@ -686,3 +686,15 @@ def test_normalize_event_time_rejects_junk_keeps_real_dates():
     # None/empty stay None.
     assert _normalize_event_time(None) is None
     assert _normalize_event_time("  ") is None
+
+
+def test_atlas_provider_call_is_egress_gated_and_sends_nothing_when_all_is_withheld(monkeypatch):
+    """Contract: evidence bodies pass the strict egress gate before the provider call; an all-withheld body is no call."""
+    sent: list[str] = []
+    monkeypatch.setattr(atlas_llm_extractor, "call_llm", lambda prompt, text: sent.append(text) or "[]")
+    blocked = "DB_PASS=" + "hunter2hunter2"  # credential-grade: the gate withholds the line
+    benign = "The service retries three times before it gives up."
+    atlas_llm_extractor._call_llm_safe("PROMPT", f"{blocked}\n{benign}", model=None)
+    assert len(sent) == 1 and "hunter2" not in sent[0] and benign in sent[0]
+    assert atlas_llm_extractor._call_llm_safe("PROMPT", blocked, model=None) is None
+    assert len(sent) == 1  # nothing was sent for the all-withheld body

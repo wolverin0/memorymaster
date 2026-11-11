@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -50,7 +52,7 @@ def _complete_claim_job(repository: CaptureRepository, source_id: int) -> None:
         owner="coverage", stages=("extract_claims",), limit=1
     )[0]
     assert leased.id == job.id
-    repository.finish_job(job.id, status="completed")
+    repository.finish_job(job.id, lease=leased, status="completed")
 
 
 def test_missing_claim_job_breaks_coverage_without_leaking_content(tmp_path: Path) -> None:
@@ -115,7 +117,7 @@ def test_confirmed_claim_requires_current_graph_job(tmp_path: Path) -> None:
     leased = repository.lease_jobs(
         owner="coverage", stages=("extract_graph",), limit=1
     )[0]
-    repository.finish_job(leased.id, status="completed")
+    repository.finish_job(leased.id, lease=leased, status="completed")
     assert graph_job.id == leased.id
 
     complete = capture_coverage(service, scope="project:wanted")
@@ -151,7 +153,7 @@ def test_confidence_update_does_not_invalidate_completed_graph_job(
     leased = repository.lease_jobs(
         owner="coverage", stages=("extract_graph",), limit=1
     )[0]
-    repository.finish_job(leased.id, status="completed")
+    repository.finish_job(leased.id, lease=leased, status="completed")
     service.store.set_confidence(claim.id, 0.8, "routine revalidation")
     with service.store.connect() as conn:
         conn.execute(
@@ -202,8 +204,10 @@ def test_expired_lease_is_broken_and_partial_completion_needs_attention(
         "job_ids": [job.id],
     }
 
+    crashed_lease = dataclasses.replace(job, lease_owner="crashed", attempts=1)
     repository.finish_job(
         job.id,
+        lease=crashed_lease,
         status="completed",
         error_code="partial_provider_output",
         error_detail="one invalid row",

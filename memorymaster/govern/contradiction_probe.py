@@ -236,7 +236,12 @@ def sample_candidate_pairs(
 def _judge_llm(a: Claim, b: Claim) -> dict | None:
     """Ask the LLM whether a and b contradict. Returns a verdict dict or None
     on parse/empty failure. May raise LLMBudgetExceeded."""
-    body = f"Claim A: {a.text}\nClaim B: {b.text}"
+    from memorymaster.core.provider_egress import export_pair
+
+    pair = export_pair(a.text, b.text)
+    if pair is None:  # withheld, or a redaction could hide the very difference being judged: no verdict
+        return None
+    body = f"Claim A: {pair[0]}\nClaim B: {pair[1]}"
     raw = llm_provider.call_llm(_PROMPT, body)
     if not raw or not raw.strip():
         return None

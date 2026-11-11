@@ -90,7 +90,8 @@ def test_validator_does_not_promote_a_claim_pending_supersession(tmp_path: Path)
         "the corrected free space figure measured after the cleanup ran",
         supersedes_claim_id=outdated.id,
     )
-    assert outdated.id in pending_supersession_ids(svc, use_cache=False), "precondition"
+    # the promotion gate's view: the replacement is still a candidate, so recall does not hide the target yet
+    assert outdated.id in pending_supersession_ids(svc, use_cache=False, deliverable_only=False), "precondition"
 
     validator.run(svc.store, limit=50)
 
@@ -189,7 +190,9 @@ def proposal_flood(tmp_path_factory) -> tuple[MemoryService, int]:
     """
     svc = _svc(tmp_path_factory.mktemp("r4-proposals"))
     pending = _ingest(svc, "a measurement whose correction is still queued for review")
-    _ingest(svc, "the queued correction", supersedes_claim_id=pending.id)
+    correction = _ingest(svc, "the queued correction", supersedes_claim_id=pending.id)
+    # recall hides a target only once its replacement is deliverable, so the correction is confirmed
+    svc.store.apply_status_transition(correction, to_status="confirmed", reason="fixture", event_type="validator")
     _flood(svc, "policy_decision", _OLD_RECALL_CAP + 10)
     return svc, pending.id
 
@@ -291,9 +294,13 @@ def test_a_broken_scan_is_not_reported_as_nothing_pending(tmp_path: Path) -> Non
                 raise RuntimeError("events table unavailable")
             return self._real.list_events(**kwargs)
 
+        def __getattr__(self, name):  # the replacement's state is read from the same store
+            return getattr(self._real, name)
+
     svc = _svc(tmp_path)
     outdated = _ingest(svc, "a claim with a genuinely pending supersession")
-    _ingest(svc, "its correction", supersedes_claim_id=outdated.id)
+    correction = _ingest(svc, "its correction", supersedes_claim_id=outdated.id)
+    svc.store.apply_status_transition(correction, to_status="confirmed", reason="fixture", event_type="validator")
 
     flaky = _Flaky(svc.store)
     assert pending_supersession_ids(flaky) == frozenset()

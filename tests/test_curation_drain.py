@@ -300,3 +300,27 @@ def test_proposal_drain_counts_an_unapplied_approval_as_failed(svc, monkeypatch)
     r = curation_drain.drain_proposals(svc, apply=True)
 
     assert r["approved"] == 0 and r["failed"] == 1, r
+
+
+def test_drain_waits_for_a_confirmed_replacement_and_drops_a_moot_proposal(svc):
+    """Contract: kept_replacement_unconfirmed / rejected_moot / replacement_claim_id / applied_targets."""
+    from memorymaster.core.lifecycle import transition_claim
+
+    def pair(old_text, new_text):
+        cit = [CitationInput(source="test://witness", locator="x")]
+        old = svc.ingest(old_text, cit, scope="project:x", source_agent="fixture")
+        transition_claim(svc.store, old.id, "confirmed", reason="fixture", event_type="validator")
+        new = svc.ingest(new_text, cit, scope="project:x", source_agent="fixture", supersedes=[old.human_id])
+        return old.id, new.id
+
+    old, new = pair("The staging admin panel listens on port 8080", "The staging admin panel listens on port 9443")
+    summary = curation_drain.drain_proposals(svc, apply=True)
+    assert summary["kept_replacement_unconfirmed"] == 1 and summary["approved"] == 0
+    assert summary["applied_targets"] == [] and _get(svc, old).status == "confirmed"
+    transition_claim(svc.store, new, "confirmed", reason="fixture", event_type="validator")
+    summary = curation_drain.drain_proposals(svc, apply=True, replacement_claim_id=new)
+    assert summary["approved"] == 1 and summary["applied_targets"] == [old]
+    old2, dead = pair("Backups are retained for thirty days", "Backups are retained for ninety days")
+    transition_claim(svc.store, dead, "archived", reason="fixture", event_type="transition")
+    summary = curation_drain.drain_proposals(svc, apply=True)
+    assert summary["rejected_moot"] == 1 and summary["approved"] == 0 and _get(svc, old2).status == "confirmed"

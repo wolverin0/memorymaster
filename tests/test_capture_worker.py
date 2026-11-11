@@ -139,7 +139,7 @@ def test_worker_leases_each_job_only_when_ready_to_process(monkeypatch) -> None:
             del pending[:limit]
             return leased
 
-        def finish_job(self, job_id, *, status, error_code=None, error_detail=None):
+        def finish_job(self, job_id, *, lease, status, error_code=None, error_detail=None):
             events.append(("finish", job_id, status))
             return SimpleNamespace(status=status)
 

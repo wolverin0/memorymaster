@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+from collections.abc import Sequence
 from pathlib import Path
 import re
 from datetime import date
@@ -296,7 +297,9 @@ def run(
     limit: int = 200,
     revalidation_claims: list[Claim] | None = None,
     policy_mode: str = "legacy",
+    claim_ids: Sequence[int] | None = None,
 ) -> dict[str, int]:
+    """``claim_ids`` checks exactly those claims while they are candidates (the ingest fast path)."""
     # Promotion freeze (P1 spec §2.5.2): no confidence writes or transitions
     # while the integrity sentinel says the DB failed quick_check.
     from memorymaster.govern.jobs.integrity import promotions_frozen_for
@@ -313,7 +316,13 @@ def run(
             "revalidation_checked": 0,
             "predicate_checks": {},
         }
-    if policy_mode == "legacy":
+    if claim_ids is not None:
+        candidates = [
+            claim
+            for claim in (store.get_claim(int(claim_id), include_citations=False) for claim_id in claim_ids)
+            if claim is not None and claim.status == "candidate"
+        ]
+    elif policy_mode == "legacy":
         candidates = store.list_claims(
             status_in=["candidate", "confirmed"],
             limit=limit,

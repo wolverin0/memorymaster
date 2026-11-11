@@ -59,6 +59,14 @@ def env(tmp_path: Path, monkeypatch):
     }
 
 
+@pytest.fixture(autouse=True)
+def _declared_confidence_only(monkeypatch):
+    """These tests are about the gate reading the confidence the caller DECLARED. Validation rewrites a claim's
+    confidence to its validated score (at the steward cycle, or at once through the MCP fast path), so it is off
+    here."""
+    monkeypatch.setenv("MEMORYMASTER_INLINE_VALIDATION", "0")
+
+
 def _ingest(env, text: str, confidence: float):
     return env["ingest_claim"](
         text=text,

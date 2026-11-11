@@ -293,8 +293,8 @@ def test_pairs_across_tenants_or_with_private_claims_are_never_sent(env):
 
 def test_a_candidate_the_legacy_stage_archived_is_not_asked_about(env, monkeypatch):
     service, ledger = env
-    _claim(service, "Postgres for the billing service listens on port 5432", status="confirmed")
-    duplicate = _claim(service, "Postgres for the billing service listens on port 5432 today")
+    _claim(service, "Postgres for the billing service listens on port 5432 today", status="confirmed")
+    duplicate = _claim(service, "Postgres for the billing service listens on port 5432")
     monkeypatch.setenv("MEMORYMASTER_DEDUPE_ENABLED", "1")
     monkeypatch.setenv("MEMORYMASTER_DEDUPE_SHADOW", "0")
     transport = ScriptedTransport(DUPLICATE)

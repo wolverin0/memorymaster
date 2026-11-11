@@ -580,3 +580,29 @@ def test_install_declares_the_precompact_event_with_a_timeout_that_outlasts_the_
     assert len(entries) == 1 and entries[0]["timeout"] >= 90
     template = (HOOKS / "memorymaster-precompact.py").read_text(encoding="utf-8")
     assert "RESIDUAL_BUDGET_SECONDS = 75" in template and entries[0]["timeout"] > 75
+
+
+def test_residual_excerpt_is_gated_line_by_line_and_the_outcome_reports_what_was_withheld(tmp_path):
+    """Contract: blocked lines never reach the provider; an all-withheld excerpt makes no call; outcome has egress_withheld."""
+    blocked = "DB_PASS=" + "hunter2hunter2"
+    benign = "The service retries three times before it gives up."
+    cfg = {"provider": "openai", "model": "", "forced": False}
+    sent: list[str] = []
+
+    def llm(prompt, text):
+        sent.append(text)
+        return json.dumps({"decisions": [], "rejected": [], "assumptions": [], "cards": [], "next_step": ""})
+
+    stats: dict[str, int] = {}
+    pr.extract_residual(f"USER: {blocked}\nASSISTANT: {benign}", llm=llm, config=cfg, stats=stats)
+    assert len(sent) == 1 and "hunter2" not in sent[0] and benign in sent[0] and stats["egress_withheld"] == 1
+    stats = {}
+    assert pr.extract_residual(f"USER: {blocked}", llm=llm, config=cfg, stats=stats) == []
+    assert len(sent) == 1 and stats["egress_withheld"] == 1  # all withheld: no provider call
+    transcript = tmp_path / "t.jsonl"
+    probe.build_transcript(transcript, str(tmp_path))
+    outcome = pr.capture_residual(
+        {"session_id": "s", "transcript_path": str(transcript), "cwd": str(tmp_path)},
+        db_path=str(tmp_path / "x.db"), llm=lambda p, t: "{}", state_directory=tmp_path / "state",
+    )
+    assert outcome["egress_withheld"] == 0

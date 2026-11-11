@@ -212,12 +212,13 @@ def extract_residual(
     *,
     llm: Callable[[str, str], str] | None = None,
     config: dict[str, str] | None = None,
+    stats: dict[str, int] | None = None,
 ) -> list[dict[str, str]]:
     """One bounded LLM call over the excerpt; ``[]`` on any failure or empty answer."""
     if not excerpt.strip():
         return []
     from memorymaster.core.llm_provider import call_llm, parse_json_response, use_call_scoped_env
-    from memorymaster.core.security import redact_text
+    from memorymaster.core.provider_egress import export_lines  # fail-closed: no filter, no call
 
     config = config or provider_config()
     call = llm or call_llm
@@ -228,7 +229,11 @@ def extract_residual(
         overrides["MEMORYMASTER_LLM_MODEL"] = config["model"]
     elif config.get("forced"):
         overrides["MEMORYMASTER_LLM_MODEL"] = None  # the machine-wide model belongs to the other provider
-    safe_excerpt = redact_text(excerpt)[0]  # secrets never leave the machine toward a provider
+    safe_excerpt, withheld = export_lines(excerpt)  # nothing credential-grade leaves toward a provider
+    if stats is not None:
+        stats["egress_withheld"] = withheld
+    if not safe_excerpt:  # every line withheld: nothing left worth a provider call
+        return []
     with use_call_scoped_env(overrides):
         answer = call(PROMPT, safe_excerpt)
     if not answer:
@@ -344,7 +349,9 @@ def capture_residual(
             outcome["skipped"] = "capture-budget"
             return outcome
     try:
-        items = extract_residual(excerpt, llm=llm, config=config)
+        egress: dict[str, int] = {}
+        items = extract_residual(excerpt, llm=llm, config=config, stats=egress)
+        outcome["egress_withheld"] = egress.get("egress_withheld", 0)
     except Exception as exc:  # swallow-ok: provider outage or quota must never block a compaction; recorded below
         outcome["skipped"] = "llm-error"
         outcome["error"] = type(exc).__name__

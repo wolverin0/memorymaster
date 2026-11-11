@@ -429,3 +429,20 @@ def test_detect_contradictions_text_output_reports_skipped_when_no_encoder(env, 
 
     assert rc == 0
     assert " SKIPPED (encoder unavailable: no local encoder)" in capsys.readouterr().out
+
+
+def test_judge_gates_the_pair_with_stable_pseudonyms_before_the_llm(monkeypatch):
+    """Contract: the judge never sees raw private values; each distinct value keeps its own pseudonym."""
+    from types import SimpleNamespace
+
+    seen: list[str] = []
+    monkeypatch.setattr(llm_provider, "call_llm", lambda prompt, body: seen.append(body) or "[]")
+    contradiction_probe._judge_llm(
+        SimpleNamespace(text="The primary lives at 10.1.2.3"), SimpleNamespace(text="The primary lives at 10.9.8.7")
+    )
+    assert seen == [
+        "Claim A: The primary lives at [REDACTED:private_ipv4#1]\nClaim B: The primary lives at [REDACTED:private_ipv4#2]"
+    ]
+    blocked = SimpleNamespace(text="deploy DB_PASS=" + "hunter2hunter2")
+    assert contradiction_probe._judge_llm(blocked, SimpleNamespace(text="deploy is fine")) is None
+    assert len(seen) == 1  # a withheld pair makes no provider call

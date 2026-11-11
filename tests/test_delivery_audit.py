@@ -197,6 +197,33 @@ def test_prose_correction_is_not_served_next_to_the_claim_it_corrects(fallback_w
     assert not served_as_current, f"the corrected claim #{old} is still served as current: ids={ids}"
 
 
+PORT_ASK = "which port does the staging admin panel listen on"
+
+
+def _correct_without_a_steward_cycle(world, source_agent: str) -> tuple[int, int, list[int]]:
+    """The real flow of an agent's correction: ingest with ``supersedes`` + the MCP fast path; nothing confirmed by
+    hand, no steward cycle (audit D-3 / D-9: the hand-confirmed fixture above hid a gap of hours)."""
+    old = world.claim("The staging admin panel listens on port 8080")
+    new = world.service.ingest("The staging admin panel listens on port 9443",
+                               [CitationInput(source="test://fb", locator="x")], scope="project:here",
+                               source_agent=source_agent, supersedes=[old])
+    world.service.validate_now(new.id)
+    return old, new.id, world.ask(PORT_ASK)[1]
+
+
+@pytest.mark.parametrize("source_agent", ["fixture", "another-agent"])
+def test_a_declared_correction_reaches_a_fresh_session_at_once(fallback_world, monkeypatch, source_agent) -> None:
+    monkeypatch.setenv(transcript_fallback.ENABLED_ENV, "0")
+    old, new, ids = _correct_without_a_steward_cycle(fallback_world, source_agent)
+    assert new in ids and old not in ids, f"expected only the corrected value, got {ids} (old={old}, new={new})"
+
+
+def test_a_correction_that_cannot_be_confirmed_does_not_hide_the_claim_it_corrects(fallback_world, monkeypatch) -> None:
+    monkeypatch.setenv(transcript_fallback.ENABLED_ENV, "0")
+    old, new, ids = _correct_without_a_steward_cycle(fallback_world, "llm-stop-hook")  # an author that is never auto-promoted
+    assert old in ids and new not in ids, f"a fresh session must get one of the two values, got {ids}"
+
+
 # --- 4. T-2274: the optional Stop hook sends sanitized text to the provider ---------------------------------
 
 MARKERS = {

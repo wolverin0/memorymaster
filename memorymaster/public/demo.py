@@ -68,7 +68,7 @@ def _run_fixture_worker(service: MemoryService, repository: CaptureRepository, c
         conn.commit()
     jobs = repository.lease_jobs(owner="memorymaster-demo", stages=("extract_claims",), limit=100)
     for job in jobs:
-        repository.finish_job(job.id, status="completed")
+        repository.finish_job(job.id, lease=job, status="completed")
     return claims, len(jobs)
 
 

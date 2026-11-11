@@ -36,7 +36,7 @@ def main():
             f"[MemoryMaster] session-end receipt error: type={type(exc).__name__} cause={type(cause).__name__}",
             file=sys.stderr,
         )
-    if not _enabled("MEMORYMASTER_SESSION_END_CAPTURE", True):
+    if not _enabled("MEMORYMASTER_SESSION_END_CAPTURE", False):  # opt-in: it sends transcript text to a provider
         return
     transcript_path = data.get("transcript_path", "")
     session_id = str(data.get("session_id") or "unknown")

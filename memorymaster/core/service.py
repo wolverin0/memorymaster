@@ -11,6 +11,7 @@ import os
 from memorymaster.core import access_recording, observability
 from memorymaster.core.claim_authorization import authorize_claims, filter_agent_visibility as _filter_agent_visibility
 from memorymaster.core import llm_budget
+from memorymaster.core.lifecycle import REVIVAL_REASON_PREFIX
 from memorymaster.govern import candidate_dedupe
 from memorymaster.knowledge import entity_ingest
 from memorymaster.recall import graph_expansion, query_cache
@@ -507,7 +508,7 @@ class MemoryService(IntegrationService):
             revived = self.store.apply_status_transition(
                 claim,
                 to_status="candidate",
-                reason=f"reingest_revival:{source_agent or 'unknown'}",
+                reason=f"{REVIVAL_REASON_PREFIX}{source_agent or 'unknown'}",
                 event_type="transition",
             )
         except ConcurrentModificationError:
@@ -814,6 +815,10 @@ class MemoryService(IntegrationService):
             pass
         observability.bump_claim_ingested(source_agent)
         return claim
+
+    def validate_now(self, claim_id: int) -> dict[str, object]:
+        """Ingest fast path: rule on one fresh candidate now, not at the next cycle (``ingest_governance``)."""
+        return ingest_governance.validate_now(self, claim_id)
 
     def _rule_mining_phase(self) -> dict[str, object]:
         """Mine verbatim corrections into rule candidates (P3 steward phase).

@@ -1,4 +1,4 @@
-"""Thin Antigravity lifecycle adapters: SessionStart recall and Stop capture."""
+"""Thin Antigravity lifecycle adapters: SessionStart and per-prompt (PreInvocation) recall, Stop capture."""
 
 from __future__ import annotations
 
@@ -22,14 +22,27 @@ def _internal() -> bool:
                for value in (os.environ.get("HOME", ""), os.environ.get("USERPROFILE", "")))
 
 
-def normalize_payload(payload: dict) -> dict | None:
-    """Require one explicit workspace; the hook process cwd is the config directory."""
-    paths = payload.get("workspacePaths")
-    session = payload.get("conversationId")
-    if not isinstance(paths, list) or len(paths) != 1 or not isinstance(paths[0], str):
+def _workspace(paths: object) -> str | None:
+    """The one explicit workspace; with several roots, the first that resolves to a project scope."""
+    if not isinstance(paths, list):
         return None
-    cwd = paths[0].strip()
-    if not cwd or not (Path(cwd).is_absolute() or PureWindowsPath(cwd).is_absolute()):
+    roots = [p.strip() for p in paths if isinstance(p, str) and p.strip()
+             and (Path(p.strip()).is_absolute() or PureWindowsPath(p.strip()).is_absolute())]
+    if len(roots) == 1 and len(paths) == 1:
+        return roots[0]
+    from memorymaster.core.scope_utils import resolve_workspace_scope
+
+    for root in roots:
+        if resolve_workspace_scope(root, strict=False) not in (None, "global"):
+            return root
+    return None
+
+
+def normalize_payload(payload: dict) -> dict | None:
+    """Require an explicit workspace; the hook process cwd is the config directory."""
+    session = payload.get("conversationId")
+    cwd = _workspace(payload.get("workspacePaths"))
+    if cwd is None:
         return None
     if not isinstance(session, str) or not session.strip():
         return None
@@ -42,7 +55,7 @@ def normalize_payload(payload: dict) -> dict | None:
 
 def run_hook(event: str, payload: dict, *, db_path: str) -> str:
     """Return strict agy JSON or silence; errors never veto the agent's turn."""
-    if event not in {"SessionStart", "Stop"} or _internal():
+    if event not in {"SessionStart", "PreInvocation", "Stop"} or _internal():
         return ""
     data = normalize_payload(payload)
     if data is None:
@@ -53,7 +66,7 @@ def run_hook(event: str, payload: dict, *, db_path: str) -> str:
 
     if is_automated(data["prompt"]):
         return ""
-    if event == "SessionStart" and machine_skip(data["prompt"], "agy", session=data["session_id"][:16]):
+    if event != "Stop" and machine_skip(data["prompt"], "agy", session=data["session_id"][:16]):
         return ""  # recall only: Stop capture is not recall (T-2273)
     previous = os.environ.get(INTERNAL_ENV)
     os.environ[INTERNAL_ENV] = "1"
@@ -61,10 +74,12 @@ def run_hook(event: str, payload: dict, *, db_path: str) -> str:
         # Dependencies can print diagnostics. Nothing except our strict envelope
         # may reach agy's protojson parser, including on a failing dependency.
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            if event == "SessionStart":
+            if event in {"SessionStart", "PreInvocation"}:
                 from memorymaster.core.scope_utils import scope_from_cwd
                 from memorymaster.recall.remote import hook_recall
 
+                if event == "PreInvocation" and not data["prompt"].strip():
+                    return ""  # per-prompt recall needs a prompt; only SessionStart falls back to the scope
                 query = data["prompt"].strip() or f"Project context for {scope_from_cwd(data['cwd'])}"
                 context, _via = hook_recall(query, data, db_path=db_path)
                 if not context or not context.strip():

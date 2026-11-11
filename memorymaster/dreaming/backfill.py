@@ -18,6 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from memorymaster.core.provider_egress import export_messages
+from memorymaster.dreaming.consolidation_egress import gate_consolidation, with_ignored
 from memorymaster.dreaming.backfill_guard import PauseLatch, evaluate_backfill_guard
 from memorymaster.dreaming import backfill_consolidate_guards as consolidate_guards
 from memorymaster.dreaming.providers import ProviderCallError, ProviderOutputError
@@ -600,47 +602,50 @@ class BackfillRunner:
                 if repairs >= max(1, -(-len(planned) // 10)):
                     raise RuntimeError("extraction_repair_allowance_exhausted")
             # Actual rendered preflight is enforced by the configured provider adapter.
-            messages = window["messages"]
-            counter = getattr(self.extractor, "rendered_input_tokens", None)
-            if counter and counter(messages, scope=row["scope"]) > 10_000:
-                raise ValueError("selected window exceeds rendered transport cap")
-            reservation = self._reserve(row["cohort_id"], "extract", 10_000, 1500)
-            window["attempts"] = window.get("attempts", 0) + 1
-            self._save(row)
-            try:
-                result = self.extractor.extract(messages, scope=row["scope"], capture_hash=window["identity"])
-            except ProviderOutputError as exc:
-                # T-1722: a malformed provider reply costs this window one attempt (three strikes
-                # make it unresolved_extraction, repairs count toward the allowance); the run goes
-                # on to the next window instead of aborting the whole campaign.
-                window["last_error"] = type(exc).__name__
-                if window["attempts"] >= 3:
-                    row["status"] = "unresolved_extraction"
+            messages, withheld = export_messages(window["messages"])  # stored text predates the egress gate
+            candidates: list[dict[str, Any]] = []
+            if withheld < len(messages):  # a window of only withheld messages has nothing to send
+                counter = getattr(self.extractor, "rendered_input_tokens", None)
+                if counter and counter(messages, scope=row["scope"]) > 10_000:
+                    raise ValueError("selected window exceeds rendered transport cap")
+                reservation = self._reserve(row["cohort_id"], "extract", 10_000, 1500)
+                window["attempts"] = window.get("attempts", 0) + 1
                 self._save(row)
-                continue
-            except ProviderCallError:
-                # T-1742: a transport, quota or configuration failure is not the window's fault and
-                # consumed nothing. Give the attempt and the reservation back and stop the run; the
-                # scheduler retries later. Treating it like a malformed reply burned one reservation
-                # per window up to the daily cap during a 70-minute outage, and the extra attempts
-                # would have exhausted the cohort's repair allowance on the retry.
-                window["attempts"] -= 1
+                try:
+                    result = self.extractor.extract(messages, scope=row["scope"], capture_hash=window["identity"])
+                except ProviderOutputError as exc:
+                    # T-1722: a malformed provider reply costs this window one attempt (three strikes
+                    # make it unresolved_extraction, repairs count toward the allowance); the run goes
+                    # on to the next window instead of aborting the whole campaign.
+                    window["last_error"] = type(exc).__name__
+                    if window["attempts"] >= 3:
+                        row["status"] = "unresolved_extraction"
+                    self._save(row)
+                    continue
+                except ProviderCallError:
+                    # T-1742: a transport, quota or configuration failure is not the window's fault and
+                    # consumed nothing. Give the attempt and the reservation back and stop the run; the
+                    # scheduler retries later. Treating it like a malformed reply burned one reservation
+                    # per window up to the daily cap during a 70-minute outage, and the extra attempts
+                    # would have exhausted the cohort's repair allowance on the retry.
+                    window["attempts"] -= 1
+                    window.pop("last_error", None)
+                    self._save(row)
+                    with self.ledger._connect() as conn:
+                        conn.execute("UPDATE backfill_reservations SET status='released' WHERE reservation_id=?", (reservation,))
+                    raise
                 window.pop("last_error", None)
-                self._save(row)
-                with self.ledger._connect() as conn:
-                    conn.execute("UPDATE backfill_reservations SET status='released' WHERE reservation_id=?", (reservation,))
-                raise
-            window.pop("last_error", None)
-            self._usage(reservation, result, run_id)
-            if len(result.candidates) > 5:
-                raise ValueError("extractor exceeded candidate cap")
+                self._usage(reservation, result, run_id)
+                if len(result.candidates) > 5:
+                    raise ValueError("extractor exceeded candidate cap")
+                candidates = [c.to_dict() for c in result.candidates]
             stamp = self.now().isoformat()
             envelope = CaptureEnvelope(row["provider"], row["parent_session_id"], row["scope"], stamp,
                                        row["internal_timestamp"] or stamp,
-                                       tuple(DreamMessage(**m) for m in messages), window["index"], window["index"] + 1,
+                                       tuple(DreamMessage(**m) for m in window["messages"]), window["index"], window["index"] + 1,
                                        window["identity"])
             capture_id = self.ledger.enqueue(envelope, coalesce=False)
-            self.ledger.set_extraction(capture_id, [c.to_dict() for c in result.candidates], run_id)
+            self.ledger.set_extraction(capture_id, candidates, run_id)
             window["capture_id"] = capture_id
             self._save(row)
         if all(w.get("capture_id") for w in row["metadata"]["selection"]["windows"]):
@@ -732,11 +737,15 @@ class BackfillRunner:
                 attempts = rows[0]["metadata"].setdefault("consolidation_attempts", {})
                 if attempts.get(identity, 0) >= 3:
                     raise ValueError("consolidation repair attempts exhausted")
-                reservation = self._reserve(cohort, "consolidate", 30_000, 4000)
-                attempts[identity] = attempts.get(identity, 0) + 1
-                self._save(rows[0])
-                result = self.consolidator.consolidate(candidates, claims, scope=scope)
-                self._usage(reservation, result, run_id)
+                sent, ignored, safe_claims, _withheld = gate_consolidation(candidates, claims)
+                result = None
+                if sent:  # a batch of only withheld candidates has nothing to send
+                    reservation = self._reserve(cohort, "consolidate", 30_000, 4000)
+                    attempts[identity] = attempts.get(identity, 0) + 1
+                    self._save(rows[0])
+                    result = self.consolidator.consolidate(sent, safe_claims, scope=scope)
+                    self._usage(reservation, result, run_id)
+                result = with_ignored(result, ignored)
                 reviewed, _ = worker._reviewed_batch(result, candidates, scope)
                 by_id = {d.candidate_id: d for d in reviewed}
                 for capture, candidate in batch:

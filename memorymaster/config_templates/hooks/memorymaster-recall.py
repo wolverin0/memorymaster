@@ -103,7 +103,7 @@ try:
         log_hook("recall", "skip", session=session_id, reason="trivial-prompt", words=len(query.split()))
     else:
         _t = time.perf_counter()
-        log_hook("recall", "start", session=session_id, query_len=len(query))
+        log_hook("recall", "start", session=session_id, query_len=len(query), adapter=ADAPTER)
         log_ms = round((time.perf_counter() - _t) * 1000, 1)
         try:
             _t = time.perf_counter()
@@ -139,7 +139,7 @@ try:
             append_hook_event("claude-code", "recall_injected", 1)
         if sent and residual:
             residual_state.consume(full_session)  # one block, once
-        log_hook("recall", "done", session=session_id, hit=bool(ctx), residual=bool(residual), delivered=sent, via=via)
+        log_hook("recall", "done", session=session_id, hit=bool(ctx), residual=bool(residual), delivered=sent, via=via, adapter=ADAPTER)
     # T-1648: logged for every recall outcome, including skipped_busy (the timeouts), which logged nothing before.
     if _PROBE and timing:
         log_hook("recall", "timing", session=session_id, via=via, import_ms=_IMPORT_MS, boot_ms=_BOOT_MS,

@@ -59,3 +59,48 @@ def test_explicit_alias_overrides_inferred_repository_and_resolves_deleted_workt
     (repo / ".git").mkdir(parents=True)
     assert resolve_transcript_workspace_scope(repo) == "project:logical"
     assert resolve_transcript_workspace_scope(tmp_path / "deleted" / "t1664" / "src") == "project:logical"
+
+
+def test_dreaming_capture_resolves_worktree_style_cwds_like_the_live_hooks(tmp_path, monkeypatch):
+    """D-13: 504 captures landed in project:whatsappbot-main-wt, an aliased worktree folder. A copy-suffixed folder
+    ("... - Copy") canonicalizes to the aliased slug, and the strict capture resolver ignored the slug alias that
+    scope_from_cwd honours, so the beat filed it under the worktree's own name."""
+    from memorymaster.dreaming import capture
+
+    _aliases(tmp_path, monkeypatch, {"aliases": {"whatsappbot-main-wt": "project:whatsappbot-final"}})
+    repo = tmp_path / "whatsappbot-main-wt - Copy"
+    (repo / "src").mkdir(parents=True)
+    gitdir = repo / ".git" / "worktrees" / "wt"
+    gitdir.mkdir(parents=True)
+    linked = tmp_path / "wt"  # a linked worktree of that repo, as `git worktree add` lays it out
+    (linked / "pkg").mkdir(parents=True)
+    (gitdir / "commondir").write_text("../..", encoding="utf-8")
+    (gitdir / "gitdir").write_text(str(linked / ".git"), encoding="utf-8")
+    (linked / ".git").write_text(f"gitdir: {gitdir}", encoding="utf-8")
+    for cwd in (repo, repo / "src", linked, linked / "pkg"):
+        assert capture._scope(str(cwd)) == "project:whatsappbot-final", cwd
+        assert scope_from_cwd(cwd) == capture._scope(str(cwd)), cwd
+
+
+def test_strict_and_live_resolution_agree_on_a_slug_alias(tmp_path, monkeypatch):
+    from memorymaster.core.scope_utils import resolve_transcript_workspace_scope
+
+    _aliases(tmp_path, monkeypatch, {"aliases": {"whatsappbot": "project:whatsappbot-final"}})
+    repo = tmp_path / "whatsappbot-prod - Copy - Copy"
+    (repo / ".git").mkdir(parents=True)
+    assert resolve_transcript_workspace_scope(repo) == scope_from_cwd(repo) == "project:whatsappbot-final"
+    other = tmp_path / "elsewhere"
+    (other / ".git").mkdir(parents=True)
+    assert resolve_transcript_workspace_scope(other) == "project:elsewhere", "no alias, no change"
+
+
+def test_the_exact_folder_of_the_live_whatsappbot_captures_maps_to_the_alias_in_both_resolvers(tmp_path, monkeypatch):
+    """D-13: the ledger's 43 sessions filed under project:whatsappbot-main-wt ran in a folder named exactly that."""
+    from memorymaster.dreaming import capture
+
+    _aliases(tmp_path, monkeypatch, {"aliases": {"whatsappbot-main-wt": "project:whatsappbot-final"}})
+    folder = tmp_path / "whatsappbot-main-wt"
+    (folder / "observatorio").mkdir(parents=True)
+    assert capture._scope(str(folder)) == scope_from_cwd(folder) == "project:whatsappbot-final"
+    # a plain subfolder (no .git of its own) follows the aliased ancestor on the capture path
+    assert capture._scope(str(folder / "observatorio")) == "project:whatsappbot-final"

@@ -498,6 +498,7 @@
       },
       "requires_repo_files": [
         "scripts/memory_health_probe.py",
+        "scripts/check_hook_template_drift.py",
         "scripts/health_canaries.json"
       ],
       "optional_external": [

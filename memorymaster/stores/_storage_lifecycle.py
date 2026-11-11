@@ -484,7 +484,7 @@ class _LifecycleMixin:
             transition_placeholders = ",".join("?" for _ in STATUS_TRANSITION_EVENT_TYPES)
             transition_rows = conn.execute(
                 f"""
-                SELECT id, event_type, from_status, to_status
+                SELECT id, event_type, from_status, to_status, details
                 FROM events
                 WHERE event_type IN ({transition_placeholders})
                 ORDER BY id ASC
@@ -509,9 +509,11 @@ class _LifecycleMixin:
                     continue
                 if from_status == to_status:
                     continue
-                from memorymaster.core.lifecycle import ALLOWED_TRANSITIONS
+                from memorymaster.core.lifecycle import ALLOWED_TRANSITIONS, is_reingest_revival
 
-                if to_status not in ALLOWED_TRANSITIONS.get(str(from_status), set()):
+                if to_status not in ALLOWED_TRANSITIONS.get(str(from_status), set()) and not is_reingest_revival(
+                    str(row["event_type"]), from_status, to_status, row["details"]
+                ):
                     transition_issues.append(
                         {
                             "event_id": int(row["id"]),
