@@ -371,6 +371,7 @@ def test_cuit_shaped_numbers_that_fail_the_check_digit_or_prefix_stay_readable()
     ("log at C:\\Users\\pauolx01\\AppData\\x.log", "pauolx01"),
     ("file C:/Users/pauolx02/Desktop/x.txt", "pauolx02"),
     ("see /c/Users/pauolx04/projects/x", "pauolx04"),
+    ("see /mnt/c/Users/pauolx19/projects/x", "pauolx19"),
     ("see /home/pauolx05/projects/x", "pauolx05"),
     ("see /Users/Pauolx06/projects/x", "Pauolx06"),
 ])

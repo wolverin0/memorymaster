@@ -247,6 +247,23 @@ def _git_project_root(
     return None
 
 
+def _holds_several_repositories(directory: Path) -> bool:
+    """Whether ``directory`` is a collection root (two or more child checkouts).
+
+    Stops at the second checkout and looks at no more than 1024 entries (the strict resolver's bound): a
+    directory of ~20k subfolders stalled an indexing run for minutes (T-2277).
+    shortcut: a checkout listed after the 1024th entry is not counted; raise the bound if collection roots grow past it.
+    """
+    repositories = 0
+    for index, child in enumerate(directory.iterdir()):
+        if index >= 1024:
+            return False
+        repositories += int(child.is_dir() and (child / ".git").exists())
+        if repositories > 1:
+            return True
+    return False
+
+
 def scope_from_cwd(cwd: str | os.PathLike[str] | None) -> str:
     """Resolve hook/session/MCP scope, retaining checkout and basename fallbacks."""
     return resolve_workspace_scope(cwd, strict=False) or "global"
@@ -290,10 +307,7 @@ def resolve_workspace_scope(
                 cwd_from_transcript(current), strict=True, allow_fallback_global=allow_fallback_global,
             )
         roots = _git_project_root(current, strict=strict, aliases=aliases)
-        if not strict and roots is None and current.is_dir() and sum(
-            1 for child in current.iterdir()
-            if child.is_dir() and (child / ".git").exists()
-        ) > 1:
+        if not strict and roots is None and current.is_dir() and _holds_several_repositories(current):
             return "global"
     except (OSError, ValueError, RuntimeError) as error:
         if strict:
