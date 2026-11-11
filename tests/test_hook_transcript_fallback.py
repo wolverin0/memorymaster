@@ -433,12 +433,15 @@ def test_d5_a_failing_proposal_scan_fails_closed(world, monkeypatch) -> None:
     world.claim("The router proxy port field must be in the deploy checklist")
     real = retrieval.pending_supersession_ids
 
-    def scan(svc, **kw):
-        if kw.get("deliverable_only") is False:
-            raise retrieval.PendingSupersessionScanError("boom")
+    def boom(_service):
+        raise RuntimeError("event scan fault")  # inside the scan: non-strict mode swallows it into an empty set
+
+    def scoped(svc, **kw):
+        if kw.get("deliverable_only") is False:  # only the reserved-slot scan faults; ranking's scan is healthy
+            monkeypatch.setattr(retrieval, "scan_proposal_events", boom)
         return real(svc, **kw)
 
-    monkeypatch.setattr(retrieval, "pending_supersession_ids", scan)
+    monkeypatch.setattr(retrieval, "pending_supersession_ids", scoped)
     out, ids = world.ask(PORT_ASK)
     assert old in ids and "8080" not in out
 
