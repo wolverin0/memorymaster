@@ -651,7 +651,7 @@ def test_selfcheck_question_generator_gates_the_claim(monkeypatch):
 def test_workflow_classification_gates_the_request_excerpt(tmp_path, monkeypatch):
     from memorymaster.workflow_intelligence import classification
     from memorymaster.workflow_intelligence.models import SessionRecord
-    from memorymaster.workflow_intelligence.store import WorkflowStore
+    from memorymaster.workflow_intelligence.storage import WorkflowStore
 
     seen, call = _spy('{"task_category": "devops", "outcome": "unknown", "confidence": 0.7, "rationale": "x"}')
     monkeypatch.setattr(classification.llm_provider, "call_llm", call)
