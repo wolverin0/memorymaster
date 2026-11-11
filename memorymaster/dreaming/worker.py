@@ -19,6 +19,7 @@ from typing import Any, Callable, Protocol
 
 from memorymaster.core.antigravity_client import AntigravityError
 from memorymaster.core.models import CitationInput
+from memorymaster.core.provider_egress import export_messages
 from memorymaster.core.service import MemoryService
 from memorymaster.dreaming import held
 from memorymaster.dreaming.extraction_window import PIECE_CHARS, extraction_complete, next_window
@@ -347,6 +348,7 @@ class DreamWorker:
             "candidate_writes": 0,
             "proposals": 0,
             "deferred_extract_budget": 0,
+            "egress_withheld": 0,
             "deferred_consolidate_budget": 0,
             "deferred_consolidate_provider": 0,
             "consolidate_breaker": None,
@@ -544,12 +546,17 @@ class DreamWorker:
                 cursor = int(row.get("extracted_through") or 0)
                 messages, window_end = next_window(list(row["messages"]), cursor, self.config.max_input_chars)
                 capture_hash = str(row["content_hash"]) + (f":{cursor}" if cursor else "")
-                self._hold_lease()
-                called = True
-                result = self.extractor.extract(messages, scope=str(row["scope"]), capture_hash=capture_hash)
-                called = False
-                self._record_usage(run_id, result.usage, "ok")
-                candidates = [candidate.to_dict() for candidate in result.candidates]
+                # The ledger may hold text sanitized by an older, literal-only filter: gate at call time.
+                messages, withheld = export_messages(messages)
+                summary["egress_withheld"] += withheld
+                candidates = []
+                if withheld < len(messages):  # a window of only withheld messages has nothing to send
+                    self._hold_lease()
+                    called = True
+                    result = self.extractor.extract(messages, scope=str(row["scope"]), capture_hash=capture_hash)
+                    called = False
+                    self._record_usage(run_id, result.usage, "ok")
+                    candidates = [candidate.to_dict() for candidate in result.candidates]
                 self._hold_lease()
                 saved = self.ledger.save_extraction_window(int(row["id"]), candidates, window_end, run_id)
             except DreamLeaseLost:

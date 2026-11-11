@@ -72,4 +72,26 @@ def prepare_claim_egress(text: str) -> ClaimEgress:
     return ClaimEgress(redacted, tuple(dict.fromkeys(findings)), blocked)
 
 
-__all__ = ["ClaimEgress", "prepare_claim_egress"]
+def prepare_transcript_egress(text: str) -> ClaimEgress:
+    """``prepare_claim_egress`` for text that already carries OUR redaction markers.
+
+    Stored captures were sanitized by an older filter and hold well-formed ``[REDACTED:<name>]``
+    markers; the claim gate refuses any text containing ``[redacted``. Well-formed markers are
+    swapped for a neutral placeholder first and restored after, so only a malformed or foreign
+    marker (or a surviving credential-grade finding) still blocks.
+    """
+    held: list[str] = []
+
+    def hold(match: re.Match[str]) -> str:
+        held.append(match.group(0))
+        return f"[MARK{len(held) - 1}x]"
+
+    neutral = _EGRESS_MARKER.sub(hold, text)
+    egress = prepare_claim_egress(neutral)
+    restored = egress.text
+    for index, marker in enumerate(held):
+        restored = restored.replace(f"[MARK{index}x]", marker)
+    return ClaimEgress(restored, egress.findings, egress.blocked)
+
+
+__all__ = ["ClaimEgress", "prepare_claim_egress", "prepare_transcript_egress"]
