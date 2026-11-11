@@ -36,7 +36,6 @@ from memorymaster.core.security import (
     normalize_sensitivity_findings,
     resolve_allow_sensitive_access,
     sanitize_claim_input,
-    sanitize_persisted_text,
     validate_persisted_metadata,
 )
 from memorymaster.core.intake_policy import (
@@ -1787,29 +1786,7 @@ class MemoryService(IntegrationService):
         FeedbackTracker.record_retrieval). Best-effort like the RW path —
         a spool I/O failure must never break recall.
         """
-        db_path = str(getattr(self.store, "db_path", "") or "")
-        if not db_path:
-            return
-        import hashlib
-
-        from memorymaster.core import spool
-
-        safe_query, _ = sanitize_persisted_text(query_text or "")
-        query_hash = (
-            hashlib.sha256(safe_query.encode("utf-8")).hexdigest()[:12]
-            if safe_query
-            else None
-        )
-        with contextlib.suppress(Exception):
-            spool.append(
-                db_path,
-                "recall",
-                {
-                    "claim_ids": list(dict.fromkeys(claim_ids)),
-                    "query_hash": query_hash,
-                    "query_text": safe_query,
-                },
-            )
+        access_recording.spool_accesses(getattr(self.store, "db_path", ""), claim_ids, query_text)
 
     def recompute_tiers(self) -> dict[str, int]:
         """Recompute tier assignments for all non-archived claims."""

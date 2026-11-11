@@ -22,6 +22,8 @@ def test_opencode_delegates_query_workspace_and_budget_to_shared_core(monkeypatc
     })))
     assert hook_recall.main(["--cli", "opencode"]) == 0
     assert capsys.readouterr().out == "[MemoryMaster recall]\n# Memory Context\n- [mm-42] use SQLite"
+    turn_id = seen["data"].pop("defer_delivery")  # T-2275: recall stages the turn under this id, the adapter confirms it
+    assert isinstance(turn_id, str) and turn_id
     assert seen == {"query": "Why did we choose SQLite?", "data": {
         "prompt": "Why did we choose SQLite?", "cwd": "/work/project", "session_id": "opencode:ses_1",
     }, "db_path": "fixture.db", "timeout": 2.5}
