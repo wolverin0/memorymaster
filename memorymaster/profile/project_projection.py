@@ -548,14 +548,15 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
         allowed_diagnostics = {
             "source_incomplete", "ledger_unavailable", "ledger_incomplete",
             "claims_unavailable", "coverage_limit", "inactive",
-            "incremental_scan_fence_incomplete", "brief_trimmed", "brief_dropped",
+            "incremental_scan_fence_incomplete", "brief_trimmed", "brief_dropped", "not_revalidated",
             *(f"m2_not_ready:{reason}" for reason in (
                 "decisions_incomplete", "purpose_trimmed", "pinned_constraints_trimmed",
                 "open_cards_trimmed", "decisions_trimmed", "ledger_incomplete",
                 "cards_changed", "context_withdrawn",
             )),
         }
-        if (any(not isinstance(value, str) or value not in allowed_diagnostics
+        if (any(not isinstance(value, str)
+                or (value not in allowed_diagnostics and not re.fullmatch(r"ledger_malformed:\d{1,5}", value))
                 for value in manifest["diagnostics"])
                 or any(key not in {"purpose", "constraints", "decisions", "open_cards", "gotchas", "pinned_constraints"}
                        or type(value) is not int or value < 0
@@ -625,7 +626,8 @@ def read_project_projection(config: ProjectProjectionConfig) -> ProjectProjectio
     except (ValueError, TypeError, KeyError):
         return None
     ids = [record["supports"][0]["id"] for record in manifest["items"] if record["supports"][0]["kind"] == "claim"]
-    current = load_project_snapshot(config, claim_ids=ids, validation=True)
+    cards = [record["supports"][0]["id"] for record in manifest["items"] if record["supports"][0]["kind"] == "card"]
+    current = load_project_snapshot(config, claim_ids=ids, validation=True, card_ids=cards)
     selected = []
     diagnostics = list(manifest["diagnostics"])
     omissions = dict(manifest["omissions"])
@@ -665,6 +667,9 @@ def read_project_projection(config: ProjectProjectionConfig) -> ProjectProjectio
         else:
             diagnostics.append("m2_not_ready:context_withdrawn")
     diagnostics.extend(current["diagnostics"])
+    if {"ledger_unavailable", "claims_unavailable"} & set(current["diagnostics"]) - set(manifest["diagnostics"]):
+        # Validation could not finish (deadline, unreadable source): the published brief is still served verbatim.
+        diagnostics.append("not_revalidated")
     if any(key.startswith("card:") and key not in manifest["source_coverage"] for key in current["coverage"]):
         diagnostics.append("m2_not_ready:cards_changed")
     if not current["complete"] and "source_incomplete" not in diagnostics:
