@@ -22,6 +22,10 @@ from memorymaster.core.security import (
 )
 
 MAX_ATTEMPTS = 5
+
+
+class LeaseLost(RuntimeError):
+    """The job is no longer leased to the caller (the lease expired and was re-leased, or it already finished)."""
 MAX_RETRY_SECONDS = 6 * 60 * 60
 
 
@@ -252,33 +256,37 @@ class CaptureRepository:
         self,
         job_id: int,
         *,
+        lease: CaptureJob,
         status: str,
         error_code: str | None = None,
         error_detail: str | None = None,
     ) -> CaptureJob:
+        """Finish a job the caller leased; ``lease`` is the job ``lease_jobs`` returned.
+
+        Fenced like the dreaming ledger's lease: the update applies only while the row is still ``leased`` to
+        ``lease.lease_owner`` at ``lease.attempts`` (each lease bumps ``attempts``, so it is the lease version).
+        Otherwise nothing is written and :class:`LeaseLost` is raised.
+        """
         if status not in {"completed", "cancelled", "blocked", "retryable"}:
             raise ValueError("finish status must be completed, cancelled, blocked, or retryable")
+        if lease.id != job_id or not lease.lease_owner:
+            raise ValueError("lease must be the leased job being finished")
         validate_persisted_metadata({"status": status, "error_code": error_code})
         stamp = _iso(_now())
         detail = _safe_detail(error_detail)
+        attempts = int(lease.attempts)
+        final_status = status
+        next_attempt = None
+        if status == "retryable":
+            if attempts >= MAX_ATTEMPTS:
+                final_status = "blocked"
+                error_code = "attempts_exhausted"
+                detail = "Maximum capture attempts exhausted."
+            else:
+                delay = min(MAX_RETRY_SECONDS, 60 * (2 ** max(0, attempts - 1)))
+                next_attempt = _iso(_now() + timedelta(seconds=delay))
+        completed_at = stamp if final_status == "completed" else None
         with self._connection() as conn:
-            existing = self._execute(
-                conn, f"SELECT attempts FROM capture_jobs WHERE id={self.placeholder}", (job_id,)
-            ).fetchone()
-            if existing is None:
-                raise KeyError(f"capture job {job_id} not found")
-            attempts = int(_mapping(existing)["attempts"])
-            final_status = status
-            next_attempt = None
-            if status == "retryable":
-                if attempts >= MAX_ATTEMPTS:
-                    final_status = "blocked"
-                    error_code = "attempts_exhausted"
-                    detail = "Maximum capture attempts exhausted."
-                else:
-                    delay = min(MAX_RETRY_SECONDS, 60 * (2 ** max(0, attempts - 1)))
-                    next_attempt = _iso(_now() + timedelta(seconds=delay))
-            completed_at = stamp if final_status == "completed" else None
             row = self._execute(
                 conn,
                 f"""UPDATE capture_jobs
@@ -286,12 +294,15 @@ class CaptureRepository:
                         lease_owner=NULL, lease_expires_at=NULL,
                         error_code={self.placeholder}, error_detail={self.placeholder},
                         updated_at={self.placeholder}, completed_at={self.placeholder}
-                    WHERE id={self.placeholder} RETURNING *""",
-                (final_status, next_attempt, error_code, detail, stamp, completed_at, job_id),
+                    WHERE id={self.placeholder} AND status='leased'
+                      AND lease_owner={self.placeholder} AND attempts={self.placeholder}
+                    RETURNING *""",
+                (final_status, next_attempt, error_code, detail, stamp, completed_at, job_id,
+                 lease.lease_owner, attempts),
             ).fetchone()
             self._commit(conn)
         if row is None:
-            raise RuntimeError("capture job update returned no row")
+            raise LeaseLost(f"capture job {job_id} is no longer leased to {lease.lease_owner} (attempt {attempts})")
         return self._job(row)
 
     def link_claim_evidence(

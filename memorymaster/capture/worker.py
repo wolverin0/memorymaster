@@ -13,7 +13,7 @@ from memorymaster.capture.adapters import (
     CaptureRetryable,
     resolve_local_locator,
 )
-from memorymaster.capture.repository import CaptureRepository
+from memorymaster.capture.repository import CaptureRepository, LeaseLost
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,37 +208,34 @@ def run_capture_worker(
             break
         job = jobs[0]
         leased += 1
+        def finish(**kw: Any) -> Any:
+            # a worker whose lease was lost must not write; the job belongs to whoever holds it now
+            try:
+                return repository.finish_job(job.id, lease=job, **kw)
+            except LeaseLost:
+                counts["errors"] += 1
+                return None
+
         try:
             completion = _process_job(service, repository, job)
-            repository.finish_job(
-                job.id,
+            if finish(
                 status="completed",
                 error_code=completion.error_code if completion else None,
                 error_detail=completion.error_detail if completion else None,
-            )
-            counts["completed"] += 1
-            counts["partial"] += int(completion is not None)
+            ) is not None:
+                counts["completed"] += 1
+                counts["partial"] += int(completion is not None)
         except CaptureRejected as exc:
-            repository.finish_job(
-                job.id, status="blocked", error_code=exc.code, error_detail=exc.detail
-            )
-            counts["blocked"] += 1
+            if finish(status="blocked", error_code=exc.code, error_detail=exc.detail) is not None:
+                counts["blocked"] += 1
         except CaptureRetryable as exc:
-            finished = repository.finish_job(
-                job.id,
-                status="retryable",
-                error_code=exc.code,
-                error_detail=exc.detail,
-            )
-            counts[finished.status] += 1
-            counts["errors"] += 1
+            finished = finish(status="retryable", error_code=exc.code, error_detail=exc.detail)
+            if finished is not None:
+                counts[finished.status] += 1
+                counts["errors"] += 1
         except Exception as exc:  # noqa: BLE001 - durable retry boundary
-            finished = repository.finish_job(
-                job.id,
-                status="retryable",
-                error_code="worker_error",
-                error_detail=str(exc),
-            )
-            counts[finished.status] += 1
-            counts["errors"] += 1
+            finished = finish(status="retryable", error_code="worker_error", error_detail=str(exc))
+            if finished is not None:
+                counts[finished.status] += 1
+                counts["errors"] += 1
     return CaptureWorkerResult(leased=leased, **counts)

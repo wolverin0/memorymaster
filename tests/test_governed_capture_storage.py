@@ -78,7 +78,7 @@ def test_queue_and_lease_are_replay_safe(tmp_path) -> None:
         source_item_id=source.id, content_hash=digest, stage="extract_claims"
     )
     leased = repo.lease_jobs(owner="test-worker", limit=10)
-    completed = repo.finish_job(leased[0].id, status="completed")
+    completed = repo.finish_job(leased[0].id, lease=leased[0], status="completed")
 
     assert created_first is True
     assert created_second is False
@@ -134,6 +134,7 @@ def test_retry_backoff_is_bounded_and_sensitive_errors_are_sanitized(tmp_path) -
     leased = repo.lease_jobs(owner="worker")[0]
     retry = repo.finish_job(
         leased.id,
+        lease=leased,
         status="retryable",
         error_code="provider_timeout",
         error_detail="OPENAI_API_KEY=sk-proj-FAKEcaptureStorage1234567890ABCDE",
