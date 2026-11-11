@@ -357,8 +357,7 @@ def fragment_world(world, tmp_path, monkeypatch):
     (root / "s.jsonl").write_text(json.dumps({
         "type": "assistant", "timestamp": "2026-11-01T10:00:00Z", "cwd": world.hook.cwd,
         "message": {"role": "assistant", "content": [{"type": "text", "text": (
-            f"We decided the zorblax cache invalidation strategy is the {PELICAN}, final.")}]}}) + "
-", encoding="utf-8")
+            f"We decided the zorblax cache invalidation strategy is the {PELICAN}, final.")}]}}) + chr(10), encoding="utf-8")
     ti.index_transcripts()
     world.claim("Check the zorblax cache invalidation strategy on every deploy")
     world.claim("The zorblax cache invalidation strategy section lives in the runbook")
