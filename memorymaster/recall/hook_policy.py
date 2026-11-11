@@ -275,6 +275,17 @@ def stage_turn(session_id: str, turn_id: str, turn: dict, *, now: float | None =
                 pass
 
 
+def stage_fragment(session_id: str, turn_id: str, key: int, tag: str) -> None:
+    """Add the reserved-slot transcript fragment (its session key and the tag that proves it was emitted) to the
+    turn recall already staged; ``confirm_turn`` remembers the key only if ``tag`` is in the emitted text."""
+    path = _turn_path(session_id, turn_id)
+    try:
+        turn = json.loads(path.read_text(encoding="utf-8"))
+        stage_turn(session_id, turn_id, {**turn, "fragment": {"key": key, "tag": tag}}, now=float(turn["ts"]))
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+
+
 def take_turn(session_id: str, turn_id: str, *, now: float | None = None) -> dict | None:
     """The staged turn ``turn_id`` of this session, removed; None when absent, expired or unreadable."""
     now = time.time() if now is None else now

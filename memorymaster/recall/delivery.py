@@ -235,6 +235,17 @@ def confirm_turn(data: dict, adapter: str, *, emitted: str, query: str = "", fai
         for cid, _ in packed:
             if cid not in kept:
                 omitted[str(cid)] = (failure or "not_emitted") if not emitted else drop_reason
+        fragment = turn.get("fragment")  # the reserved-slot transcript fragment: same emitted test, by its tag
+        fragment_state = "-"
+        if isinstance(fragment, dict) and isinstance(fragment.get("key"), int):
+            tag = fragment.get("tag")
+            if emitted and (not tag or tag in emitted):
+                fragment_state = "emitted"
+                if hook_policy.session_id_of(data):
+                    hook_policy.remember(session, [fragment["key"]])
+            else:
+                fragment_state = (failure or "not_emitted") if not emitted else drop_reason
+            fragment_state = f"{fragment['key']}:{fragment_state}"
         if kept:
             if hook_policy.session_id_of(data):
                 hook_policy.remember(session, kept)
@@ -246,7 +257,8 @@ def confirm_turn(data: dict, adapter: str, *, emitted: str, query: str = "", fai
                    "omitted": omitted}
         _log_receipt(adapter, session, turn=receipt["turn"], ranked=receipt["ranked"],
                      selected=_ids(receipt["selected"]), packed=_ids(receipt["packed"]), emitted=_ids(kept),
-                     omitted=",".join(f"{cid}:{reason}" for cid, reason in omitted.items()) or "-")
+                     omitted=",".join(f"{cid}:{reason}" for cid, reason in omitted.items()) or "-",
+                     fragment=fragment_state)
         return receipt
     except Exception:  # noqa: BLE001 — observation and bookkeeping only
         return None
