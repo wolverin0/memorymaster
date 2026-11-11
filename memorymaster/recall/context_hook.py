@@ -1277,8 +1277,9 @@ def _tied_value_tokens(text: str, query_keys: frozenset[str]) -> set[str]:
     """Value tokens of the sentences of ``text`` that contain at least one content term of the query."""
     out: set[str] = set()
     for sentence in _SENTENCE.split(text):
-        if query_keys & hook_lexical.text_keys(sentence):
-            out |= _value_tokens(sentence)
+        values = _value_tokens(sentence)  # cheap first: most sentences carry no value, so skip the tokenizer
+        if values and query_keys & hook_lexical.text_keys(sentence):
+            out |= values
     return out
 
 
