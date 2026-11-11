@@ -148,3 +148,278 @@ def test_argentine_dni_needs_the_document_context(text: str) -> None:
     redacted, findings = redact_text(text)
     assert "argentine_dni" not in findings
     assert redacted == text
+
+
+# --- audit S-1 / S-5 / S-7 / S-8 ----------------------------------------------------------------------------
+# Fixtures are synthetic: made-up values, no real credential, user name or home path.
+import sqlite3  # noqa: E402
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from memorymaster.core.models import CitationInput  # noqa: E402
+from memorymaster.core.security import sanitize_claim_input  # noqa: E402
+
+PW = "Xy7#kPq9"
+
+
+def _cuit(prefix: str, body: str) -> str:
+    """Build a CUIT/CUIL with a valid mod-11 check digit (callers pick bodies whose check is not 10)."""
+    digits = prefix + body
+    total = sum(int(d) * w for d, w in zip(digits, (5, 4, 3, 2, 7, 6, 5, 4, 3, 2)))
+    check = 11 - total % 11
+    return digits + str(0 if check == 11 else check)
+
+
+@pytest.mark.parametrize("text", [
+    f"la contraseña del servidor es {PW} no la compartas",
+    f"la contrasena del servidor es {PW}",
+    f"clave: {PW}",
+    f"la clave de acceso es {PW}",
+    f"usuario admin clave {PW}",
+    f"la clave de wifi es `{PW}` ok",
+    f"password es {PW}",
+    f"las contraseñas son {PW}",
+    f"pass = {PW}",
+])
+def test_spanish_prose_password_is_redacted(text: str) -> None:
+    redacted, findings = redact_text(text)
+    assert findings, text
+    assert PW not in redacted
+
+
+@pytest.mark.parametrize("text", [
+    "la clave es reiniciar el servicio",
+    "la clave del éxito es la constancia",
+    "contraseña incorrecta, probá de nuevo",
+    "hay que pedir la contraseña al cliente",
+    "cambiar la clave primaria de la tabla",
+    "la clave foránea apunta a clientes",
+    "la clave pública se publica en el servidor",
+    "la clave privada nunca se comparte",
+    "palabra clave: facturación",
+    "la clave es Python",
+    "la clave es user_id",
+    "clave única compuesta por cuit y número",
+    "la clave de api es obligatoria",
+    "la clave es la versión v2.0.1 del esquema",
+])
+def test_spanish_password_words_in_ordinary_prose_stay_readable(text: str) -> None:
+    redacted, findings = redact_text(text)
+    assert findings == [], (text, findings)
+    assert redacted == text
+
+
+@pytest.mark.parametrize("scheme", ["https", "http", "ftp", "smb", "redis", "amqp", "mqtt", "rtsp", "ssh", "sftp"])
+def test_any_scheme_userinfo_password_is_redacted_user_and_host_stay(scheme: str) -> None:
+    redacted, findings = redact_text(f"fetch {scheme}://svcuser:{PW}@host.example.test/path now")
+    assert findings
+    assert PW not in redacted
+    if scheme not in {"redis", "amqp"}:  # those keep the legacy whole-URL db_url_password redaction
+        assert f"{scheme}://svcuser:" in redacted and "@host.example.test/path" in redacted
+
+
+@pytest.mark.parametrize("text", [
+    "clone https://github.com/org/repo.git",
+    "open http://localhost:8080/health",
+    "see https://example.test:8443/a@b",
+    "git remote ssh://git@github.com:22/org/repo",
+    "email me@example.test about http://example.test:80 please",
+    "use https://user:${PASSWORD}@host.example.test/x",
+    "use https://user:<password>@host.example.test/x",
+])
+def test_urls_without_embedded_password_stay_readable(text: str) -> None:
+    redacted, findings = redact_text(text)
+    assert findings == [], (text, findings)
+    assert redacted == text
+
+
+AWS_SECRET = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+AWS_ID = "AKIA" + "ZQ7LMN4PRS6TUV2W"
+
+
+@pytest.mark.parametrize("text", [
+    f"access {AWS_ID} and secret {AWS_SECRET} for s3",
+    f"{AWS_SECRET} is the secret, id {AWS_ID}",
+    f"the aws secret access key is {AWS_SECRET}",
+    f"AWS_SECRET_ACCESS_KEY={AWS_SECRET}",
+])
+def test_aws_secret_access_key_with_aws_context_is_redacted(text: str) -> None:
+    redacted, findings = redact_text(text)
+    assert AWS_SECRET not in redacted
+    assert findings  # the AWS_SECRET_ACCESS_KEY= form is also caught by compound_credential
+
+
+@pytest.mark.parametrize("text", [
+    f"the s3 backup uses {AWS_SECRET} as credentials",           # no aws context at all
+    "commit 3fa9c1d7e4b2a8f0c6d5e1b9a7f3c2d4e6b8a0c1 on aws",     # git sha (40 hex) next to the word aws
+    "aws " + "a" * 40,                                            # single case, no digit
+])
+def test_bare_or_hex_40_char_tokens_are_not_an_aws_secret(text: str) -> None:
+    _, findings = redact_text(text)
+    assert "aws_secret_key" not in findings
+
+
+@pytest.mark.parametrize("text, digits", [
+    ("OTP 493021", "493021"),
+    ("el OTP code is 493021 send it", "493021"),
+    ("código de verificación: 493021", "493021"),
+    ("verification code is 493021", "493021"),
+    ("PIN: 4821", "4821"),
+    ("el pin es 4821", "4821"),
+    ("cajero PIN 4821 del cliente", "4821"),
+])
+def test_otp_and_pin_with_keyword_are_redacted(text: str, digits: str) -> None:
+    redacted, findings = redact_text(text)
+    assert "otp_pin" in findings
+    assert digits not in redacted
+
+
+@pytest.mark.parametrize("text", [
+    "pedido 493021 entregado",
+    "total 4821 pesos",
+    "the pin header has 40 pins",
+    "pin 17 of the GPIO header",
+    "PIN is required for the signup form",
+    "puerto 4821 abierto",
+    "OTP support lands in 2026",
+    "el código de verificación se envía por mail",
+])
+def test_bare_numbers_and_keywords_without_digits_stay_readable(text: str) -> None:
+    redacted, findings = redact_text(text)
+    assert findings == [], (text, findings)
+    assert redacted == text
+
+
+def test_zero_width_characters_do_not_hide_a_secret() -> None:
+    text = "password=" + PW[:3] + "\u200b" + PW[3:]
+    redacted, findings = sanitize_persisted_text(text)
+    assert findings
+    assert PW[3:] not in redacted
+
+
+def test_zero_width_joiner_in_emoji_text_is_untouched() -> None:
+    text = "family \U0001F468\u200d\U0001F469\u200d\U0001F467 ok"
+    assert sanitize_persisted_text(text) == (text, [])
+
+
+@pytest.mark.parametrize("cuit", [
+    _cuit("20", "27123456"),
+    _cuit("27", "30123456"),
+    _cuit("30", "71234567"),
+    _cuit("33", "50123456"),
+])
+def test_valid_cuit_cuil_is_redacted_dashed_and_plain(cuit: str) -> None:
+    for shape in (f"{cuit[:2]}-{cuit[2:10]}-{cuit[10]}", cuit):
+        redacted, findings = redact_text(f"CUIT {shape} del cliente")
+        assert "argentine_cuit_cuil" in findings, shape
+        assert shape not in redacted
+    _, findings = redact_text(f"la persona {cuit} cobra")
+    assert "argentine_cuit_cuil" in findings
+
+
+def test_cuit_shaped_numbers_that_fail_the_check_digit_or_prefix_stay_readable() -> None:
+    good = _cuit("20", "27123456")
+    bad = good[:10] + str((int(good[10]) + 1) % 10)
+    for text in (
+        f"CUIT {bad[:2]}-{bad[2:10]}-{bad[10]}",     # wrong check digit
+        f"numero {bad}",                              # wrong check digit, plain
+        f"CUIT {_cuit('21', '27123456')}",            # valid check digit, prefix not in the list
+        "llamar al 11 4567 8901 234",                 # phone
+        "epoch 1700000000000",                        # timestamp, 13 digits
+        f"id {good}0",                                # 12 digits: not a CUIT
+    ):
+        redacted, findings = redact_text(text)
+        assert "argentine_cuit_cuil" not in findings, text
+        assert redacted == text
+
+
+@pytest.mark.parametrize("path, user", [
+    ("log at C:\\Users\\pauolx01\\AppData\\x.log", "pauolx01"),
+    ("file C:/Users/pauolx02/Desktop/x.txt", "pauolx02"),
+    ("file c:/users/pauolx03/Desktop/x.txt", "pauolx03"),
+    ("see /c/Users/pauolx04/projects/x", "pauolx04"),
+    ("see /home/pauolx05/projects/x", "pauolx05"),
+    ("see /Users/Pauolx06/projects/x", "Pauolx06"),
+])
+def test_personal_home_path_is_redacted_in_every_slash_style(path: str, user: str) -> None:
+    redacted, findings = redact_text(path)
+    assert findings
+    assert user not in redacted
+
+
+@pytest.mark.parametrize("text", [
+    "C:/Windows/System32 and /usr/local/bin",
+    "route /users/:id and /home/ page",
+])
+def test_non_user_paths_stay_readable(text: str) -> None:
+    assert redact_text(text) == (text, [])
+
+
+def test_remember_does_not_persist_a_forward_slash_home_path(tmp_path: Path) -> None:
+    from memorymaster.core.service import MemoryService
+    from memorymaster.public.v1 import remember
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    db = tmp_path / "s8.db"
+    MemoryService(str(db), workspace_root=ws).init_db()
+    user = "pauolx02"
+    remember(text="note: file C:/Users/" + user + "/Desktop/x.txt", scope="project:audit",
+             source_agent="auditor", db=db, workspace=ws)
+    con = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+    try:
+        hits = []
+        for (table,) in con.execute("select name from sqlite_master where type='table'").fetchall():
+            for col in [r[1] for r in con.execute(f'pragma table_info("{table}")')]:
+                if con.execute(f'select 1 from "{table}" where cast("{col}" as text) like ? limit 1',
+                               (f"%{user}%",)).fetchone():
+                    hits.append(f"{table}.{col}")
+    finally:
+        con.close()
+    assert hits == []
+
+
+def test_ssh_key_fingerprint_is_public_and_stays_readable() -> None:
+    fp = "SHA256:nThbg6kXUpJWGl7E1IGOCspRomTxdCARLviKw6E5SY8"
+    text = f"fingerprint {fp} for host"
+    assert redact_text(text) == (text, [])
+    assert sanitize_claim_input(text=text, object_value=None,
+                                citations=[CitationInput("audit://x", "x")]).text == text
+
+
+def test_private_ip_policy_differs_by_writer_on_purpose() -> None:
+    """redact_text (raw sources, export prefilter) keeps private IPv4; the claim writer redacts it."""
+    text = "the db server is at 10.199.30.40 now"
+    assert redact_text(text) == (text, [])
+    claim = sanitize_claim_input(text=text, object_value=None, citations=[CitationInput("audit://x", "x")])
+    assert "10.199.30.40" not in claim.text
+    assert "private_ipv4" in claim.findings
+
+
+def test_full_filter_on_200kb_of_benign_text_is_fast() -> None:
+    line = ("la clave primaria de la tabla clientes cambia; see https://example.test:8443/a/b?c=d "
+            "commit 3fa9c1d7e4b2a8f0c6d5e1b9a7f3c2d4e6b8a0c1 pin 17 total 98.765.432 pesos\n")
+    blob = line * (200_000 // len(line))
+    start = time.perf_counter()
+    redacted, findings = sanitize_persisted_text(blob)
+    elapsed = time.perf_counter() - start
+    assert findings == [] and redacted == blob
+    assert elapsed < 1.0, elapsed
+    # the new patterns alone on adversarial runs (compound_credential, older, is quadratic on long alnum runs)
+    from memorymaster.core import security
+
+    new = {"url_basic_auth_password", "password_prose_es", "otp_pin", "aws_secret_key", "argentine_cuit_cuil",
+           "home_path_windows", "home_path_unix"}
+    pathological = ("a://:" * 40_000) + ("clave " * 20_000) + ("pin " * 20_000) + ("x" * 100_000) + ("1" * 100_000)
+    for name, pattern in security._SECRET_PATTERNS:
+        if name in new:
+            start = time.perf_counter()
+            list(pattern.finditer(pathological))
+            assert time.perf_counter() - start < 1.0, name
+
+
+@pytest.mark.parametrize("text", ["el DNI del cliente es 12345678", "DNI es 27.123.456", "DNI is 27123456"])
+def test_argentine_dni_with_a_short_connector_is_redacted(text: str) -> None:
+    redacted, findings = redact_text(text)
+    assert "argentine_dni" in findings
+    assert not any(ch.isdigit() for ch in redacted)
