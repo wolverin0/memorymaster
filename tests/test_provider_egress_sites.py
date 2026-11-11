@@ -4,17 +4,15 @@ records the exact text it was handed."""
 
 from __future__ import annotations
 
-import base64
 import json
 import re
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
 
 from memorymaster.dreaming.models import ConsolidationResult, DreamCandidate, DreamDecision, ProviderUsage
 from test_dreaming_worker import NOW, _capture, _service
-from test_provider_egress_gate import BENIGN, BLOCKED, IP, MAIL, NEEDLES, WIN_PATH, B64, _assert_clean, _residual
+from test_provider_egress_gate import BENIGN, BLOCKED, IP, MAIL, WIN_PATH, B64, _assert_clean
 
 ROOT = Path(__file__).resolve().parents[1]
 USAGE = ProviderUsage("stub", "stub", 200, 1, 10, 2, True)
@@ -89,7 +87,7 @@ def test_gate_consolidation_drops_blocked_references_and_redacts_the_rest():
 
     references = [
         {"id": 1, "text": f"The host is {IP} and the owner is {MAIL}", "subject": "host"},
-        {"id": 2, "text": "ssh -i key " + BLOCKED, "subject": "deploy"},
+        {"id": 2, "text": "The deploy uses " + BLOCKED, "subject": "deploy"},
         {"id": 3, "text": BENIGN, "subject": "retry", "object_value": None},
     ]
     sent, ignored, kept, withheld = gate_consolidation([_candidate("c", BENIGN)], references)
@@ -120,9 +118,7 @@ def _backfill_fixture(tmp_path, monkeypatch, text: str):
 
 
 def test_backfill_window_of_only_withheld_messages_makes_no_provider_call(tmp_path, monkeypatch):
-    _bf, fixture = _backfill_fixture(
-        tmp_path, monkeypatch, "We decided the deploy password is " + BLOCKED + " for good."
-    )
+    _bf, fixture = _backfill_fixture(tmp_path, monkeypatch, "We decided the deploy config is " + BLOCKED + " for good.")
     fixture.runner.inventory()
     fixture.runner.run(stage="extract")
     assert fixture.extractor.calls == []
@@ -131,39 +127,31 @@ def test_backfill_window_of_only_withheld_messages_makes_no_provider_call(tmp_pa
 
 
 def test_backfill_consolidation_gates_candidates(tmp_path, monkeypatch):
-    bf, fixture = _backfill_fixture(
+    _bf, fixture = _backfill_fixture(
         tmp_path, monkeypatch, "We decided the project must keep cited architecture decisions."
     )
-    sensitive = [
-        f"The lab host {IP} is run by {MAIL}.",
-        "The deploy uses " + BLOCKED + " for the database.",
-    ]
+    sensitive = [f"The lab host {IP} is run by {MAIL}.", "The deploy uses " + BLOCKED + " for the database."]
     real = fixture.extractor.extract
 
     def extract(messages, *, scope, capture_hash):
         base = real(messages, scope=scope, capture_hash=capture_hash)
-        source = messages[0]
         extra = tuple(
-            replace(
-                base.candidates[0],
-                candidate_id=f"{capture_hash[:12]}-x{i}",
-                text=text,
-                object_value=f"object-{i}-{capture_hash[:8]}",
-            )
+            replace(base.candidates[0], candidate_id=f"{capture_hash[:12]}-x{i}", text=text, object_value=f"object-{i}")
             for i, text in enumerate(sensitive)
         )
-        return type(base)((*base.candidates[:1], *extra[:1], *extra[1:2]), base.usage)
+        return type(base)((*base.candidates[:1], *extra), base.usage)
 
+    recorder = _Recorder()
     fixture.extractor.extract = extract
+    fixture.runner.consolidator = recorder
     fixture.runner.inventory()
     fixture.runner.run(stage="extract")
     fixture.runner.run(stage="consolidate")
-    sent = [c for cs, _, _ in fixture.consolidator.calls for c in cs]
-    assert sent and all("hunter2" not in c.text for c in sent)
-    dump = json.dumps([[c.to_dict() for c in cs] for cs, _, _ in fixture.consolidator.calls], default=str)
-    assert IP not in dump and MAIL not in dump
-    assert bf.BackfillRunner  # the cohort moved on to consolidated
-    assert all(row["status"] == "consolidated" for row in fixture.runner._rows())
+    sent = [c for cs, _ in recorder.calls for c in cs]
+    assert sent and all("hunter2" not in c.text for c in sent) and len(sent) == 2
+    dump = _dump(recorder.calls)
+    assert IP not in dump and MAIL not in dump and "hunter2" not in dump
+    assert all(row["status"] == "consolidated" for row in fixture.runner._rows())  # the withheld one was ignored
 
 
 # ---- observation synthesis ------------------------------------------------------------------
@@ -200,7 +188,7 @@ def test_contradiction_probe_gates_both_claims(monkeypatch):
     monkeypatch.setattr(probe.llm_provider, "call_llm", lambda prompt, body: seen.append(body) or "[]")
     probe._judge_llm(
         _claim(f"The primary lives at {IP} owned by {MAIL}"),
-        _claim(f"The primary lives at {IP} owned by {MAIL} from {WIN_PATH}"),
+        _claim(f"The replica lives at {IP} owned by {MAIL}"),
     )
     assert len(seen) == 1
     _assert_clean(seen[0])

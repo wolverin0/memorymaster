@@ -20,7 +20,7 @@ Ungated, dormant: gate before enabling (census; flag that enables each):
   CLI-only: govern/auto_resolver.py, recall/selfcheck.py, govern/llm_steward.py,
   govern/jobs/compact_summaries.py, workflow_intelligence/classification.py,
   core/llm_budget.py (wrapper), scripts/label_prompts_with_judge.py
-tests/test_provider_egress_gate.py fails when a NEW ``call_llm(`` call site appears outside its allowlist.
+tests/test_provider_egress_sites.py fails when a NEW call_llm call site appears outside its allowlist.
 """
 
 from __future__ import annotations
