@@ -39,16 +39,19 @@ def _event(svc, claim_id, details, *, from_status=None, to_status=None):
         conn.commit()
 
 
-def _victim(svc, topic: str, *, declared=True, retire_detail=DEDUP, scope_b=None):
+def _victim(svc, topic: str, *, declared=True, retire_detail=DEDUP, scope_b=None, source_b="fixture",
+            tuple_=False, dedup_event=True):
     a = _ingest(svc, f"The {topic} service listens on port 8080")
     lifecycle.transition_claim(svc.store, a.id, "confirmed", reason="fixture", event_type="validator")
-    b = _ingest(svc, f"The {topic} service listens on port 9443", supersedes=[a.id] if declared else None)
+    b = _ingest(svc, f"The {topic} service listens on port 9443", supersedes=[a.id] if declared else None, source_agent=source_b,
+                **({"subject": f"svc-{topic}", "predicate": "port"} if tuple_ else {}))
     with svc.store.connect() as conn:  # what the old dedupe wrote: raw status + pointer
         conn.execute("UPDATE claims SET status='archived', replaced_by_claim_id=? WHERE id=?", (a.id, b.id))
         if scope_b:
             conn.execute("UPDATE claims SET scope=? WHERE id=?", (scope_b, b.id))
         conn.commit()
-    _event(svc, b.id, DEDUP)
+    if dedup_event:
+        _event(svc, b.id, DEDUP)
     svc.store.mark_superseded(a.id, b.id, "applied later")  # the supersession lands on A afterwards
     if not declared:
         with svc.store.connect() as conn:
@@ -134,25 +137,123 @@ def test_refused_confirm_leaves_both_claims_exactly_as_they_were(svc, monkeypatc
     assert _snap(svc, a, b) == before
 
 
-def test_midway_failure_is_reported_with_exit_1(svc, monkeypatch, capsys) -> None:
-    _victim(svc, "foxtrot")
-    monkeypatch.setattr(repair, "transition_claim", lambda *a, **k: (_ for _ in ()).throw(ValueError("nope")))
+def test_midway_failure_rolls_the_whole_pair_back(svc, monkeypatch, capsys) -> None:
+    a, b = _victim(svc, "foxtrot")
+    before = _snap(svc, a, b)
+    real, calls = repair.SQLiteStore._insert_event_row, []
+
+    def flaky(self, conn, **kw):
+        calls.append(kw["to_status"])
+        if len(calls) == 2:  # the confirmation event: status UPDATE and revival event already written
+            raise RuntimeError("disk full")
+        return real(self, conn, **kw)
+
+    monkeypatch.setattr(repair.SQLiteStore, "_insert_event_row", flaky)
     assert _run(svc.store.db_path, "--apply") == 1
-    assert "FAILED" in capsys.readouterr().out
+    assert "rolled back" in capsys.readouterr().out and len(calls) == 2
+    assert _snap(svc, a, b) == before
+    monkeypatch.undo()
+    assert _run(svc.store.db_path, "--apply") == 0  # and the pair is still repairable afterwards
+    assert svc.store.get_claim(b, include_citations=False).status == "confirmed"
 
 
-def test_clear_replaced_by_is_guarded(svc) -> None:
+def test_restore_refuses_anything_but_the_victim_shape(svc) -> None:
     a, b = _victim(svc, "golf")
-    with pytest.raises(ConcurrentModificationError):  # wrong expected value
-        svc.store.clear_replaced_by(b, expected_replaced_by=a + 99, reason="t")
-    with pytest.raises(ConcurrentModificationError):  # a superseded claim keeps its pointer
-        svc.store.clear_replaced_by(a, expected_replaced_by=b, reason="t")
-    svc.store.clear_replaced_by(b, expected_replaced_by=a, reason="t")
-    assert svc.store.get_claim(b, include_citations=False).replaced_by_claim_id is None
+    kw = {"reason": "t", "event_payload": {}}
+    for victim, pred in ((a, b), (b, a + 99)):  # superseded claim as victim / wrong predecessor
+        with pytest.raises(ConcurrentModificationError):
+            svc.store.restore_declared_correction(victim, pred, **kw)
+    with svc.store.connect() as conn:
+        conn.execute("UPDATE claims SET status='stale' WHERE id=?", (b,))
+        conn.commit()
+    with pytest.raises(ConcurrentModificationError):  # archived is required
+        svc.store.restore_declared_correction(b, a, **kw)
+
+
+def test_only_dedupe_retirements_are_selected(svc, capsys) -> None:
+    a, b = _victim(svc, "hotel", dedup_event=False, retire_detail="operator_archive")
+    before = _snap(svc, a, b)
+    assert _run(svc.store.db_path, "--apply") == 0
+    assert "0 victim pair(s)" in capsys.readouterr().out
+    assert _snap(svc, a, b) == before
+
+
+def test_the_confirmation_is_stamped_with_the_operator_actor(svc) -> None:
+    _a, b = _victim(svc, "india")
+    assert _run(svc.store.db_path, "--apply") == 0
+    confirm = [e for e in svc.list_events(claim_id=b, limit=500) if e.to_status == "confirmed"][-1]
+    assert json.loads(confirm.payload_json)["actor"] == "operator"
+
+
+def _set(svc, sql, *args):
+    with svc.store.connect() as conn:
+        conn.execute(sql, args)
+        conn.commit()
+
+
+def test_a_live_claim_with_the_same_tuple_blocks_the_repair(svc, capsys) -> None:
+    a, b = _victim(svc, "juliet", tuple_=True)
+    c = _ingest(svc, "The juliet service now listens on port 7000 after the move", subject="svc-juliet",
+                predicate="port")
+    before = _snap(svc, a, b)
+    assert _run(svc.store.db_path, "--apply") == 0
+    assert "skipped_newer_value" in capsys.readouterr().out and c.id
+    assert _snap(svc, a, b) == before
+
+
+def test_a_live_claim_declaring_supersedes_b_blocks_the_repair(svc, capsys) -> None:
+    a, b = _victim(svc, "kilo")
+    c = _ingest(svc, "The kilo service listens on port 5555 per the latest runbook")
+    _set(svc, "UPDATE claims SET supersedes_claim_id=? WHERE id=?", b, c.id)
+    before = _snap(svc, a, b)
+    assert _run(svc.store.db_path, "--apply") == 0
+    assert "skipped_newer_value" in capsys.readouterr().out
+    assert _snap(svc, a, b) == before
+
+
+def test_a_redacted_b_is_skipped(svc, capsys) -> None:
+    a, b = _victim(svc, "lima")
+    _set(svc, "UPDATE claims SET text='[REDACTED_CLAIM_TEXT]' WHERE id=?", b)
+    before = _snap(svc, a, b)
+    assert _run(svc.store.db_path, "--apply") == 0
+    assert "skipped_redacted" in capsys.readouterr().out
+    assert _snap(svc, a, b) == before
+
+
+def test_policy_blocked_author_needs_the_override(svc, capsys) -> None:
+    a, b = _victim(svc, "mike", source_b="llm-stop-hook")
+    before = _snap(svc, a, b)
+    assert _run(svc.store.db_path, "--apply") == 0
+    assert "skipped_policy" in capsys.readouterr().out
+    assert _snap(svc, a, b) == before
+    assert _run(svc.store.db_path, "--apply", "--allow-policy-override") == 0
+    assert svc.store.get_claim(b, include_citations=False).status == "confirmed"
+
+
+def test_a_b_without_citations_needs_the_override(svc, capsys) -> None:
+    a, b = _victim(svc, "november")
+    _set(svc, "DELETE FROM citations WHERE claim_id=?", b)
+    assert _run(svc.store.db_path, "--apply") == 0
+    assert "skipped_policy" in capsys.readouterr().out
+    assert svc.store.get_claim(b, include_citations=False).status == "archived"
+
+
+def test_dry_run_prints_what_a_human_needs_to_decide(svc, capsys) -> None:
+    _victim(svc, "oscar", tuple_=True)
+    _run(svc.store.db_path)
+    out = capsys.readouterr().out
+    assert "B.source=fixture" in out and "B.citations=1" in out and "B.tuple=yes" in out and "created" in out
+    assert "listens on port" not in out, "claim text must not be printed"
+
+
+def test_pair_selection_starts_from_archived_rows_and_reaches_a_by_key(svc) -> None:
+    with svc.store.connect() as conn:
+        plan = " | ".join(r[-1] for r in conn.execute("EXPLAIN QUERY PLAN " + repair.PAIRS_SQL).fetchall())
+    assert "SCAN a" not in plan and "SEARCH a" in plan, plan
 
 
 def test_postgres_store_fails_closed() -> None:
     from memorymaster.stores.postgres_store import PostgresStore
 
     with pytest.raises(NotImplementedError):
-        PostgresStore.clear_replaced_by(object(), 1, expected_replaced_by=2, reason="t")
+        PostgresStore.restore_declared_correction(object(), 1, 2, reason="t", event_payload={})
