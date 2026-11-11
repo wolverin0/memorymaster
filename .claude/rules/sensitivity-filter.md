@@ -27,7 +27,7 @@ Una versión anterior de esta regla decía "las IP privadas se ingieren" sin dis
 código de claims. Si se cambia una política, el cambio va en `security.py`, en su test y aquí, juntos.
 
 Formas que el filtro cubre además de las claves de proveedor: contraseña en prosa en español
-(`la contraseña ... es X`, `clave: X`; el valor debe tener letra y dígito/símbolo, así `clave primaria` pasa),
+(`la contraseña ... es X`, `clave: X`; el valor lleva un símbolo `!@#$%^&*+~?`, o mayúscula+minúscula+2 dígitos, o va entre comillas con letra y dígito; `clave primaria`, el verbo `pass` y valores tipo `utf8mb4`/`admin1234` pasan),
 `esquema://usuario:clave@host` de cualquier esquema (sólo se redacta la clave), AWS secret access key con
 contexto AWS, OTP/PIN con palabra clave, CUIT/CUIL con dígito verificador válido, rutas home con `/` o `\`.
 Fuera de alcance: secretos partidos por espacios o saltos de línea, o en hex puro. Una huella SSH

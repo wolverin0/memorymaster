@@ -108,22 +108,33 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("prose_password", re.compile(
         r"(?i)(?:password|passwd|passphrase|sshpw|\bpin\b|\bsecret\b|api[_-]?key)"
         r"[^\n]{0,80}?"
-        r"(?<![A-Za-z0-9_])("
+        r"(?<![A-Za-z0-9_])(?![A-Za-z_][A-Za-z0-9_.\-]*=[^=\s])("  # a key=value config shape is not a password
         r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[A-Z])"
         r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[0-9])"
         r"[A-Za-z][A-Za-z0-9_!@#$%^&*.\-+=]{9,})"
         r"(?![A-Za-z0-9_])"
     )),
-    # S-1: Spanish/short-form password prose ("la contraseña del servidor es X", "clave: X", "usuario admin clave X").
-    # Keyword, then up to 4 plain words and a connector (es/son/era/fue/:/=), or directly the value. The value is
-    # one token of 6-64 chars with a letter AND a digit or one of !@#$%^&*+=~? (so "reiniciar", "primaria",
-    # "user_id", "Python" never match) and is not a version number. Only the value is redacted.
+    # S-1: Spanish password prose ("la contraseña del servidor es X", "clave: X", "usuario admin clave X").
+    # Keyword: contraseña/clave (a connector es/son/era/fue/:/= after up to 4 plain words, or the value directly)
+    # or English password/passwd/pwd (connector REQUIRED; English prose is prose_password's job). The bare verb
+    # "pass" is not a keyword. Compounds (clave primaria/foránea/pública/privada/única/compuesta/de api/de cache)
+    # are not passwords. The value is one token that is NOT config-like (no leading - / =) and has evidence:
+    # a symbol from !@#$%^&*+~? with a letter (6-64 chars), or upper+lower+2 digits (8-64 chars), or a quoted /
+    # backticked token with a letter and a digit. Plain lowercase letters+digits ("utf8mb4", "python3", "admin1234")
+    # stay readable on purpose: a false positive rewrites a technical fact. Only the value is redacted.
     ("password_prose_es", re.compile(
-        r"(?i)\b(?:contrase[ñn]as?|claves?|pass(?:word|wd)?|pwd)\b"
+        r"(?i)\b(?:"
+        r"(?:contrase[ñn]as?|claves?)\b"
+        r"(?!\s+(?:primaria|for[aá]nea|p[uú]blica|privada|[uú]nica|compuesta|de\s+(?:la\s+)?(?:api|cache)|del\s+cache)\b)"
         r"(?:(?:\s+[\w.\-]+){0,4}?(?:\s+(?:es|son|era|fue)\b|\s*[:=])|\s+)"
-        r"[ \t]*[`'\"]?"
-        r"(?!\[REDACTED)(?!v?\d+(?:\.\d+)+\b)"
-        r"(?P<secret>(?=[^\s`'\",;]*[A-Za-z])(?=[^\s`'\",;]*[0-9!@#$%^&*+=~?])[^\s`'\",;]{6,64})"
+        r"|(?:password|passwd|pwd)\b(?:\s+[\w.\-]+){0,4}?(?:\s+(?:is|es|son|era|fue)\b|\s*[:=])"
+        r")"
+        r"[ \t]*(?!\[REDACTED)"
+        r"(?:(?P<q>[`'\"])(?=[^\s`'\"]*[A-Za-z])(?=[^\s`'\"]*[0-9])|)"
+        r"(?P<secret>(?(q)[^\s`'\"]{6,64}|(?![\-/=])(?:"
+        r"(?=[^\s`'\",;]*[A-Za-z])(?=[^\s`'\",;]*[!@#$%^&*+~?])[^\s`'\",;]{6,64}"
+        r"|(?-i:(?=[^\s`'\",;]*[A-Z])(?=[^\s`'\",;]*[a-z]))(?=(?:[^\s`'\",;]*[0-9]){2})[^\s`'\",;]{8,64}"
+        r")))"
     )),
     # S-1: one-time code / PIN, only with an explicit keyword right before 4-8 digits ("OTP 493021",
     # "código de verificación: 493021", "el pin es 4821"). Bare numbers never match. Only the digits are redacted.

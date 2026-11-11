@@ -179,12 +179,46 @@ def _cuit(prefix: str, body: str) -> str:
     f"la clave de wifi es `{PW}` ok",
     f"password es {PW}",
     f"las contraseñas son {PW}",
-    f"pass = {PW}",
+    "usuario admin clave Futura2024!",
+    "la clave de acceso es Admin1234",
+    "la contraseña es futura2024!",
+    "password es Futura2024",
+    "la contraseña del wifi es `casa-norte-88`",
 ])
 def test_spanish_prose_password_is_redacted(text: str) -> None:
     redacted, findings = redact_text(text)
     assert findings, text
-    assert PW not in redacted
+    assert not any(t in redacted for t in (PW, "Futura2024", "Admin1234", "casa-norte-88")), redacted
+
+
+NEGATIVE_PROSE = [
+    "we pass --timeout=600 to pytest",
+    "pass encoding=utf8 to open()",
+    "all 25 tests pass 100%",
+    "pass n_jobs=4",
+    "pass arg1 then arg2",
+    "hash the password with sha256 first",
+    "the password policy requires min_length=12",
+    "password hashing=bcrypt2",
+    "store the password as argon2id",
+    "reset the password via /api/v2/reset",
+    "la clave es utf8mb4 en la conexión",
+    "la clave es usar http2",
+    "la clave es python3",
+    "la clave del cache es sha256",
+    "la clave primaria es order_id2",
+    "clave foránea user_id2",
+    "la clave pública es ed25519",
+    "la clave de API se rota cada 90 días",
+    "contraseña incorrecta 3 veces",
+    "la clave es admin1234",
+]
+
+
+@pytest.mark.parametrize("text", NEGATIVE_PROSE)
+def test_ordinary_coding_prose_survives_claim_sanitizing(text: str) -> None:
+    result = sanitize_claim_input(text=text, object_value=None, citations=[CitationInput("audit://x", "x")])
+    assert result.text == text and result.findings == [], (text, result.findings)
 
 
 @pytest.mark.parametrize("text", [
@@ -423,3 +457,4 @@ def test_argentine_dni_with_a_short_connector_is_redacted(text: str) -> None:
     redacted, findings = redact_text(text)
     assert "argentine_dni" in findings
     assert not any(ch.isdigit() for ch in redacted)
+
