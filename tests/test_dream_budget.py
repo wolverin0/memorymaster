@@ -154,10 +154,10 @@ def test_a_hung_call_is_abandoned_counted_and_sent_to_the_slow_lane(tmp_path: Pa
     assert summary["abandoned_calls"] == 1 and summary["errors"] == 1 and summary["ok"] is True
     # The provider answered another call, so the hang is charged to the capture: retryable, one error.
     assert hung["state"] == "retryable" and hung["error_count"] == 1 and answered["state"] != "retryable"
-    now = datetime.now(timezone.utc) + timedelta(days=2)
-    assert hung["id"] not in {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=now, lane=LANE_BEAT)}
-    due = {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=now, lane=LANE_DREAM)}
-    assert hung["id"] in due  # the 6-hourly run takes it once the backoff elapsed
+    soon = datetime.now(timezone.utc) + timedelta(minutes=30)
+    later = datetime.now(timezone.utc) + timedelta(hours=3)
+    assert hung["id"] not in {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=soon, lane=LANE_BEAT)}
+    assert hung["id"] in {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=later, lane=LANE_BEAT)}  # retried by the beat
 
 
 def test_a_timeout_with_no_answer_in_the_run_is_not_charged_to_the_capture(tmp_path: Path, monkeypatch) -> None:
@@ -334,9 +334,11 @@ def test_a_hung_consolidation_after_an_answer_charges_the_capture_and_moves_it_t
     hung = [i for i in ids if ledger.get_capture(i)["state"] == "extracted"]
     assert summary["consolidate_hung_calls"] == 1 and len(hung) == 1
     assert ledger.get_capture(hung[0])["error_count"] == 1  # charged: backoff and quarantine now apply
-    far = datetime.now(timezone.utc) + timedelta(days=2)
-    assert hung[0] not in {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=far, lane=LANE_BEAT)}
-    assert hung[0] in {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=far, lane=LANE_DREAM)}
+    soon = datetime.now(timezone.utc) + timedelta(minutes=30)
+    later = datetime.now(timezone.utc) + timedelta(hours=3)
+    for lane in (LANE_BEAT, LANE_DREAM):  # one counted failure: waits 2 h, then the beat retries it
+        assert hung[0] not in {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=soon, lane=lane)}
+        assert hung[0] in {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=later, lane=lane)}
 
 
 # --- the Claude CLI wraps its own timeout (ProviderCallError from TimeoutExpired) -----------------------------

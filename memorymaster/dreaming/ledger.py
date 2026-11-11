@@ -382,8 +382,8 @@ class DreamLedger:
         it in that prefix; they count against the slots.
 
         ``lane``: ``beat`` skips slow captures (large, or with a counted failure); ``dream`` takes them once their
-        backoff elapsed, before the ordinary quota and in up to ``max(max_sessions, slow_slots)`` slots of
-        their own (the ordinary quota is unchanged); ``all`` applies no lane rule. An uncounted failure waits
+        backoff elapsed, before the ordinary quota and in up to ``slow_slots`` slots of
+        their own when given (the ordinary quota is unchanged), else within ``max_sessions``; ``all`` applies no lane rule. An uncounted failure waits
         ``UNCHARGED_RETRY_WAIT_MINUTES`` in both lanes.
         """
         current = now or _utc_now()
@@ -427,8 +427,8 @@ class DreamLedger:
 
         if lane == LANE_DREAM:  # slow captures whose backoff elapsed: nothing else will serve them
             for key, pos, row in (m for m in by_age if m[2]["slow"]):
-                take(key, pos, max(limit, slow_slots))
-        base = len(taken)
+                take(key, pos, slow_slots if slow_slots > 0 else limit)
+        base = len(taken) if slow_slots > 0 else 0  # own slots: the ordinary quota is on top of them
         newest_cap = base + limit - min(limit, oldest_reserve)
         for key, pos, row in reversed(by_age):
             take(key, pos, newest_cap)
