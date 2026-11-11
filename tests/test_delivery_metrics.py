@@ -36,7 +36,7 @@ def test_transport_notices_are_classified(text):
     "Extract at most five stable facts, decisions, preferences, profiles, or constraints.",
     "Extract at most 3 non-obvious bug causes, decisions, gotchas, or constraints.",
     "Compare the 5 candidates with governed current claims.",
-    "You group failures from AI coding sessions",
+    "You group failures from AI coding-agent sessions",
     "Sos el curador FMX (Haiku). Repo",
     "You are a memory curator. Extract max 3 non-obvious learnings.",
     "You are a memory quality evaluator. Two claims contradict each other.",

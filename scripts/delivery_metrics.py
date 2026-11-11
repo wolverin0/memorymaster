@@ -41,13 +41,8 @@ from memorymaster.recall.machine_traffic import INTERNAL_PROCESS_PATTERNS, TRANS
 # Matched against the left-stripped start of usage_feedback.query_text. Widening a list changes the
 # headline share: do it deliberately, the unmatched-prefix list is there to guide it.
 # transport_notice: TRANSPORT_NOTICE_PATTERNS, the one list shared with the hooks (recall/machine_traffic.py).
-# internal_process: our own LLM pipelines prompting a CLI (not human demand): INTERNAL_PROCESS_PATTERNS (same list as
-# the hooks) plus templates seen in live usage_feedback whose source is outside this repo (workflow/fleet tooling).
-INTERNAL_PROCESS_PATTERNS = INTERNAL_PROCESS_PATTERNS + tuple(re.compile(p) for p in (
-    r"You group failures from AI coding",
-    r"Sos el curador FMX",
-    r"You decide what to do about",
-))
+# internal_process: our own LLM pipelines prompting a CLI (not human demand): INTERNAL_PROCESS_PATTERNS, the same list
+# as the hooks (it includes the external workflow/fleet templates).
 # task_brief: an Orca coordinator dispatching real work. Legitimate demand: counted apart, NOT machine.
 TASK_BRIEF_PATTERNS = tuple(re.compile(p) for p in (
     r"You are working inside Orca",

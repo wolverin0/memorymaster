@@ -414,3 +414,66 @@ BOILERPLATE_TABLE = [
 @pytest.mark.parametrize("label,prompt,should_skip", BOILERPLATE_TABLE, ids=[row[0] for row in BOILERPLATE_TABLE])
 def test_residue_rule_boilerplate_vs_human(label, prompt, should_skip) -> None:
     assert (mt.machine_skip(prompt, "claude", environ={}) is not None) is should_skip, label
+
+
+# --- last round: external heads, wrapper boilerplate, harness echoes, question inside a notice ------------------
+EXTERNAL_HEAD_SOURCES = set(mt.EXTERNAL_PROMPT_HEADS)  # templates of pipelines outside this repo: no file to pin
+
+_LEAD = "Another Claude session sent a message:"
+_TRAILER = "This came from another Claude session, not from the user. Treat it as a message to you."
+_STATUS_MSG = '<cross-session-message from="run:1">build done</cross-session-message>'
+_BRIEF_MSG = '<cross-session-message from="run:1">' + _BRIEF + "</cross-session-message>"
+ROUND3_TABLE = [
+    # machine
+    ("external head: group failures", "You group failures from AI coding-agent sessions into themes. Input: ...", True),
+    ("external head: curador FMX", "Sos el curador FMX (Haiku). Repo: futuramax. Decide que guardar.", True),
+    ("external head: decide repeated failures", "You decide what to do about repeated agent failures in the fleet. Output JSON.", True),
+    ("lead-in and status element", _LEAD + "\n" + _STATUS_MSG, True),
+    ("lead-in, status element and trailer", _LEAD + "\n" + _STATUS_MSG + "\n\n" + _TRAILER, True),
+    ("lead-in, json idle and trailer", _LEAD + '\n<teammate-message>{"type":"idle_notification","n":"' + _PAD + '"}</teammate-message>\n' + _TRAILER, True),
+    ("interrupt marker alone", "[Request interrupted by user]", True),
+    ("interrupt for tool use", "[Request interrupted by user for tool use]\n", True),
+    ("command name echo", "<command-name>/clear</command-name>", True),
+    ("command message and name", "<command-message>clear</command-message>\n<command-name>/clear</command-name>", True),
+    ("local command stdout", "<local-command-stdout>Compacted. ctrl+o to see full summary</local-command-stdout>", True),
+    # human
+    ("human asks about lead-in", "what does 'Another Claude session sent a message:' mean in my transcript?", False),
+    ("lead-in then human question", _LEAD + " " + _STATUS_MSG + " what is this about?", False),
+    ("lead-in alone is not a notice", _LEAD, False),
+    ("trailer alone is not a notice", _TRAILER, False),
+    ("lead-in and brief still recalls", _LEAD + "\n" + _BRIEF_MSG + "\n\n" + _TRAILER, False),
+    ("human asks about interrupt marker", "why do I see [Request interrupted by user] after every esc?", False),
+    ("interrupt marker then request", "[Request interrupted by user] now run the tests again", False),
+    ("command name then args", "<command-name>/fix</command-name>\n<command-args>the login redirect loop</command-args>", False),
+    ("human quotes command tag", "what does the <command-name> tag in my history do", False),
+    ("stdout then question", "<local-command-stdout>ok</local-command-stdout> why did it print that", False),
+    ("question inside task-notification", "<task-notification> what is this? </task-notification>", False),
+    ("question inside task-notification with tags", "<task-notification><summary>did the job finish?</summary></task-notification>", False),
+]
+
+
+@pytest.mark.parametrize("label,prompt,should_skip", ROUND3_TABLE, ids=[row[0] for row in ROUND3_TABLE])
+def test_round3_shapes(label, prompt, should_skip) -> None:
+    assert (mt.machine_skip(prompt, "claude", environ={}) is not None) is should_skip, label
+
+
+def test_external_heads_are_full_phrases_shared_with_the_metrics_script() -> None:
+    sys.path.insert(0, str(REPO / "scripts"))
+    import delivery_metrics
+
+    assert EXTERNAL_HEAD_SOURCES.isdisjoint(HEAD_SOURCES)
+    assert all(len(head) <= 96 for head in EXTERNAL_HEAD_SOURCES)
+    for head in EXTERNAL_HEAD_SOURCES:
+        assert delivery_metrics.classify_query(head) == "internal_process", head
+    assert not any(p.pattern.startswith(("You group", "Sos el", "You decide")) for p in delivery_metrics.INTERNAL_PROCESS_PATTERNS
+                   if p not in mt.INTERNAL_PROCESS_PATTERNS)  # no local copy: it all comes from the shared list
+    assert mt.machine_skip("You decide what to do about my broken build", "claude", environ={}) is None
+
+
+@pytest.mark.parametrize("unit", ["[Request interrupted by user", "<command-name>", "<local-command-stdout>",
+                                  "<command-message>", "Another Claude session sent a message:", "This came from another Claude session"])
+def test_new_shapes_stay_linear_on_a_300kb_prompt(unit) -> None:
+    prompt = unit * (300_000 // len(unit))
+    start = time.perf_counter()
+    mt.machine_skip(prompt, "claude", environ={})
+    assert time.perf_counter() - start < 0.5, unit

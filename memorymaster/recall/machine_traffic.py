@@ -19,10 +19,16 @@ every recall adapter (the Claude template, which the Codex adapter also runs; Op
   ``<teammate-message>`` / ``<cross-session-message>`` element is skipped when its body is a JSON object whose
   ``type`` is ``idle_notification``, ``shutdown_*`` or ``*_response``, or when the body is under
   ``STATUS_MAX_CHARS`` characters after stripping the wrapper. A longer prose body is a coordinator's task
-  brief: legitimate demand, it recalls. ``<task-notification>`` is always a notice.
+  brief: legitimate demand, it recalls. ``<task-notification>`` is a notice unless its body asks a ``?``
+  (a human question inside the element). The harness lead-in "Another Claude session sent a message:" and the
+  trailer paragraph "This came from another Claude session ..." are wrapper boilerplate: dropped from the
+  residue, never a notice on their own, so a wrapped status is skipped and a wrapped brief recalls.
+* **harness echoes**: ``[Request interrupted by user...]`` and the slash-command echo elements
+  ``<command-name>``, ``<command-message>``, ``<local-command-stdout>`` follow the same residue rule
+  (``<command-args>`` is the user's own text and is not one).
 * **internal prompt**: the prompt starts with the full distinctive opening phrase of one of our own LLM pipeline
   prompts (:data:`INTERNAL_PROCESS_PATTERNS`, pinned to the real prompt constants by
-  ``tests/test_machine_traffic.py``) even when the process did not inherit the env mark. Anchored at the start:
+  ``tests/test_machine_traffic.py``; :data:`EXTERNAL_PROMPT_HEADS` are templates of pipelines outside this repo) even when the process did not inherit the env mark. Anchored at the start:
   a human prompt that merely resembles one, or quotes it mid-sentence, still recalls.
 
 Rollback per adapter: ``MEMORYMASTER_RECALL_MACHINE_FILTER_<ADAPTER>=0`` (``CLAUDE``, ``CODEX``, ``OPENCODE``,
@@ -72,14 +78,26 @@ TRANSPORT_NOTICES = (
     Notice(r"<task-notification", ""),
     # Agent-to-agent wrappers: closed elements (status only, see is_status_body) and a bare <subagent> opening tag.
     Notice(r"<(?:subagent|agent-message|teammate-message|cross-session-message)", r"<subagent\b[^>]{0,300}>"),
+    # Harness echoes: an interrupt marker and slash-command echo elements (<command-args> is the user's own text).
+    Notice(r"\[Request interrupted by user", r"\[Request interrupted by user[^\]\n]{0,40}\]"),
+    Notice(r"<(?:command-name|command-message|local-command-stdout)", ""),
+    # The harness lead-in/trailer around a cross-session message are wrappers, see _WRAPPERS.
+    Notice(r"Another Claude session sent a message:", ""),
 )
 TRANSPORT_NOTICE_PATTERNS = tuple(re.compile(n.start) for n in TRANSPORT_NOTICES)
 _SHAPES = tuple(re.compile(n.whole, re.MULTILINE) for n in TRANSPORT_NOTICES if n.whole)
-# (opening-tag regex, closing literal, body cap, status only)
+# (opening-tag regex, closing literal, body cap, status only, a "?" in the body makes it a human question)
 _ELEMENTS = (
-    (re.compile(r"\[SYSTEM NOTIFICATION[^\]\n]{0,200}\]"), "</task-notification>", 2000, False),
-    (re.compile(r"<task-notification\b[^>]{0,300}>"), "</task-notification>", BODY_CAP, False),
-) + tuple((re.compile(rf"<{tag}\b[^>]{{0,300}}>"), f"</{tag}>", BODY_CAP, True) for tag in _AGENT_TAGS)
+    (re.compile(r"\[SYSTEM NOTIFICATION[^\]\n]{0,200}\]"), "</task-notification>", 2000, False, False),
+    (re.compile(r"<task-notification\b[^>]{0,300}>"), "</task-notification>", BODY_CAP, False, True),
+) + tuple((re.compile(rf"<{tag}\b[^>]{{0,300}}>"), f"</{tag}>", BODY_CAP, True, False) for tag in _AGENT_TAGS) + tuple(
+    (re.compile(rf"<{tag}\b[^>]{{0,300}}>"), f"</{tag}>", BODY_CAP, False, False)
+    for tag in ("command-name", "command-message", "local-command-stdout"))
+# Wrapper boilerplate of a cross-session message: dropped from the residue, but never a notice by itself.
+_WRAPPERS = (
+    re.compile(r"^[ \t]*Another Claude session sent a message:[ \t]*", re.MULTILINE),
+    re.compile(r"This came from another Claude session(?:[^\n]|\n(?!\n)){0,1000}"),
+)
 
 # Full opening phrases of our own LLM pipeline prompts, matched at the prompt start. Each is pinned to the real
 # prompt constant in tests/test_machine_traffic.py (HEAD_SOURCES); scripts/delivery_metrics.py reads this list.
@@ -101,7 +119,14 @@ INTERNAL_PROMPT_HEADS = (
     "You are auditing the long-term memory store of a coding-agent system",     # scripts/judge_claim_value.py
     "You are a relevance judge. Given a USER QUERY and a list of CANDIDATE memory claims",  # scripts/label_prompts_with_judge.py
 )
-INTERNAL_PROCESS_PATTERNS = tuple(re.compile(re.escape(head)) for head in INTERNAL_PROMPT_HEADS) + (
+# Templates of pipelines that live OUTSIDE this repo (workflow/fleet tooling), seen in live usage_feedback: no source
+# file to pin, so tests/test_machine_traffic.py lists them as external. Still full phrases.
+EXTERNAL_PROMPT_HEADS = (
+    "You group failures from AI coding-agent sessions",
+    "Sos el curador FMX (Haiku)",
+    "You decide what to do about repeated agent failures",
+)
+INTERNAL_PROCESS_PATTERNS = tuple(re.compile(re.escape(head)) for head in INTERNAL_PROMPT_HEADS + EXTERNAL_PROMPT_HEADS) + (
     re.compile(r"Compare the \d+ candidates with governed current claims\."),  # dreaming/providers.py consolidation
 )
 _BOILERPLATE = re.compile(r"[^\w?¿]*")  # nothing but punctuation/emoji; a "?" is a human asking
@@ -136,7 +161,7 @@ def _element_spans(text: str) -> list[tuple[int, int]]:
     """Spans of CLOSED notice elements. One pass per closing literal (bisect), so linear in the prompt size."""
     spans: list[tuple[int, int]] = []
     closes: dict[str, list[int]] = {}
-    for opening, close, cap, status_only in _ELEMENTS:
+    for opening, close, cap, status_only, question_is_human in _ELEMENTS:
         covered = -1
         for match in opening.finditer(text):
             if match.start() < covered:
@@ -150,6 +175,8 @@ def _element_spans(text: str) -> list[tuple[int, int]]:
             if status_only and (positions[index] - match.end() > 2000
                                 or not is_status_body(text[match.end():positions[index]])):
                 continue
+            if question_is_human and text.find("?", match.end(), positions[index]) != -1:
+                continue  # a question inside a notice element is a human asking, not a machine summary
             covered = positions[index] + len(close)
             spans.append((match.start(), covered))
     return spans
@@ -164,6 +191,8 @@ def is_transport_notice(prompt: object) -> bool:
         spans.extend(m.span() for m in shape.finditer(prompt))
     if not spans:
         return False
+    for wrapper in _WRAPPERS:
+        spans.extend(m.span() for m in wrapper.finditer(prompt))
     rest, end = [], 0
     for start, stop in sorted(spans):
         if start > end:
