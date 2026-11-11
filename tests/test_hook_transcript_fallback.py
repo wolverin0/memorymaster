@@ -545,12 +545,19 @@ def test_d5_a_rescope_merged_into_an_existing_twin_is_not_a_correction(world) ->
     assert twin in ids and "7.18.2" in text
 
 
-def _same_scope_correction(world) -> int:
-    old = world.claim("The gateway ticket queue is drained nightly")  # unrelated to the question
-    new = world.service.ingest("Check the router firmware version on each deploy",
-                               [CitationInput(source="test://fb", locator="c")], scope="project:here",
-                               source_agent="fixture", supersedes_claim_id=old)
+def _correct(world, old_text: str, new_text: str, locator: str = "c") -> int:
+    """A confirmed same-scope claim that replaced another one (both pointers set, as an approved correction does)."""
+    old = world.claim(old_text)
+    new = world.service.ingest(new_text, [CitationInput(source="test://fb", locator=locator)], scope="project:here",
+                               source_agent="fixture")
     lifecycle.transition_claim(world.service.store, new.id, "confirmed", reason="fixture", event_type="validator")
+    world.service.store.mark_superseded(old, new.id, "fixture correction")
+    return new.id
+
+
+def _same_scope_correction(world) -> int:
+    new = _correct(world, "The gateway ticket queue is drained nightly",  # the old claim is unrelated to the question
+                   "Check the router firmware version on each deploy")
     world.claim("The router firmware version field must be in the deploy checklist")
     return new.id
 
@@ -571,10 +578,9 @@ def test_d5_a_same_scope_correction_newer_than_the_fragment_suppresses(world) ->
 
 @pytest.mark.parametrize("date", [None, "", "not a date"])
 def test_d5_a_missing_or_unparsable_fragment_date_suppresses(world, date) -> None:
-    old = world.claim("The gateway ticket queue is drained nightly")
-    new = world.service.store.get_claim(world.service.ingest(
-        "Check the router firmware version on each deploy", [CitationInput(source="test://fb", locator="c")],
-        scope="project:here", source_agent="fixture", supersedes_claim_id=old).id, include_citations=False)
+    new = world.service.store.get_claim(_correct(world, "The gateway ticket queue is drained nightly",
+                                                 "Check the router firmware version on each deploy"),
+                                        include_citations=False)
     check = context_hook._correction_check(world.service, [new.id], False, [new])
     assert check(date) is True
     assert check(LATER) is False  # sanity: a parsable later date does not
@@ -588,11 +594,9 @@ def test_d5_correction_check_cost_with_eight_pointer_claims_is_under_5ms(world, 
     monkeypatch.setattr(retrieval, "pending_supersession_ids", lambda *a, **k: frozenset())  # measure the new part
     claims = []
     for n in range(8):
-        old = world.claim(f"Gateway queue number {n} is drained nightly")
-        made = world.service.ingest(f"Router firmware note {n} lives in the deploy page",
-                                    [CitationInput(source="test://fb", locator=f"c{n}")], scope="project:here",
-                                    source_agent="fixture", supersedes_claim_id=old)
-        claims.append(world.service.store.get_claim(made.id, include_citations=False))
+        made = _correct(world, f"Gateway queue number {n} is drained nightly",
+                        f"Router firmware note {n} lives in the deploy page", f"c{n}")
+        claims.append(world.service.store.get_claim(made, include_citations=False))
     check = context_hook._correction_check(world.service, [c.id for c in claims], False, claims)
     started = time.perf_counter()
     for _ in range(20):
