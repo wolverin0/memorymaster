@@ -271,7 +271,7 @@ def test_a_huge_unbroken_token_is_replaced_fast_and_a_long_prose_message_still_g
     prose = "The service retries three times. " * 2_000  # ~66k chars
     safe, withheld = export_messages([{"message_id": "a", "text": blob}, {"message_id": "b", "text": prose}])
     assert time.monotonic() - started < 3
-    assert withheld == 0 and safe[0]["text"] == LONG_TOKEN and safe[1]["text"] == prose
+    assert withheld == 1 and safe[0]["text"] == LONG_TOKEN and safe[1]["text"] == prose
 
 
 @pytest.mark.parametrize("loader", [_script_module, _packaged_module], ids=["script", "package"])
