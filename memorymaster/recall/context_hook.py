@@ -1252,6 +1252,7 @@ MIN_NEW_TOKENS = 2
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n")
 _MM_ID = re.compile(r"\x5bmm-[^\x5d]*\x5d")
 _WORDS = re.compile(r"\w+")
+_ROLE = re.compile(r"(?:assistant|user|human|developer|tool|system)\s*:", re.I)  # transcript speaker labels
 # Set by _finish_recall: answers "is a correction in play for the claims injected on this prompt?" lazily.
 _CORRECTION_CHECK: contextvars.ContextVar = contextvars.ContextVar("mm_correction_check", default=None)
 
@@ -1294,7 +1295,7 @@ def _evidence_fragment_key(rendered: str, top, query: str, session: str | None) 
     excerpt = getattr(top, "excerpt", "")
     keys = hook_lexical.text_keys(query)
     new: set[str] = set()
-    for sentence in _SENTENCE.split(excerpt):
+    for sentence in _SENTENCE.split(_ROLE.sub(" ", excerpt)):
         if keys & hook_lexical.text_keys(sentence):
             new |= _content_tokens(sentence)
     if len(new - _content_tokens(_MM_ID.sub("", rendered)) - _content_tokens(query)) < MIN_NEW_TOKENS:

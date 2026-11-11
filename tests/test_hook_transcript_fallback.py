@@ -126,7 +126,7 @@ def test_claims_come_first_and_fragments_take_only_the_free_slots(world) -> None
 def test_a_full_cap_gets_no_fragments(world, monkeypatch) -> None:
     monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS", "1")
     world.claim("The router firmware version is pinned until the lab is rebuilt")
-    world.transcripts(("assistant", "The router firmware version we chose was pinned here", "2026-08-01T00:00:00Z",
+    world.transcripts(("assistant", "The router firmware version is pinned until the lab is rebuilt", "2026-08-01T00:00:00Z",
                        world.cwd))  # restates the claim, states no value: nothing earns an extra slot (D-5)
     text, ids = world.ask()
     assert len(ids) == 1 and "Raw past conversation" not in text
