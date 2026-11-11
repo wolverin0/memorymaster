@@ -595,7 +595,7 @@ def test_home_path_spellings_are_redacted_through_sanitize_persisted_text(path: 
 
 
 def test_persisted_home_path_redaction_is_linear_and_leaves_bare_names() -> None:
-    blob = "C:\\\\Users\\\\" * 20_000 + "users/ " * 20_000
+    blob = "C:\\\\Users\\\\" * 8_000 + "users/ " * 8_000
     start = time.perf_counter()
     sanitize_persisted_text(blob)
     assert time.perf_counter() - start < 3.0

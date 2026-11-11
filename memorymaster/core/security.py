@@ -137,7 +137,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r")"
         r"[ \t]{0,8}(?!\[REDACTED)"
         r"(?P<q>[`'\"])?"
-        r"(?P<secret>[^\s`'\",;]{6,256})(?![^\s`'\",;])"
+        r"(?=[^\s`'\",;]{6})(?=(?P<secret>[^\s`'\",;]{0,257}))(?P=secret)"  # atomic: no 250-step backtrack per keyword
     )),
     # S-1: one-time code / PIN, only with an explicit keyword right before 4-8 digits ("OTP 493021",
     # "código de verificación: 493021", "el pin es 4821"). Bare numbers never match. Only the digits are redacted.
@@ -462,6 +462,8 @@ _PROSE_SYMBOLS = frozenset("!@#$%^&*+~")
 
 def _prose_secret_is_credible(value: str, quoted: bool) -> bool:
     """Judge a password_prose_es value: a symbol alone is not evidence, emails/URLs/paths/identifier joins are not."""
+    if len(value) > 256:  # the regex captures up to 257 chars: longer means too long, not truncated
+        return False
     v = value.rstrip(".,;:?)")
     if len(v) < 6 or v[0] in "-/=~" or v.startswith(("./", "../")) or "://" in v or v.startswith("www."):
         return False
