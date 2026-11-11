@@ -84,8 +84,10 @@ def test_a_refused_approval_is_audited_and_the_proposal_stays_pending(env):
     from memorymaster.govern.ingest_governance import has_live_proposal
 
     y, _p = _cross_identity_proposal(env)
+    # the promotion-gate view: the replacement is still a candidate, so recall does not hide the target yet
+    gate_before = set(pending_supersession_ids(env, use_cache=False, deliverable_only=False))
     pending_before = set(pending_supersession_ids(env, use_cache=False))
-    assert y.id in pending_before
+    assert y.id in gate_before
     for _ in range(2):
         assert _mcp(env, "approve", y.id)["code"] == "PROPOSAL_OPERATOR_ONLY"
     refused = [e for e in env.store.list_events(claim_id=y.id, event_type="audit")
@@ -98,5 +100,6 @@ def test_a_refused_approval_is_audited_and_the_proposal_stays_pending(env):
     assert [p for p in list_steward_proposals(env, limit=100) if p["claim_id"] == y.id][0]["status"] == "pending"
     assert has_live_proposal(env.store, y.id)
     assert set(pending_supersession_ids(env, use_cache=False)) == pending_before
+    assert set(pending_supersession_ids(env, use_cache=False, deliverable_only=False)) == gate_before
     assert _status(env, y.id) == "confirmed"
 
