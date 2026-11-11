@@ -465,7 +465,7 @@ def test_compound_credential_is_linear_on_adversarial_input() -> None:
     for blob in ("a://:" * 60_000, "x" * 300_000, "token" * 60_000, "MY_" * 100_000, "password " * 30_000):
         start = time.perf_counter()
         redact_text(blob)
-        assert time.perf_counter() - start < 1.0, blob[:12]
+        assert time.perf_counter() - start < 3.0, blob[:12]  # ~0.3 s alone; quadratic was minutes, 3 s absorbs a loaded CI node
     # same matches as before on the shapes that matter
     for text, value in (
         ("export DB_PASSWORD=Hunter2xyz", "Hunter2xyz"),
