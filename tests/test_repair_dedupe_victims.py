@@ -142,13 +142,13 @@ def test_midway_failure_rolls_the_whole_pair_back(svc, monkeypatch, capsys) -> N
     before = _snap(svc, a, b)
     real, calls = repair.SQLiteStore._insert_event_row, []
 
-    def flaky(self, conn, **kw):
+    def flaky(conn, **kw):
         calls.append(kw["to_status"])
         if len(calls) == 2:  # the confirmation event: status UPDATE and revival event already written
             raise RuntimeError("disk full")
-        return real(self, conn, **kw)
+        return real(conn, **kw)
 
-    monkeypatch.setattr(repair.SQLiteStore, "_insert_event_row", flaky)
+    monkeypatch.setattr(repair.SQLiteStore, "_insert_event_row", staticmethod(flaky))
     assert _run(svc.store.db_path, "--apply") == 1
     assert "rolled back" in capsys.readouterr().out and len(calls) == 2
     assert _snap(svc, a, b) == before
