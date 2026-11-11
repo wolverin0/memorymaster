@@ -164,7 +164,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # S-8: both slash styles, and the Git Bash spelling /c/Users/<name>. "Users" stays case-sensitive: the lowercase
     # spellings are the egress absolute-path rules' job (they redact the whole path, this one only the prefix).
     ("home_path_windows", re.compile(
-        r"(?:[Cc]:[\\/]|(?<![\w/])/[Cc]/)Users[\\/]([A-Za-z][A-Za-z0-9._\-]{1,40})"
+        r"(?:[Cc]:(?:\\\\|[\\/])|(?<![\w/])/[Cc]/)Users(?:\\\\|[\\/])([A-Za-z][A-Za-z0-9._\-]{1,40})"
     )),
     # v2-refresh (home_path_unix): /home/<name>/ or /Users/<name>/ likewise
     # exposes usernames. Anchored to start-of-string, whitespace, or a few
@@ -725,9 +725,20 @@ def validate_persisted_metadata(fields: Mapping[str, object]) -> None:
             raise SensitiveMetadataError(field, findings)
 
 
+# Persisted content (transcripts, claims) only: any-case "users" and drive letter, single/double backslash or
+# slash, MSYS /c/. Not in _SECRET_PATTERNS because the export/egress redactors treat the lowercase spellings as
+# whole absolute paths (tests/test_home_path_egress_spellings.py).
+_PERSISTED_HOME_PATH_RE = re.compile(
+    r"(?i)(?:\b[a-z]:(?:\\\\|[\\/])|(?<![\w/])/[a-z]/)users(?:\\\\|[\\/])[a-z][a-z0-9._\-]{1,40}"
+)
+
+
 def sanitize_persisted_text(text: str) -> tuple[str, list[str]]:
     """Redact literal secrets and neutralize encoded secrets in content fields."""
     redacted, literal_findings = _redact(text)
+    if _PERSISTED_HOME_PATH_RE.search(redacted):
+        redacted = _PERSISTED_HOME_PATH_RE.sub("[REDACTED:home_path_windows]", redacted)
+        literal_findings = [*literal_findings, "home_path_windows"]
     findings = sorted(set(literal_findings + scan_text_for_findings(text)))
     if findings and scan_text_for_findings(redacted):
         redacted = "[REDACTED:encoded_secret]"

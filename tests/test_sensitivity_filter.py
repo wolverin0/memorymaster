@@ -576,3 +576,28 @@ def test_aws_shaped_tokens_300kb_with_and_without_a_key_id_are_linear() -> None:
     body = (token + " ") * (300_000 // (len(token) + 1))
     _timed(body)
     _timed("AKIA" + "ZQ7LMN4PRS6TUV2W " + body)
+
+
+@pytest.mark.parametrize("path", [
+    "C:/Users/pauolx11/AppData/x.log",
+    "/c/Users/pauolx12/projects/x",
+    "C:\\\\Users\\\\pauolx13\\\\Desktop\\\\x.txt",           # JSON-escaped: two literal backslashes
+    "C:\\Users\\pauolx14\\Desktop\\x.txt",
+    "/Users/Pauolx15/projects/x",
+    "/home/pauolx16/projects/x",
+    "c:/users/pauolx17/Desktop/x.txt",
+    "c:\\users\\pauolx18\\Desktop",
+])
+def test_home_path_spellings_are_redacted_through_sanitize_persisted_text(path: str) -> None:
+    for text in (f"opened {path} now", '{"file_path": "' + path + '"}'):
+        redacted, findings = sanitize_persisted_text(text)
+        assert findings and "pauolx" not in redacted.lower(), (text, redacted)
+
+
+def test_persisted_home_path_redaction_is_linear_and_leaves_bare_names() -> None:
+    blob = "C:\\\\Users\\\\" * 20_000 + "users/ " * 20_000
+    start = time.perf_counter()
+    sanitize_persisted_text(blob)
+    assert time.perf_counter() - start < 3.0
+    text = "the user pauolx19 logged in; see /users/:id and c:/windows/system32"
+    assert sanitize_persisted_text(text) == (text, [])
