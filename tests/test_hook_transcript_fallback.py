@@ -126,10 +126,59 @@ def test_claims_come_first_and_fragments_take_only_the_free_slots(world) -> None
 def test_a_full_cap_gets_no_fragments(world, monkeypatch) -> None:
     monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS", "1")
     world.claim("The router firmware version is pinned until the lab is rebuilt")
-    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 here", "2026-08-01T00:00:00Z",
-                       world.cwd))
+    world.transcripts(("assistant", "The router firmware version is pinned until the lab is rebuilt", "2026-08-01T00:00:00Z",
+                       world.cwd))  # restates the claim, states no value: nothing earns an extra slot (D-5)
     text, ids = world.ask()
     assert len(ids) == 1 and "Raw past conversation" not in text
+
+
+def _two_claims(world) -> list[int]:
+    return [world.claim("Check the router firmware version on each deploy"),
+            world.claim("The router firmware version field must be in the deploy checklist")]
+
+
+def test_d5_a_full_cap_still_delivers_the_fragment_with_the_value_and_keeps_both_claims(world) -> None:
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    made = _two_claims(world)
+    text, ids = world.ask(session_id="s-d5")
+    assert sorted(ids) == sorted(made) and "7.18.2" in text
+    assert text.index("# Memory Context") < text.index("# Raw past conversation")  # claims first, fragment labelled
+    again, _ = world.ask(session_id="s-d5")  # its content was delivered: not repeated this session
+    assert "7.18.2" not in again
+
+
+def test_d5_a_fragment_that_restates_the_claims_takes_no_extra_slot(world) -> None:
+    world.transcripts(("assistant", "The router firmware version field belongs in the deploy checklist",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    _two_claims(world)
+    assert "Raw past conversation" not in world.ask()[0]
+
+
+def test_d5_disabled_fallback_adds_nothing(world, monkeypatch) -> None:
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2", "2026-08-01T00:00:00Z", world.cwd))
+    _two_claims(world)
+    monkeypatch.delenv(transcript_fallback.ENABLED_ENV)
+    assert "7.18.2" not in world.ask()[0]
+
+
+def test_d5_known_limit_an_unlinked_correction_still_leads_and_the_fragment_is_labelled(world) -> None:
+    """Limit: a correction with no supersedes link cannot be recognised; it comes first, the quote is labelled."""
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    new = world.claim("Correction: the router firmware version is now 7.20.1")
+    world.claim("The router firmware version field must be in the deploy checklist")
+    text, ids = world.ask()
+    assert new in ids and text.index("7.20.1") < text.index("# Raw past conversation")
+    assert "[2026-08-01 project:here" in text and "possibly outdated" in text
+
+
+def test_d5_extra_slot_stays_inside_the_budget(world) -> None:
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    _two_claims(world)
+    plain, _ = context_hook.recall(ASK, db_path=world.db, return_ids=True, hook_data={"cwd": world.cwd}, budget=60)
+    assert len(plain) <= 60 * 4 and "7.18.2" not in plain  # the fragment does not fit: dropped whole
 
 
 def test_fragments_are_not_claims(world, monkeypatch) -> None:
@@ -324,3 +373,86 @@ def test_centered_excerpt_windows_around_the_densest_match() -> None:
 def test_centered_excerpt_keeps_short_text_whole_and_falls_back_to_the_head() -> None:
     assert centered_excerpt("short text", "anything", 200) == "short text"
     assert centered_excerpt("x" * 500, "zebra", 100).startswith("xxxx")
+
+
+def _old_port_world(world):
+    world.transcripts(("assistant", "The router proxy port we chose was 8080 after the rollback", "2026-08-01T00:00:00Z",
+                       world.cwd))
+    return world.claim("The router proxy port used to be set in the deploy page")
+
+
+def _declare(world, old: int, text: str, *, pointer: bool, confirm: bool):
+    kw = {"supersedes_claim_id": old} if pointer else {"supersedes": [old]}
+    new = world.service.ingest(text, [CitationInput(source="test://fb", locator="y")], scope="project:here",
+                               source_agent="fixture", **kw)
+    if confirm:
+        lifecycle.transition_claim(world.service.store, new.id, "confirmed", reason="fixture", event_type="validator")
+    return new.id
+
+
+PORT_ASK = "which router proxy port did we choose"
+
+
+@pytest.mark.parametrize("text", ["Correction: the router proxy port is now 9090 in the vault",
+                                  "Correction: the router proxy port moved to the vault-managed setting"])
+def test_d5_a_confirmed_correction_with_a_pointer_gets_no_old_value_through_the_reserved_slot(world, text) -> None:
+    new = _declare(world, _old_port_world(world), text, pointer=True, confirm=True)
+    world.claim("The router proxy port field must be in the deploy checklist")
+    out, ids = world.ask(PORT_ASK)
+    assert new in ids and "8080" not in out
+
+
+def test_d5_the_target_of_a_pending_proposal_gets_no_old_value_even_if_its_replacement_is_not_injected(world) -> None:
+    old = _old_port_world(world)
+    _declare(world, old, "Correction: the router proxy port moved to the vault-managed setting", pointer=False,
+             confirm=False)  # candidate: not injected; the proposal is pending, the target is still served
+    world.claim("The router proxy port field must be in the deploy checklist")
+    out, ids = world.ask(PORT_ASK)
+    assert old in ids and "8080" not in out
+
+
+def test_d5_turn_two_recovers_the_fragment_through_the_free_slot_when_turn_one_could_not_carry_it(world, monkeypatch) -> None:
+    """Pins the free-slot recovery: claims seen on turn 1 free the slots, a fragment never delivered arrives on turn 2."""
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    _two_claims(world)
+    with monkeypatch.context() as turn_one:
+        turn_one.setattr(context_hook, "_evidence_fragment_key", lambda *a, **k: None)  # the extra slot does not fire
+        first, first_ids = world.ask(session_id="s-r")
+    assert len(first_ids) == 2 and "7.18.2" not in first
+    text, ids = world.ask(session_id="s-r")  # same session, the question the fragment answers
+    assert ids == [] and "7.18.2" in text
+
+
+def test_d5_a_failing_proposal_scan_fails_closed(world, monkeypatch) -> None:
+    from memorymaster.recall import retrieval
+
+    old = _old_port_world(world)
+    _declare(world, old, "Correction: the router proxy port moved to the vault-managed setting", pointer=False,
+             confirm=False)
+    world.claim("The router proxy port field must be in the deploy checklist")
+    real = retrieval.pending_supersession_ids
+
+    def scan(svc, **kw):
+        if kw.get("deliverable_only") is False:
+            raise retrieval.PendingSupersessionScanError("boom")
+        return real(svc, **kw)
+
+    monkeypatch.setattr(retrieval, "pending_supersession_ids", scan)
+    out, ids = world.ask(PORT_ASK)
+    assert old in ids and "8080" not in out
+
+
+def test_d5_known_limit_a_retired_claim_whose_replacement_is_not_injected_leaves_the_old_quote(world) -> None:
+    """Limit: nothing on the injected claims flags this correction; the old value arrives labelled and dated."""
+    old = _old_port_world(world)
+    replacement = world.service.ingest("Vault now manages the gateway secret rotation", [CitationInput(
+        source="test://fb", locator="z")], scope="project:here", source_agent="fixture")  # candidate: not injected
+    lifecycle.transition_claim(world.service.store, old, "superseded", reason="fixture", event_type="validator",
+                               replaced_by_claim_id=replacement.id)
+    world.claim("The router proxy port field must be in the deploy checklist")
+    world.claim("The router proxy port is documented in the deploy page")
+    out, ids = world.ask(PORT_ASK)
+    assert old not in ids and len(ids) == 2
+    assert "8080" in out and "[2026-08-01 project:here" in out and "possibly outdated" in out
+    assert out.index("# Memory Context") < out.index("# Raw past conversation")
