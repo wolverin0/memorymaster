@@ -277,17 +277,6 @@ def test_atlas_digest_prompt_leaves_out_blocked_lines_and_redacts_the_rest():
 # ---- no new ungated call_llm site -----------------------------------------------------------
 
 GATED = {
-    "memorymaster/bridges/atlas_llm_extractor.py",
-    "memorymaster/config_templates/hooks/memorymaster-auto-ingest.py",
-    "memorymaster/dreaming/worker.py",
-    "memorymaster/govern/contradiction_probe.py",
-    "memorymaster/knowledge/entity_graph.py",
-    "memorymaster/surfaces/session_end_ingest.py",
-    "scripts/agent_session_end_ingest.py",
-}
-DORMANT = {  # ungated, dormant: gate before enabling (see core/provider_egress.py)
-    "memorymaster/core/llm_budget.py",
-    "memorymaster/core/llm_provider.py",
     "memorymaster/govern/auto_resolver.py",
     "memorymaster/govern/jobs/compact_summaries.py",
     "memorymaster/govern/llm_steward.py",
@@ -300,6 +289,17 @@ DORMANT = {  # ungated, dormant: gate before enabling (see core/provider_egress.
     "memorymaster/recall/llm_rerank.py",
     "memorymaster/recall/selfcheck.py",
     "memorymaster/workflow_intelligence/classification.py",
+    "memorymaster/bridges/atlas_llm_extractor.py",
+    "memorymaster/config_templates/hooks/memorymaster-auto-ingest.py",
+    "memorymaster/dreaming/worker.py",
+    "memorymaster/govern/contradiction_probe.py",
+    "memorymaster/knowledge/entity_graph.py",
+    "memorymaster/surfaces/session_end_ingest.py",
+    "scripts/agent_session_end_ingest.py",
+}
+DORMANT = {  # ungated, dormant: gate before enabling (see core/provider_egress.py)
+    "memorymaster/core/llm_budget.py",
+    "memorymaster/core/llm_provider.py",
     "scripts/label_prompts_with_judge.py",
 }
 _CALL = re.compile(r"(?<![\w.])(?:\w+\.)?_?call_llm\(")
@@ -467,3 +467,210 @@ def test_a_quote_with_no_content_outside_markers_does_not_bind():
     assert quote_in_sent_text("lives at [REDACTED:private_ipv4] in", text) is True
     assert quote_in_sent_text("[REDACTED:private_ipv4]", text) is False
     assert quote_in_sent_text("[WITHHELD:long_token]", "A" * 5_000) is False
+
+
+# ---- the twelve formerly dormant call sites ---------------------------------------------------
+
+HOME_POSIX = "/home/" + "jdoe" + "/proj/app.yml"
+LEAK = f"host {IP} file {WIN_PATH} home {HOME_POSIX} mail {MAIL} key {TOKEN} and " + BENIGN
+LEAK_B = f"replica {IP} file {WIN_PATH} home {HOME_POSIX} mail {MAIL} key {TOKEN} and " + BENIGN
+
+
+def _spy(returns: str = "[]"):
+    seen: list[str] = []
+
+    def call(*args, **kwargs):
+        seen.append("\n".join(str(a) for a in args))
+        return returns
+
+    return seen, call
+
+
+def test_auto_resolver_gates_both_claims_and_citations_and_withheld_makes_no_call(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from memorymaster.govern import auto_resolver as ar
+
+    def claim(i, text):
+        cites = [SimpleNamespace(source="notes", locator=WIN_PATH)]
+        return SimpleNamespace(id=i, text=text, confidence=0.5, updated_at="2026-01-01", citations=cites)
+
+    seen, call = _spy("{}")
+    monkeypatch.setattr(ar, "call_llm", call)
+    ar.resolve_conflict_pair(MagicMock(), claim(1, LEAK), claim(2, LEAK_B))
+    assert len(seen) == 1
+    _assert_clean(seen[0])
+    seen.clear()
+    result = ar.resolve_conflict_pair(MagicMock(), claim(1, "deploy " + BLOCKED), claim(2, BENIGN))
+    assert seen == [] and result == {"resolved": False, "reason": "egress_withheld"}
+
+
+def test_compact_summaries_prompt_block_is_gated_line_by_line():
+    from types import SimpleNamespace
+
+    from memorymaster.govern.jobs import compact_summaries as cs
+
+    def claim(text):
+        return SimpleNamespace(subject="svc", predicate="uses", object_value=None, text=text)
+
+    block = cs._build_claim_text_block([claim(LEAK), claim("deploy " + BLOCKED), claim(BENIGN)])
+    _assert_clean(block)
+    assert "hunter2" not in block and BENIGN in block and block.count("\n") == 1
+    assert cs._build_claim_text_block([claim("deploy " + BLOCKED)]) == ""  # nothing left: the caller makes no call
+
+
+@pytest.mark.parametrize("use_provider", [True, False], ids=["llm_provider", "direct_http"])
+def test_llm_steward_extract_claim_gates_the_text_on_both_transports(monkeypatch, use_provider):
+    from memorymaster.govern import llm_steward as ls
+
+    seen, call = _spy("[]")
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", call)
+    monkeypatch.setattr(ls, "_call_llm", lambda provider, key, model, prompt, base_url="", **kw: call(prompt))
+    result = ls.extract_claim("google", "k", "m", 1, LEAK, use_llm_provider=use_provider)
+    assert len(seen) == 1 and result.original_text == LEAK
+    _assert_clean(seen[0])
+    seen.clear()
+    withheld = ls.extract_claim("google", "k", "m", 1, "deploy " + BLOCKED, use_llm_provider=use_provider)
+    assert seen == [] and withheld.action == "skip" and withheld.extractions == []  # never "archive"
+
+
+def test_entity_extractor_llm_gates_the_snippet(monkeypatch):
+    from memorymaster.knowledge import entity_extractor as ee
+
+    monkeypatch.setenv("MEMORYMASTER_ENTITY_LLM", "1")
+    seen, call = _spy("[]")
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", call)
+    ee.extract_llm(LEAK)
+    assert len(seen) == 1
+    _assert_clean(seen[0])
+    seen.clear()
+    assert ee.extract_llm("deploy " + BLOCKED) == [] and seen == []
+
+
+def test_rule_miner_gates_the_window_and_a_withheld_one_is_no_correction_not_transient(monkeypatch):
+    from memorymaster.knowledge import rule_miner as rm
+
+    seen, call = _spy("[]")
+    monkeypatch.setattr(rm.llm_provider, "call_llm", call)
+    assert rm._extract_rule("ASSISTANT: " + LEAK + "\nUSER: no, use the other one") is None
+    assert len(seen) == 1
+    _assert_clean(seen[0])
+    seen.clear()
+    assert rm._extract_rule("USER: " + BLOCKED) is None and seen == []
+
+
+def test_skills_review_gates_the_evidence_and_a_withheld_one_is_a_blocked_review(monkeypatch):
+    from memorymaster.knowledge import skills
+
+    seen, call = _spy("")
+    monkeypatch.setattr(skills.llm_provider, "call_llm", call)
+    monkeypatch.setattr(skills, "_existing_skill_summaries", lambda service, scope: [])
+    monkeypatch.setattr(skills, "_record_review_diagnostic", lambda *a, **k: None)
+    stats = {"llm_calls": 0, "blocked": 0, "errors": []}
+    skills._review_one_input(None, {"claim_id": 1, "scope": "project:x", "text": LEAK}, stats)
+    assert len(seen) == 1
+    _assert_clean(seen[0])
+    seen.clear()
+    skills._review_one_input(None, {"claim_id": 2, "scope": "project:x", "text": "deploy " + BLOCKED}, stats)
+    assert seen == [] and stats["blocked"] == 1
+
+
+def test_vault_curator_gates_each_claim_and_skips_an_all_withheld_batch(monkeypatch):
+    from memorymaster.knowledge import vault_curator as vc
+
+    seen, call = _spy("[]")
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", call)
+    vc._batch_categorize([{"id": 1, "text": LEAK}, {"id": 2, "text": "deploy " + BLOCKED}])
+    assert len(seen) == 1 and "ID=2" not in seen[0]
+    _assert_clean(seen[0])
+    seen.clear()
+    assert vc._batch_categorize([{"id": 3, "text": "deploy " + BLOCKED}]) == {} and seen == []
+
+
+def test_vault_linter_gates_the_compared_values_with_pseudonyms(monkeypatch):
+    from memorymaster.knowledge import vault_linter as vl
+
+    seen, call = _spy("[]")
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", call)
+    pair = {"key": "k1", "claims": [{"value": f"lives at {IP} now"}, {"value": "lives at 10.9.8.7 now"}]}
+    vl._llm_verify_contradictions([pair])
+    assert len(seen) == 1 and "#1" in seen[0] and "#2" in seen[0]
+    _assert_clean(seen[0])
+    seen.clear()
+    blocked = {"key": "k2", "claims": [{"value": "deploy " + BLOCKED}, {"value": BENIGN}]}
+    assert vl._llm_verify_contradictions([blocked]) == [blocked] and seen == []
+
+
+def test_wiki_engine_wrapper_gates_prompt_and_text_for_every_call_site(monkeypatch):
+    from memorymaster.core.provider_egress import export_stored
+    from memorymaster.knowledge import wiki_engine as we
+
+    seen, call = _spy("answer")
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", call)
+    assert we._call_llm("Rewrite this article:\n" + LEAK, LEAK_B) == "answer"
+    _assert_clean(seen[0])
+    seen.clear()
+    assert we._call_llm("Rewrite:\n" + BLOCKED, "") == "" and seen == []
+    assert we._call_llm("Rewrite", BLOCKED) == "" and seen == []
+    for template in (we.ABSORB_PROMPT, we.CLEANUP_PROMPT, we.BREAKDOWN_PROMPT):
+        assert export_stored(template) == template  # the instruction templates are not over-withheld
+
+
+def test_llm_rerank_gates_query_and_snippets_and_a_withheld_request_charges_no_failure(monkeypatch):
+    from memorymaster.recall import llm_rerank as lr
+
+    seen, call = _spy('[{"candidate_index": 1, "relevance_score": 90}]')
+    monkeypatch.setattr(lr, "call_llm", call)
+    monkeypatch.setattr(lr, "_pace_judge_call", lambda: None)
+    monkeypatch.setattr(lr, "_CONSECUTIVE_FAILURES", 0)
+    monkeypatch.setattr(lr, "_DISABLED", False)
+    lr.rerank_with_llm("where is the host " + IP, [LEAK, "deploy " + BLOCKED, BENIGN], top_k=2)
+    assert len(seen) == 1
+    _assert_clean(seen[0])
+    assert "hunter2" not in seen[0] and BENIGN in seen[0]
+    seen.clear()
+    failures = lr.get_rerank_stats()["failures"]
+    ordered = lr.rerank_with_llm("q " + BLOCKED, ["a", "b"], top_k=2)
+    ordered_all = lr.rerank_with_llm("fine question", ["deploy " + BLOCKED], top_k=1)
+    assert seen == [] and ordered == ["a", "b"] and ordered_all == ["deploy " + BLOCKED]
+    assert lr.get_rerank_stats()["failures"] == failures and lr.get_rerank_stats()["disabled"] == 0
+
+
+def test_selfcheck_question_generator_gates_the_claim(monkeypatch):
+    from memorymaster.recall import selfcheck as sc
+
+    seen, call = _spy('["q?"]')
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", call)
+    assert sc.llm_question_generator(LEAK, 3) == ["q?"]
+    _assert_clean(seen[0])
+    seen.clear()
+    assert sc.llm_question_generator("deploy " + BLOCKED, 3) == [] and seen == []
+
+
+def test_workflow_classification_gates_the_request_excerpt(tmp_path, monkeypatch):
+    from memorymaster.workflow_intelligence import classification
+    from memorymaster.workflow_intelligence.models import SessionRecord
+    from memorymaster.workflow_intelligence.store import WorkflowStore
+
+    seen, call = _spy('{"task_category": "devops", "outcome": "unknown", "confidence": 0.7, "rationale": "x"}')
+    monkeypatch.setattr(classification.llm_provider, "call_llm", call)
+    store = WorkflowStore(tmp_path / "workflow.db")
+    try:
+        for sid, excerpt in (("s1", LEAK), ("s2", "deploy " + BLOCKED)):
+            store.upsert_session(
+                SessionRecord(
+                    session_id=sid,
+                    external_id=sid,
+                    provider="codex",
+                    session_kind="human",
+                    project_scope="project:demo",
+                    initial_request_excerpt=excerpt,
+                ),
+                source_file_id=None,
+            )
+        result = classification.classify_pending(store, limit=5)
+    finally:
+        store.close()
+    assert len(seen) == 1 and result["classified"] == 1 and result["failures"] == 1
+    _assert_clean(seen[0])
