@@ -220,6 +220,47 @@ def hook_telemetry(log: Path, since: datetime) -> dict:
     }
 
 
+FALLBACK_LINE = re.compile(r"^\[(?P<ts>[^\]]+)\] hook=recall event=transcript_fallback (?P<rest>.*)$")
+
+
+def transcript_fallback_outcomes(log: Path, since: datetime) -> dict:
+    """How often the raw-transcript fallback ran, found something, found nothing, or spent its budget (hook.log)."""
+    if not log.exists():
+        return _unavailable("hook.log not found (the fallback logs there once it runs)")
+    counts: dict[str, int] = {"hits": 0, "empty": 0, "deadline": 0, "error": 0}
+    elapsed: list[float] = []
+    budget = None
+    with log.open(encoding="utf-8", errors="replace") as handle:
+        for raw in handle:
+            match = FALLBACK_LINE.match(raw.strip())
+            if not match:
+                continue
+            try:
+                when = parse_ts(match["ts"])
+            except ValueError:
+                continue
+            if when < since:
+                continue
+            fields = dict(re.findall(r"(\w+)=(\"[^\"]*\"|\S+)", match["rest"]))
+            outcome = fields.get("outcome", "").split(":")[0]
+            counts[outcome if outcome in counts else "error"] += 1
+            if "elapsed_ms" in fields:
+                elapsed.append(float(fields["elapsed_ms"]))
+            budget = float(fields["budget_ms"]) if "budget_ms" in fields else budget
+    ran = sum(counts.values())
+    return {
+        "source": "hook.log recall/transcript_fallback lines; only prompts where the fallback was enabled and reached the index",
+        "ran": ran,
+        **counts,
+        "returned_fragments_share": round(counts["hits"] / ran, 4) if ran else None,
+        "returned_none_share": round((counts["empty"] + counts["deadline"] + counts["error"]) / ran, 4) if ran else None,
+        "deadline_share": round(counts["deadline"] / ran, 4) if ran else None,
+        "budget_ms": budget,
+        "elapsed_p50_ms": percentile(elapsed, 0.50),
+        "elapsed_p95_ms": percentile(elapsed, 0.95),
+    }
+
+
 def _section(fn, *args):
     """One metric's failure must not sink the report: record it as null with the reason."""
     try:
@@ -235,7 +276,8 @@ def _with_db(path: Path, fn, *args):
     return _section(run)
 
 
-def collect(db: Path, ledger: Path, home: Path, dense_log: Path, days: int = 7, now: datetime | None = None) -> dict:
+def collect(db: Path, ledger: Path, home: Path, dense_log: Path, days: int = 7, now: datetime | None = None,
+            hook_log: Path | None = None) -> dict:
     started = time.perf_counter()
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(days=days)
@@ -247,6 +289,8 @@ def collect(db: Path, ledger: Path, home: Path, dense_log: Path, days: int = 7, 
         "recall_returns_by_origin": _with_db(db, machine_notice_share, since),
         "injected_claims_cited": _section(citation_rate, home, days, now),
         "dreaming": _with_db(ledger, dream_queue, since, now),
+        "transcript_fallback": _section(
+            transcript_fallback_outcomes, hook_log or home / ".memorymaster" / "hook_state" / "hook.log", since),
         **(telemetry if "injected_tokens_per_turn" in telemetry else
            {"injected_tokens_per_turn": telemetry, "hook_latency": telemetry}),
         "elapsed_seconds": round(time.perf_counter() - started, 1),
@@ -266,10 +310,12 @@ def main(argv=None) -> int:
     parser.add_argument("--home", type=Path, default=Path.home(), help="home holding .claude/projects transcripts")
     parser.add_argument("--dense-log", type=Path, default=None,
                         help="recall-dense.jsonl (default: <home>/.memorymaster/metrics/recall-dense.jsonl)")
+    parser.add_argument("--hook-log", type=Path, default=None,
+                        help="hook.log (default: <home>/.memorymaster/hook_state/hook.log)")
     parser.add_argument("--out", help="write the JSON report here (default: stdout)")
     args = parser.parse_args(argv)
     dense_log = args.dense_log or args.home / ".memorymaster" / "metrics" / "recall-dense.jsonl"
-    text = json.dumps(collect(args.db, args.ledger_db, args.home, dense_log, args.days), indent=2, sort_keys=True)
+    text = json.dumps(collect(args.db, args.ledger_db, args.home, dense_log, args.days, hook_log=args.hook_log), indent=2, sort_keys=True)
     if args.out:
         out = Path(args.out).expanduser()
         out.parent.mkdir(parents=True, exist_ok=True)

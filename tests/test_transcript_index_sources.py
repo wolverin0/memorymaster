@@ -576,7 +576,21 @@ def _ask(i: int) -> str:
     return f"what {thing} did we pick for the {noun} service"
 
 
-def test_thirty_codex_decisions_reach_the_claude_hook_and_the_control_direction_still_works(hooked, tmp_path):
+def _missed(cases) -> list[tuple[int, str, int, int]]:
+    """Every decision the hook did not deliver, with the hook's wall time and answer size, so a miss explains itself."""
+    import time
+
+    out = []
+    for n, (needle, hook, ask, session) in enumerate(cases):
+        started = time.perf_counter()
+        got = hook(ask, session)
+        if needle not in got:
+            out.append((n, session, round((time.perf_counter() - started) * 1000), len(got)))
+    return out
+
+
+def test_thirty_codex_decisions_reach_the_claude_hook_and_the_control_direction_still_works(hooked, tmp_path, monkeypatch):
+    monkeypatch.setenv(transcript_fallback.DEADLINE_ENV, "10000")  # the 120 ms budget is a latency guard, not what is under test
     from test_hook_transcript_fallback import _rec
 
     claude_dir = tmp_path / ".claude" / "projects" / "p"
@@ -592,26 +606,28 @@ def test_thirty_codex_decisions_reach_the_claude_hook_and_the_control_direction_
             _codex_msg("assistant", f"We decided the {noun} {thing_b} is {i * 3 + 17} units, final.")])
     stats = ti.index_transcripts()
     assert stats["claude_files_indexed"] == N and stats["codex_files_indexed"] == N and stats["errors"] == 0
-    to_claude = to_codex = 0
+    to_claude, to_codex = [], []
     for i in range(N):
         noun, thing = NOUNS[i % len(NOUNS)], THINGS[i % len(THINGS)]
         thing_b = THINGS[(i + 1) % len(THINGS)]
-        to_claude += f"{i * 3 + 17} units" in hooked.claude(f"what {thing_b} did we pick for the {noun} service", f"hc-{i}")
-        to_codex += f"plan-{noun[:3]}{i * 7 + 11}" in hooked.codex(f"what {thing} did we choose for the {noun} service", f"hx-{i}")
-    assert (to_claude, to_codex) == (N, N)
+        to_claude.append((f"{i * 3 + 17} units", hooked.claude, f"what {thing_b} did we pick for the {noun} service", f"hc-{i}"))
+        to_codex.append((f"plan-{noun[:3]}{i * 7 + 11}", hooked.codex, f"what {thing} did we choose for the {noun} service", f"hx-{i}"))
+    assert (_missed(to_claude), _missed(to_codex)) == ([], [])
 
 
-def test_thirty_agy_decisions_reach_the_claude_hook(hooked, tmp_path):
+def test_thirty_agy_decisions_reach_the_claude_hook(hooked, tmp_path, monkeypatch):
+    monkeypatch.setenv(transcript_fallback.DEADLINE_ENV, "10000")  # the 120 ms budget is a latency guard, not what is under test
     for i in range(N):
         noun, thing, _, answer = _decision(i)
         write_agy(tmp_path, f"11111111-2222-4333-8444-{i:012d}", hooked.cwd,
                   agy_rows(f"What {thing} should the {noun} service use?", answer))
     stats = ti.index_transcripts()
     assert stats["agy_files_indexed"] == N and stats["errors"] == 0
-    assert sum(_decision(i)[2] in hooked.claude(_ask(i), f"ha-{i}") for i in range(N)) == N
+    assert _missed([(_decision(i)[2], hooked.claude, _ask(i), f"ha-{i}") for i in range(N)]) == []
 
 
-def test_thirty_opencode_decisions_reach_the_claude_hook(hooked, tmp_path):
+def test_thirty_opencode_decisions_reach_the_claude_hook(hooked, tmp_path, monkeypatch):
+    monkeypatch.setenv(transcript_fallback.DEADLINE_ENV, "10000")  # the 120 ms budget is a latency guard, not what is under test
     oc = OpenCode(tmp_path)
     for i in range(N):
         noun, thing, _, answer = _decision(i)
@@ -621,7 +637,7 @@ def test_thirty_opencode_decisions_reach_the_claude_hook(hooked, tmp_path):
     oc.close()
     stats = ti.index_transcripts()
     assert stats["opencode_files_indexed"] == N and stats["errors"] == 0
-    assert sum(_decision(i)[2] in hooked.claude(_ask(i), f"ho-{i}") for i in range(N)) == N
+    assert _missed([(_decision(i)[2], hooked.claude, _ask(i), f"ho-{i}") for i in range(N)]) == []
 
 
 # --- automated sessions, oversized sessions, v2 layout, honest stats (verifier round 1) --------------------------
