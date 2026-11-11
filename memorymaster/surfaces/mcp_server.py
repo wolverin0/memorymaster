@@ -837,6 +837,7 @@ def _checkpoint_batch(
                 require_source_agent=True,
             )
             claim_ids.append(claim.id)
+            svc.validate_now(claim.id)
             mutable_state = classify_mutable_state(
                 text=text,
                 claim_type=_empty_to_none(str(item.get("claim_type", "") or "")),
@@ -1569,6 +1570,9 @@ if FastMCP is not None:
             )
         except ValueError as exc:
             return _structured_error(str(exc), "VALIDATION_ERROR", "text")
+        # Fast path: an agent stated this on purpose, so it is validated now and not at the next steward cycle.
+        fast_path = svc.validate_now(claim.id)
+        claim = svc.store.get_claim(claim.id) or claim
         # The Obsidian projection is optional. MCP ingest must never create a
         # cwd-relative vault unless the operator explicitly enables it.
         if _wiki_absorb_enabled():
@@ -1607,7 +1611,10 @@ if FastMCP is not None:
             warnings.append(
                 "mutable state forced to high volatility; supply valid_until"
             )
-        if supersession_report.get("filed"):
+        applied = [i for i in supersession_report.get("filed") or [] if i in (fast_path.get("superseded") or [])]
+        if applied:
+            warnings.append(f"supersession applied: {applied} retired, replaced by this claim")
+        if [i for i in supersession_report.get("filed") or [] if i not in applied]:
             warnings.append("supersession queued for steward review")
         if supersession_report.get("not_filed"):
             warnings.append(

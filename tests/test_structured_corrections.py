@@ -332,7 +332,10 @@ def test_mcp_ingest_claim_accepts_supersedes(mcp_db) -> None:
     first = ingest_claim(text="The build runs on runner-a", **base)
     assert first["ok"], first
     hid = first["claim"]["human_id"]
-    second = ingest_claim(text="The build runs on runner-b", supersedes=[hid, first["claim"]["id"]], **base)
+    # another agent's correction is cross-identity: it stays queued for the operator (a same-agent one is applied at
+    # once by the fast path, see test_mcp_ingest_claim_is_deliverable_at_once)
+    second = ingest_claim(text="The build runs on runner-b", supersedes=[hid, first["claim"]["id"]],
+                          **{**base, "source_agent": "pytest-t2276-other"})
     assert second["ok"], second
     assert "supersession queued for steward review" in second["warnings"]
 
@@ -373,3 +376,104 @@ def test_sweep_lists_unclosed_pairs_by_id_only_and_changes_nothing(svc, capsys) 
     assert f"{old.id}\t{new.id}\t{SCOPE}" in out and "uncorrected_pairs=1" in out
     assert "Cert renewal" not in out, "ids only, never claim text"
     assert state() == before, "the sweep applies nothing"
+
+
+# --- 5. fast path: no window where neither the old nor the new value is served (audit D-2 / D-3, ROADMAP 1.4) ---
+
+
+def test_the_target_stays_served_until_its_replacement_is_deliverable(svc) -> None:
+    old = _claim(svc, "The staging admin panel listens on port 8080", source_agent="agent-a")
+    new = _claim(svc, "The staging admin panel listens on port 9443", source_agent="agent-b",
+                 supersedes=[old.human_id], confirm=False)
+    assert new.status == "candidate"
+    assert old.id not in pending_supersession_ids(svc, use_cache=False), \
+        "hooks never serve a candidate: hiding the old claim now would serve neither value"
+    # a promotion decision still sees the dispute, whatever the replacement's state
+    assert old.id in pending_supersession_ids(svc, use_cache=False, deliverable_only=False)
+    lifecycle.transition_claim(svc.store, new.id, "confirmed", reason="fixture", event_type="validator")
+    assert old.id in pending_supersession_ids(svc, use_cache=False)
+
+
+def test_the_promotion_scan_never_poisons_the_recall_cache(svc) -> None:
+    old = _claim(svc, "Retention is 30 days", source_agent="agent-a")
+    _claim(svc, "Retention is 90 days", source_agent="agent-b", supersedes=[old.human_id], confirm=False)
+    assert old.id in pending_supersession_ids(svc, use_cache=False, deliverable_only=False)
+    assert old.id not in pending_supersession_ids(svc)
+
+
+def test_validate_now_confirms_the_correction_and_retires_a_same_agent_target(svc) -> None:
+    old = _claim(svc, "The staging admin panel listens on port 8080")
+    new = _claim(svc, "The staging admin panel listens on port 9443", supersedes=[old.human_id], confirm=False)
+    assert pending_supersession_ids(svc) == frozenset()  # warm the cache with the pre-confirmation answer
+    report = svc.validate_now(new.id)
+    assert report["status"] == "confirmed", report
+    assert _get(svc, new.id).status == "confirmed"
+    retired = _get(svc, old.id)
+    assert retired.status == "superseded" and retired.replaced_by_claim_id == new.id
+    assert _get(svc, new.id).supersedes_claim_id == old.id
+    assert report["superseded"] == [old.id]
+
+
+def test_validate_now_hides_another_agents_target_but_never_retires_it(svc) -> None:
+    old = _claim(svc, "The audit log retention window is 30 days", source_agent="agent-a")
+    new = _claim(svc, "The audit log retention window is 90 days since the 2026 policy", source_agent="agent-b",
+                 supersedes=[old.human_id], confirm=False)
+    assert pending_supersession_ids(svc) == frozenset()
+    report = svc.validate_now(new.id)
+    assert report["status"] == "confirmed" and report["superseded"] == []
+    assert _get(svc, old.id).status == "confirmed", "cross-identity stays an operator decision"
+    assert old.id in pending_supersession_ids(svc), "the cache must not keep the pre-confirmation answer"
+
+
+def test_validate_now_leaves_a_held_author_as_candidate_and_its_target_served(svc) -> None:
+    old = _claim(svc, "The audit log retention window is 30 days")
+    new = _claim(svc, "The audit log retention window is 90 days since the 2026 policy", source_agent="llm-stop-hook",
+                 supersedes=[old.human_id], confirm=False)  # an author that never auto-promotes (T-1354)
+    report = svc.validate_now(new.id)
+    assert report["status"] == "candidate"
+    assert _get(svc, old.id).status == "confirmed" and old.id not in pending_supersession_ids(svc, use_cache=False)
+
+
+def test_validate_now_can_be_switched_off(svc, monkeypatch) -> None:
+    monkeypatch.setenv("MEMORYMASTER_INLINE_VALIDATION", "0")
+    new = _claim(svc, "Retention is 90 days", confirm=False)
+    assert svc.validate_now(new.id) == {"enabled": False}
+    assert _get(svc, new.id).status == "candidate"
+
+
+def test_validate_now_never_raises(svc, monkeypatch) -> None:
+    from memorymaster.govern.jobs import validator
+
+    new = _claim(svc, "Retention is 90 days", confirm=False)
+    monkeypatch.setattr(validator, "run", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    report = svc.validate_now(new.id)
+    assert report["status"] == "candidate" and report["error"] == "RuntimeError"
+
+
+def test_the_drain_does_not_retire_a_target_whose_replacement_is_not_confirmed(svc) -> None:
+    old = _claim(svc, "Retention is 30 days")
+    new = _claim(svc, "Retention is 90 days", supersedes=[old.human_id], confirm=False)
+    summary = drain_proposals(svc, apply=True)
+    assert summary["approved"] == 0 and summary["kept_replacement_unconfirmed"] == 1
+    assert _get(svc, old.id).status == "confirmed"
+    lifecycle.transition_claim(svc.store, new.id, "confirmed", reason="fixture", event_type="validator")
+    assert drain_proposals(svc, apply=True)["approved"] == 1
+    assert _get(svc, old.id).status == "superseded"
+
+
+def test_mcp_ingest_claim_is_deliverable_at_once(mcp_db) -> None:
+    from memorymaster.surfaces.mcp_server import checkpoint, ingest_claim
+
+    db, workspace = mcp_db
+    base = {"db": db, "workspace": workspace, "scope": SCOPE, "source_agent": "pytest-fastpath"}
+    first = ingest_claim(text="The build runs on runner-a after the 2026 migration", **base)
+    assert first["ok"] and first["claim"]["status"] == "confirmed", first
+    second = ingest_claim(text="The build runs on runner-b after the 2026 migration",
+                          supersedes=[first["claim"]["human_id"]], **base)
+    assert second["ok"] and second["claim"]["status"] == "confirmed", second
+    svc = MemoryService(db, workspace_root=Path(workspace))
+    assert _get(svc, first["claim"]["id"]).status == "superseded"
+    assert "supersession applied" in " ".join(second["warnings"])
+    batch = checkpoint(claims_json=json.dumps([{"text": "The deploy window is Tuesday 14:00 UTC for the runner fleet"}]),
+                       scope=SCOPE, db=db, workspace=workspace, source_agent="pytest-fastpath")
+    assert batch["ok"] and _get(svc, batch["claim_ids"][0]).status == "confirmed", batch

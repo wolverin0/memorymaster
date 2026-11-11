@@ -90,7 +90,8 @@ def test_validator_does_not_promote_a_claim_pending_supersession(tmp_path: Path)
         "the corrected free space figure measured after the cleanup ran",
         supersedes_claim_id=outdated.id,
     )
-    assert outdated.id in pending_supersession_ids(svc, use_cache=False), "precondition"
+    # the promotion gate's view: the replacement is still a candidate, so recall does not hide the target yet
+    assert outdated.id in pending_supersession_ids(svc, use_cache=False, deliverable_only=False), "precondition"
 
     validator.run(svc.store, limit=50)
 
@@ -230,7 +231,8 @@ def test_the_recall_demotion_survives_an_event_flood(proposal_flood) -> None:
     """Losing the proposal here restores FULL score to the claim someone
     declared outdated, so it outranks its own correction again."""
     svc, pending_id = proposal_flood
-    assert pending_id in pending_supersession_ids(svc, use_cache=False), (
+    # deliverable_only=False: the fixture's correction is a candidate; the scan under test is the same one
+    assert pending_id in pending_supersession_ids(svc, use_cache=False, deliverable_only=False), (
         f"the demotion silently lifted behind {_OLD_RECALL_CAP}+ newer events"
     )
 

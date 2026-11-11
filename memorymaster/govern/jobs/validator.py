@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import sqlite3
+from collections.abc import Sequence
 
 from memorymaster.core.config import get_config
 from memorymaster.core.lifecycle import is_tuple_predecessor, transition_claim
@@ -75,7 +76,7 @@ def _pending_supersession(store) -> frozenset[int]:
     """
     from memorymaster.recall.retrieval import pending_supersession_ids
 
-    return pending_supersession_ids(store, use_cache=False)
+    return pending_supersession_ids(store, use_cache=False, deliverable_only=False)
 
 
 def _merge_claims(primary: list[Claim], secondary: list[Claim]) -> list[Claim]:
@@ -159,7 +160,10 @@ def run(
     min_score: float | None = None,
     revalidation_claims: list[Claim] | None = None,
     policy_mode: str = "legacy",
+    claim_ids: Sequence[int] | None = None,
 ) -> dict[str, int]:
+    """Validate the newest candidates, or exactly ``claim_ids`` (the ingest fast path: same gates, no observation
+    review; an id that is not a candidate is skipped)."""
     # Promotion freeze (P1 spec §2.5.2): a failed quick_check writes the
     # <db>.integrity-failed sentinel; promoting/transitioning claims through
     # a DB with a broken btree compounds the damage, so the validator no-ops
@@ -188,20 +192,27 @@ def run(
             "observation_archived": 0,
             "observation_errors": 0,
         }
-    observation_review = _review_observations(store, limit)
+    observation_review = (
+        _review_observations(store, limit)
+        if claim_ids is None
+        else {"checked": 0, "confirmed": 0, "archived": 0, "would_confirm": 0, "errors": 0}
+    )
     cfg = get_config()
     if min_score is None:
         min_score = cfg.validation_threshold
-    candidate_claims = sorted(
-        (
+    fetched = (
+        # Held authors are excluded at fetch time: they would otherwise fill
+        # the confidence-ordered window and starve every other candidate.
+        store.find_by_status("candidate", limit=limit, exclude_source_agents=non_auto_promotable_sources())
+        if claim_ids is None
+        else [
             claim
-            # Held authors are excluded at fetch time: they would otherwise fill
-            # the confidence-ordered window and starve every other candidate.
-            for claim in store.find_by_status(
-                "candidate", limit=limit, exclude_source_agents=non_auto_promotable_sources()
-            )
-            if (claim.claim_type or "").strip().lower() != "observation"
-        ),
+            for claim in (store.get_claim(int(claim_id), include_citations=False) for claim_id in claim_ids)
+            if claim is not None and claim.status == "candidate"
+        ]
+    )
+    candidate_claims = sorted(
+        (claim for claim in fetched if (claim.claim_type or "").strip().lower() != "observation"),
         key=_candidate_recency_key,
         reverse=True,
     )
