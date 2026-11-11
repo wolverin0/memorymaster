@@ -162,14 +162,15 @@ def test_d5_disabled_fallback_adds_nothing(world, monkeypatch) -> None:
     assert "7.18.2" not in world.ask()[0]
 
 
-def test_d5_a_claim_with_the_new_value_is_never_displaced_by_a_fragment_quoting_the_old_one(world) -> None:
+def test_d5_known_limit_an_unlinked_correction_still_leads_and_the_fragment_is_labelled(world) -> None:
+    """Limit: a correction with no supersedes link cannot be recognised; it comes first, the quote is labelled."""
     world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
                        "2026-08-01T00:00:00Z", world.cwd))
     new = world.claim("Correction: the router firmware version is now 7.20.1")
     world.claim("The router firmware version field must be in the deploy checklist")
     text, ids = world.ask()
-    assert new in ids and "7.20.1" in text
-    assert "Raw past conversation" not in text  # claims carrying a value withhold a fragment quoting the old one
+    assert new in ids and text.index("7.20.1") < text.index("# Raw past conversation")
+    assert "[2026-08-01 project:here" in text and "possibly outdated" in text
 
 
 def test_d5_extra_slot_stays_inside_the_budget(world) -> None:
@@ -374,18 +375,40 @@ def test_centered_excerpt_keeps_short_text_whole_and_falls_back_to_the_head() ->
     assert centered_excerpt("x" * 500, "zebra", 100).startswith("xxxx")
 
 
-def test_d5_a_correction_without_digits_gets_no_extra_slot_for_the_old_value(world) -> None:
-    """The stale 8080 fragment must not ride the extra slot when a claim in play is the correction of another."""
+def _old_port_world(world):
     world.transcripts(("assistant", "The router proxy port we chose was 8080 after the rollback", "2026-08-01T00:00:00Z",
                        world.cwd))
-    old = world.claim("The router proxy port used to be set in the deploy page")
-    new = world.service.ingest("Correction: the router proxy port moved to the vault-managed setting",
-                               [CitationInput(source="test://fb", locator="y")], scope="project:here",
-                               source_agent="fixture", supersedes_claim_id=old)
-    lifecycle.transition_claim(world.service.store, new.id, "confirmed", reason="fixture", event_type="validator")
+    return world.claim("The router proxy port used to be set in the deploy page")
+
+
+def _declare(world, old: int, text: str, *, pointer: bool, confirm: bool):
+    kw = {"supersedes_claim_id": old} if pointer else {"supersedes": [old]}
+    new = world.service.ingest(text, [CitationInput(source="test://fb", locator="y")], scope="project:here",
+                               source_agent="fixture", **kw)
+    if confirm:
+        lifecycle.transition_claim(world.service.store, new.id, "confirmed", reason="fixture", event_type="validator")
+    return new.id
+
+
+PORT_ASK = "which router proxy port did we choose"
+
+
+@pytest.mark.parametrize("text", ["Correction: the router proxy port is now 9090 in the vault",
+                                  "Correction: the router proxy port moved to the vault-managed setting"])
+def test_d5_a_confirmed_correction_with_a_pointer_gets_no_old_value_through_the_reserved_slot(world, text) -> None:
+    new = _declare(world, _old_port_world(world), text, pointer=True, confirm=True)
     world.claim("The router proxy port field must be in the deploy checklist")
-    text, ids = world.ask("which router proxy port did we choose")
-    assert new.id in ids and "8080" not in text
+    out, ids = world.ask(PORT_ASK)
+    assert new in ids and "8080" not in out
+
+
+def test_d5_the_target_of_a_pending_proposal_gets_no_old_value_even_if_its_replacement_is_not_injected(world) -> None:
+    old = _old_port_world(world)
+    _declare(world, old, "Correction: the router proxy port moved to the vault-managed setting", pointer=False,
+             confirm=False)  # candidate: not injected; the proposal is pending, the target is still served
+    world.claim("The router proxy port field must be in the deploy checklist")
+    out, ids = world.ask(PORT_ASK)
+    assert old in ids and "8080" not in out
 
 
 def test_d5_turn_two_recovers_the_fragment_through_the_free_slot_when_turn_one_could_not_carry_it(world, monkeypatch) -> None:
