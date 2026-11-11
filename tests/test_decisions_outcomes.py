@@ -480,3 +480,10 @@ def test_skill_and_held_joiners_return_zero_when_the_ledger_read_fails(tmp_path,
     monkeypatch.undo()
     _fail_reads(monkeypatch, "surface = 'ingest'")
     assert oc.record_held_release(ledger, item_ref="candidate:x", actor="operator") == 0
+
+
+def test_an_agent_actor_is_its_own_untrusted_label_source() -> None:
+    from memorymaster.decisions.metrics import UNTRUSTED_LABEL_SOURCES
+
+    source = oc.label_source("audit", "steward_proposal_approved", {"actor": "agent", "source": "agent"})
+    assert source == "agent" and source != "operator" and source in UNTRUSTED_LABEL_SOURCES
