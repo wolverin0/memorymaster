@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import closing
+from pathlib import Path
 
 import pytest
 from test_dreaming_agy_source import _db, _metadata, _row, _rows
@@ -124,3 +125,65 @@ def test_delivery_metrics_reports_index_coverage_per_cli(home, tmp_path) -> None
     report = dm.collect(tmp_path / "no.db", tmp_path / "no2.db", tmp_path / "home", tmp_path / "x.jsonl")
     assert report["transcript_index_coverage"] == {
         cli: {"present": 1, "indexed": 1, "searchable": 1, "coverage": 1.0} for cli in ts.CLIS}
+
+
+# --- automated sessions, OpenCode cheap stamp, unreadable sources ----------------------------------------
+
+
+@pytest.mark.parametrize("meta", [{"originator": "codex_exec"}, {"source": "exec"}, {"source": {"subagent": {"x": 1}}}])
+def test_headless_and_subagent_codex_sessions_are_skipped_unless_asked(home, tmp_path, meta) -> None:
+    rollout = tmp_path / "home" / ".codex" / "sessions" / "2026" / "11" / "rollout-headless.jsonl"
+    rollout.write_text("\n".join(json.dumps(r) for r in (
+        {"timestamp": "2026-11-02T10:00:00Z", "type": "session_meta", "payload": {"id": "h1", "cwd": str(home), **meta}},
+        {"timestamp": "2026-11-02T10:00:01Z", "type": "response_item", "payload": {
+            "type": "message", "role": "user", "content": [{"type": "input_text", "text": _say("headlessquokka")}]}},
+    )) + "\n", encoding="utf-8")
+    assert ts.codex_automated({"originator": "codex_cli_rs", "source": "cli"}) is False
+    stats = ti.index_transcripts()
+    assert stats["files_automated"] == 1 and not any("headlessquokka" in t for _, t in _fragments())
+    ti.index_transcripts(include_automated=True)
+    assert any("headlessquokka" in t for _, t in _fragments("codex"))
+
+
+def _opencode_db(tmp_path: Path) -> Path:
+    return tmp_path / "home" / ".local" / "share" / "opencode" / "opencode.db"
+
+
+def _age_opencode_session(tmp_path: Path, updated_ms: int) -> None:
+    with closing(sqlite3.connect(_opencode_db(tmp_path))) as conn, conn:
+        conn.execute("ALTER TABLE session ADD COLUMN time_updated INTEGER")
+        conn.execute("UPDATE session SET time_updated = ?", (updated_ms,))
+
+
+def test_opencode_sessions_honour_the_age_cutoff_and_unchanged_ones_are_not_re_read(home, tmp_path, monkeypatch) -> None:
+    _age_opencode_session(tmp_path, 1_500_000_000_000)  # 2017
+    ti.index_transcripts(since_days=30)
+    assert "opencode" not in {cli for cli, _ in _fragments()}  # outside the window: not even read
+    ti.index_transcripts()
+    assert ti.coverage()["opencode"]["indexed"] == 1
+    monkeypatch.setattr(ts, "_opencode_load", lambda *a: pytest.fail("an unchanged session was re-read"))
+    assert ti.index_transcripts()["files_skipped"] >= 1
+
+
+def test_a_locked_opencode_store_keeps_its_rows_and_does_not_abort_the_job(home, tmp_path) -> None:
+    ti.index_transcripts()
+    locker = sqlite3.connect(_opencode_db(tmp_path), isolation_level=None)
+    try:
+        locker.execute("BEGIN EXCLUSIVE")
+        with pytest.raises(sqlite3.OperationalError):
+            ts._opencode_ids(ts.default_root("opencode"))
+        stats = ti.index_transcripts()
+    finally:
+        locker.close()
+    assert stats["errors"] >= 1 and stats["files_removed"] == 0
+    assert ti.coverage()["opencode"]["searchable"] == 1
+
+
+def test_an_agy_file_that_cannot_be_stat_ed_is_re_read_not_fatal(home, tmp_path, monkeypatch) -> None:
+    from dataclasses import replace
+
+    real = ts.discover_agy_sessions
+    monkeypatch.setattr(ts, "discover_agy_sessions",
+                        lambda root: [replace(s, full_path=tmp_path / "gone.jsonl") for s in real(root)])
+    ti.index_transcripts()  # stat() of the vanished companion raises inside the scan: it must not abort the job
+    assert ti.coverage()["agy"]["searchable"] == 1

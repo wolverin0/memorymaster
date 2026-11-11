@@ -7,6 +7,7 @@ has a kill switch, ``MEMORYMASTER_TRANSCRIPT_SOURCE_<CLI>=0``, and a root overri
 """
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from contextlib import closing
@@ -52,10 +53,36 @@ def codex_message(entry: dict, state: dict) -> tuple[str, str]:
     return (found[0], "\n".join(span.text for span in found[1])) if found else ("", "")
 
 
-def codex_cwd(path: Path) -> str | None:
-    """The session's working directory (``session_meta``); ``None`` when absent or when it is our own internal run."""
-    cwd = capture._probe_session(path, "codex")[1]
-    return None if capture._in_claude_cli_scratch(cwd) else cwd
+CLAUDE_AUTOMATED_ENTRYPOINT = "sdk-cli"  # headless `claude -p` / SDK runs tag every record with it
+CODEX_AUTOMATED = {"codex_exec", "exec", "subagent"}  # session_meta originator / source of headless and sub-agent runs
+
+
+def claude_automated(record: dict) -> bool:
+    return record.get("entrypoint") == CLAUDE_AUTOMATED_ENTRYPOINT
+
+
+def codex_automated(meta: dict) -> bool:
+    """``session_meta`` of a ``codex exec`` run or a sub-agent: its transcript quotes prompts and answer keys."""
+    source = meta.get("source")
+    names = {str(meta.get("originator", "")).lower()}
+    names |= {str(key).lower() for key in source} if isinstance(source, dict) else {str(source).lower()}
+    return bool(names & CODEX_AUTOMATED)
+
+
+def codex_meta(path: Path) -> tuple[str | None, bool]:
+    """``(cwd, automated)`` from the rollout's ``session_meta``; ``cwd`` is ``None`` when absent or when it is our own
+    internal run (not attributable)."""
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for _, raw in zip(range(capture._PROBE_MAX_LINES), handle):
+            try:
+                entry = json.loads(raw)
+            except ValueError:
+                continue
+            payload = entry.get("payload") if isinstance(entry, dict) and entry.get("type") == "session_meta" else None
+            if isinstance(payload, dict):
+                cwd = str(payload.get("cwd") or "") or None
+                return (None if capture._in_claude_cli_scratch(cwd) else cwd), codex_automated(payload)
+    return None, False
 
 
 @dataclass(frozen=True)
@@ -67,16 +94,30 @@ class Session:
     load: Callable[[], tuple[str | None, list[tuple[str, str, str]]]]  # -> (cwd, [(timestamp, role, text)])
 
 
-def _opencode_ids(root: Path) -> list[str]:
+def _opencode_ids(root: Path) -> list[tuple[str, tuple[int, int] | None]]:
+    """``(session id, stamp)``; the stamp is ``(0, time_updated in ns)`` so the cutoff and caps apply without
+    reading any message.  A locked or unreadable store raises (the caller keeps its rows); only a missing table or
+    column falls through."""
     database = root / (os.environ.get("OPENCODE_DB") or "opencode.db")
     if not database.is_file():
-        return sorted(path.stem for path in (root / "storage" / "session").glob("*/*.json"))
+        found = []
+        for path in sorted((root / "storage" / "session").glob("*/*.json")):
+            try:
+                found.append((path.stem, (0, path.stat().st_mtime_ns)))
+            except OSError:
+                found.append((path.stem, None))
+        return found
     with closing(sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.25)) as conn:
         for table in ("session_v2", "session"):
-            try:
-                return [row[0] for row in conn.execute(f"SELECT id FROM {table} ORDER BY id")]
-            except sqlite3.OperationalError:
-                continue
+            for sql, stamped in ((f"SELECT id, time_updated FROM {table} ORDER BY id", True),
+                                 (f"SELECT id FROM {table} ORDER BY id", False)):
+                try:
+                    rows = conn.execute(sql).fetchall()
+                except sqlite3.OperationalError as exc:
+                    if "no such" not in str(exc):
+                        raise  # locked / busy: the source is unavailable, not empty
+                    continue
+                return [(r[0], (0, int(r[1]) * 1_000_000) if stamped and r[1] is not None else None) for r in rows]
     return []
 
 
@@ -104,8 +145,11 @@ def whole_sessions(cli: str, root: Path) -> list[Session]:
         out = []
         for session in discover_agy_sessions(root):
             files = [p for p in (session.transcript_path, session.full_path) if p]
-            stats = [p.stat() for p in files]
-            out.append(Session(session.uuid, (sum(s.st_size for s in stats), max(s.st_mtime_ns for s in stats)),
-                               lambda session=session: _agy_load(session)))
+            try:
+                stats = [p.stat() for p in files]
+                stamp = (sum(s.st_size for s in stats), max(s.st_mtime_ns for s in stats))
+            except OSError:  # a file vanished or is locked mid-scan: re-read it (a failure is counted, rows are kept)
+                stamp = None
+            out.append(Session(session.uuid, stamp, lambda session=session: _agy_load(session)))
         return out
-    return [Session(sid, None, lambda sid=sid: _opencode_load(root, sid)) for sid in _opencode_ids(root)]
+    return [Session(sid, stamp, lambda sid=sid: _opencode_load(root, sid)) for sid, stamp in _opencode_ids(root)]

@@ -18,9 +18,10 @@ TRANSCRIPT_COMMANDS = ("transcript-index", "transcript-search")
 def register_transcript_parsers(sub: Any) -> None:
     index = sub.add_parser(
         "transcript-index",
-        help="Index local Claude Code transcripts into a sidecar FTS5 file (opt-in raw fallback; no claims)",
+        help="Index local Claude Code / Codex / agy / OpenCode transcripts into a sidecar FTS5 file (opt-in raw fallback; no claims)",
     )
-    index.add_argument("--root", default=None, help="Transcript root (default: ~/.claude/projects)")
+    index.add_argument("--root", default=None, help="Index only this Claude Code transcript root (default: every enabled CLI at its own default "
+                       "location: Claude, Codex, agy, OpenCode)")
     index.add_argument("--index", dest="index_path", default=None,
                        help="Sidecar index file (default: ~/.memorymaster/transcripts.db)")
     index.add_argument("--since-days", type=float, default=None,

@@ -71,7 +71,7 @@ EXCERPT_CHARS = 600
 MAX_QUERY_TOKENS = 12
 # Headless `claude -p` / SDK runs (extraction, steward, benchmark harnesses) tag every
 # record with this entrypoint; their transcripts quote prompts and answer keys.
-AUTOMATED_ENTRYPOINT = "sdk-cli"
+AUTOMATED_ENTRYPOINT = transcript_sources.CLAUDE_AUTOMATED_ENTRYPOINT
 
 _NOISE = re.compile(r"^(<local-command|<command-name>|<system-reminder>|\[MemoryMaster|Caveat:|<environment_context>"
                     r"|<user_instructions>|# AGENTS\.md instructions)", re.I)
@@ -328,7 +328,7 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, 
             line_no += 1
             if not isinstance(record, dict):
                 continue
-            if skip_automated and record.get("entrypoint") == AUTOMATED_ENTRYPOINT:
+            if skip_automated and transcript_sources.claude_automated(record):
                 return [], offset, line_no, True
             if cli == "codex":
                 role, text = transcript_sources.codex_message(record, state)
@@ -380,7 +380,12 @@ def _purge(conn: sqlite3.Connection, cli: str, keep: set[str], stats: dict[str, 
 def _index_whole(conn: sqlite3.Connection, cli: str, root: Path, stats: dict[str, int], scopes: dict[str, str],
                  cutoff: float | None, max_files: int | None) -> None:
     """agy/OpenCode: a session is re-read whole and replaced when its content digest changed."""
-    sessions = transcript_sources.whole_sessions(cli, root)
+    try:
+        sessions = transcript_sources.whole_sessions(cli, root)
+    except (OSError, ValueError, sqlite3.Error) as exc:  # locked store / unreadable root: keep what is indexed
+        logger.warning("transcript_index: %s source unavailable: %s", cli, type(exc).__name__)
+        stats["errors"] += 1
+        return
     _purge(conn, cli, {f"{cli}/{s.key}" for s in sessions}, stats)
     for sess in sessions:
         if max_files is not None and stats["files_indexed"] >= max_files:
@@ -496,8 +501,9 @@ def index_transcripts(
                     offset, line_no = row["offset"], row["lines"]
                 else:
                     hasher = hashlib.sha256()  # new, shrunk or rewritten file: parse from the start
-                cwd = transcript_sources.codex_cwd(path) if cli == "codex" else None
-                if cli == "codex" and cwd is None:  # no cwd (or our own internal run): not attributable
+                cwd, headless = transcript_sources.codex_meta(path) if cli == "codex" else (None, False)
+                if cli == "codex" and (cwd is None or (headless and not include_automated)):
+                    # not attributable (no cwd / our own internal run) or a `codex exec` / sub-agent session
                     frags, new_offset, new_lines, automated = [], st.st_size, 0, True
                 else:
                     frags, new_offset, new_lines, automated = _parse_increment(
