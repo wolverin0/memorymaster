@@ -1,5 +1,6 @@
 """Contracts of the daily health probe (T-2121): it must fail on a broken user outcome, never write the DB,
-and alert once per day. Every fixture is a temp DB; the live DB and the live services are never touched."""
+and alert on a state change, not on a schedule. Every fixture is a temp DB or dir; the live DB, hooks and
+services are never touched."""
 
 from __future__ import annotations
 
@@ -74,6 +75,9 @@ class World:
                          "last_activity_at TEXT, turn_count INTEGER)")
             conn.execute("INSERT INTO dream_captures (state, captured_at, last_activity_at, turn_count) "
                          "VALUES ('captured', ?, ?, 3)", (iso(2), iso(2)))
+            conn.execute("CREATE TABLE dream_runs (run_id TEXT PRIMARY KEY, status TEXT NOT NULL, dry_run INTEGER NOT NULL, "
+                         "extractor_model TEXT, consolidator_model TEXT, started_at TEXT NOT NULL, heartbeat_at TEXT, "
+                         "completed_at TEXT, summary_json TEXT)")
 
     @contextlib.contextmanager
     def rw(self):
@@ -410,7 +414,7 @@ def test_the_env_redirect_is_restored_after_the_run(tmp_path, monkeypatch):
 
 # --------------------------------------------------------------------------- report + alert
 
-def failing_report(*names, day="2026-11-03"):
+def failing_report_plain(*names, day="2026-11-03"):
     return {"generated_at": f"{day}T09:15:00+00:00", "failures": list(names), "status": "FAIL" if names else "PASS",
             "checks": [{"name": n, "status": "FAIL", "detail": f"{n} is broken"} for n in names] + [{"name": "ok", "status": "PASS", "detail": ""}]}
 
@@ -422,18 +426,87 @@ def orchestrators(tmp_path):
     return path
 
 
-def test_alert_is_sent_once_per_day_unless_the_failure_set_changes(tmp_path, orchestrators):
+def failing_report(*names, day="2026-11-03", **data):
+    """A report whose failing checks carry ``data`` (e.g. waiting=...), the numbers "materially worse" compares."""
+    report = failing_report_plain(*names, day=day)
+    for check in report["checks"]:
+        if check["status"] == probe.FAIL and data:
+            check["data"] = dict(data)
+    return report
+
+
+def alerts(out, orchestrators, *reports):
+    """Run each report through maybe_alert in order; returns the list of (sent, subject-or-None, body-or-None)."""
     sent: list[tuple] = []
-    send = lambda run, subject, body: sent.append((run, subject, body))  # noqa: E731
-    out = tmp_path / "health"
-    out.mkdir()
-    first = probe.maybe_alert(failing_report("a", "b"), out, orchestrators, sender=send)
-    assert first["sent"] and sent[0][:2] == ("run_fixture", "[MM-SALUD] 2 fallas")
-    assert not probe.maybe_alert(failing_report("b", "a"), out, orchestrators, sender=send)["sent"], "same set, same day"
-    assert probe.maybe_alert(failing_report("a", "b", "c"), out, orchestrators, sender=send)["sent"], "set changed"
-    assert probe.maybe_alert(failing_report("a", "b", "c", day="2026-11-04"), out, orchestrators, sender=send)["sent"], "next day"
-    assert len(sent) == 3
-    assert not probe.maybe_alert(failing_report(), out, orchestrators, sender=send)["sent"], "nothing failing"
+    results = []
+    for report in reports:
+        before = len(sent)
+        got = probe.maybe_alert(report, out, orchestrators, sender=lambda run, subject, body: sent.append((subject, body)))
+        results.append((got["sent"], *(sent[-1] if len(sent) > before else (None, None))))
+    return results
+
+
+def test_alert_fires_on_a_new_red_check_not_on_the_clock(tmp_path, orchestrators):
+    results = alerts(tmp_path, orchestrators,
+                     failing_report("a", "b"),
+                     failing_report("b", "a"),                    # same set, same day
+                     failing_report("a", "b", day="2026-11-04"),  # next day, nothing changed
+                     failing_report("a", "b", "c", day="2026-11-05"),  # c turned red
+                     failing_report("a", "b", "c", day="2026-11-06"))
+    assert [r[0] for r in results] == [True, False, False, True, False]
+    assert results[0][1] == "[MM-SALUD] 2 fallas" and results[3][1] == "[MM-SALUD] 3 fallas"
+    assert "c: fail" in results[3][2] and "[new]" in results[3][2]
+
+
+def test_a_check_that_stays_red_is_reminded_once_per_reminder_window(tmp_path, orchestrators):
+    days = ["2026-11-03", "2026-11-09", "2026-11-10", "2026-11-16", "2026-11-17"]  # window is 7 days
+    results = alerts(tmp_path, orchestrators, *[failing_report("a", day=d) for d in days])
+    assert [r[0] for r in results] == [True, False, True, False, True]
+    assert "reminder, still failing since 2026-11-03" in results[2][2]
+
+
+def test_a_red_check_that_gets_materially_worse_alerts_again(tmp_path, orchestrators):
+    results = alerts(tmp_path, orchestrators,
+                     failing_report("ingest.capture_queue", waiting=1000),
+                     failing_report("ingest.capture_queue", waiting=1200, day="2026-11-04"),  # +20 %: noise
+                     failing_report("ingest.capture_queue", waiting=1500, day="2026-11-05"),  # x1.5 of the last alert
+                     failing_report("ingest.capture_queue", waiting=900, day="2026-11-06"))   # better: quiet
+    assert [r[0] for r in results] == [True, False, True, False]
+    assert "worse than at the last alert" in results[2][2]
+
+
+def test_recovery_is_announced_once_and_a_later_relapse_alerts_again(tmp_path, orchestrators):
+    results = alerts(tmp_path, orchestrators,
+                     failing_report("a", "b"),
+                     failing_report("a", day="2026-11-04"),   # b recovered, a still red
+                     failing_report(day="2026-11-05"),        # everything recovered
+                     failing_report(day="2026-11-06"),        # still green: silence
+                     failing_report("a", day="2026-11-07"))   # relapse
+    assert [r[0] for r in results] == [True, True, True, False, True]
+    assert "b: pass — back to green" in results[1][2] and "a: fail" in results[1][2]
+    assert results[2][1] == "[MM-SALUD] recuperado" and "a: pass — back to green" in results[2][2]
+    assert "[new]" in results[4][2]
+
+
+def test_a_recovery_notice_keeps_the_voz_line_lint_clean_and_digit_free(tmp_path, orchestrators):
+    body = probe.alert_body(failing_report(), recovered=("a",))
+    voz = [line for line in body.splitlines() if line.startswith("voz:")][0]
+    assert not re.search(r"\d", voz) and voz.endswith(".")
+
+
+def test_the_old_alert_state_file_is_still_read(tmp_path, orchestrators):
+    (tmp_path / "alert-state.json").write_text(json.dumps({"utc_date": "2026-11-03", "failures": ["a", "b"]}), encoding="utf-8")
+    results = alerts(tmp_path, orchestrators,
+                     failing_report("a", "b", day="2026-11-04"),  # the old file already covers both
+                     failing_report("a", "b", "c", day="2026-11-05"))
+    assert [r[0] for r in results] == [False, True]
+    state = json.loads((tmp_path / "alert-state.json").read_text(encoding="utf-8"))
+    assert state["failures"] == ["a", "b", "c"] and set(state["checks"]) == {"a", "b", "c"}  # new shape, old keys kept
+
+
+def test_a_corrupt_alert_state_is_treated_as_empty(tmp_path, orchestrators):
+    (tmp_path / "alert-state.json").write_text("[1, 2", encoding="utf-8")
+    assert alerts(tmp_path, orchestrators, failing_report("a"))[0][0] is True
 
 
 def test_a_failed_send_is_retried_next_run_and_never_raises(tmp_path, orchestrators):
@@ -588,3 +661,180 @@ def test_main_leaves_global_logging_as_it_found_it(tmp_path, monkeypatch, orches
     with probe.quiet_info_logs():
         assert logging.root.manager.disable == logging.INFO
     assert logging.root.manager.disable == before
+
+
+# --------------------------------------------------------------------------- hooks.template_drift
+
+TEMPLATE_HOOK = 'import os\nROOT = "__MEMORYMASTER_PROJECT_ROOT__"\nDB = __MEMORYMASTER_DB_PATH_REPR__  # noqa\n\ndef run():\n    return os.path.join(ROOT, "x")\n'
+
+
+@pytest.fixture
+def hooks(tmp_path, monkeypatch):
+    """A tmp template dir with one synthetic template and an empty install dir per CLI."""
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "memorymaster-x.py").write_text(TEMPLATE_HOOK, encoding="utf-8")
+    monkeypatch.setattr(probe, "TEMPLATE_DIR", templates)
+    claude = tmp_path / "claude-hooks"
+    claude.mkdir()
+    return {"claude": claude, "allow": tmp_path / "hook-drift-allowlist.txt"}
+
+
+def drift(hooks):
+    (check,) = probe.check_hook_drift({"claude": hooks["claude"]}, hooks["allow"])
+    return check
+
+
+def test_a_placeholder_only_difference_is_not_drift(hooks):
+    installed = TEMPLATE_HOOK.replace("__MEMORYMASTER_PROJECT_ROOT__", "/opt/mm/x y").replace(
+        "__MEMORYMASTER_DB_PATH_REPR__", repr("/data/mm.db"))
+    (hooks["claude"] / "memorymaster-x.py").write_bytes(installed.replace("\n", "\r\n").encode())  # CRLF too
+    check = drift(hooks)
+    assert check["status"] == probe.PASS and check["data"]["matching"] == 1, check
+
+
+def test_a_logic_difference_is_drift_and_is_named_with_its_line_delta(hooks):
+    installed = TEMPLATE_HOOK.replace("__MEMORYMASTER_PROJECT_ROOT__", "/opt/mm").replace(
+        "__MEMORYMASTER_DB_PATH_REPR__", "'/d.db'").replace("os.path.join(ROOT", "os.path.join(DB")
+    (hooks["claude"] / "memorymaster-x.py").write_text(installed, encoding="utf-8")
+    check = drift(hooks)
+    assert check["status"] == probe.FAIL and "claude/memorymaster-x.py (+1/-1)" in check["detail"], check
+    assert "/opt/mm" not in check["detail"], "no machine path in the report"
+
+
+def test_an_allowlisted_hook_is_reported_as_customised_not_failed(hooks):
+    (hooks["claude"] / "memorymaster-x.py").write_text("print('operator edit')\n", encoding="utf-8")
+    assert drift(hooks)["status"] == probe.FAIL
+    hooks["allow"].write_text("# deliberate\nmemorymaster-x.py  # trailing note\n", encoding="utf-8")
+    check = drift(hooks)
+    assert check["status"] == probe.PASS and "customised by the operator: claude/memorymaster-x.py" in check["detail"], check
+    assert check["data"]["drifted"] == 0 and check["data"]["customised"] == 1
+
+
+def test_a_missing_allowlist_is_empty_and_a_template_with_no_installed_copy_is_a_note(hooks):
+    assert probe.read_hook_allowlist(hooks["allow"]) == set() and probe.read_hook_allowlist(None) == set()
+    check = drift(hooks)  # nothing installed at all
+    assert check["status"] == probe.PASS and check["data"]["not_installed"] == 1 and "note" in check["detail"]
+
+
+def test_every_real_template_rendered_by_its_installer_matches(tmp_path, monkeypatch):
+    """The comparison must understand what the real installers write: claude/codex hooks, the agy adapter, OpenCode."""
+    from memorymaster.surfaces import setup_agy_hooks, setup_hooks
+
+    templates = ROOT / "memorymaster" / "config_templates" / "hooks"
+    monkeypatch.setattr(probe, "TEMPLATE_DIR", templates)
+    claude, codex = tmp_path / "claude", tmp_path / "codex"
+    claude.mkdir()
+    codex.mkdir()
+    for template in templates.glob("*.py"):
+        rendered = setup_hooks.replace_placeholder(template.read_text(encoding="utf-8"), tmp_path / "proj root")
+        for target in (claude, codex):
+            (target / template.name).write_text(rendered, encoding="utf-8")
+    setup_agy_hooks.install_agy_hooks(gemini_config_dir=tmp_path / "gemini", project_root=tmp_path, db_path=tmp_path / "m.db")
+    for version in (1, 2):
+        setup_hooks.install_opencode_hooks(tmp_path / "opencode", version=version, project_root=tmp_path, python_exe="py")
+        dirs = {"claude": claude, "codex": codex, "agy": tmp_path / "gemini" / "config", "opencode": tmp_path / "opencode"}
+        (check,) = probe.check_hook_drift(dirs, None)
+        assert check["status"] == probe.PASS, (version, check["detail"])
+        assert check["data"]["not_installed"] == 0 and check["data"]["matching"] == 2 * len(list(templates.glob("*.py"))) + 3
+
+
+# --------------------------------------------------------------------------- dreaming.runs, steward.recency
+
+def add_runs(world, statuses, *, hours_ago=1.0, dry_run=0):
+    with edit(world.capture) as conn:
+        for i, status in enumerate(statuses):
+            conn.execute("INSERT INTO dream_runs VALUES (?,?,?,?,?,?,?,?,?)",
+                         (f"r{conn.execute('SELECT COUNT(*) FROM dream_runs').fetchone()[0]}-{i}", status, dry_run, "m", "m",
+                          iso(hours_ago + i / 100), iso(hours_ago), iso(hours_ago), "{}"))
+
+
+def runs(world):
+    (check,) = probe.check_dream_runs(world.capture, NOW, CFG)
+    return check
+
+
+def test_dreaming_runs_are_red_above_half_failed_and_green_at_or_below(world):
+    add_runs(world, ["ok", "ok", "partial", "failed"])
+    assert runs(world)["status"] == probe.PASS
+    add_runs(world, ["failed"])  # 2 of 5
+    assert runs(world)["status"] == probe.PASS
+    add_runs(world, ["failed", "failed"])  # 4 of 7
+    check = runs(world)
+    assert check["status"] == probe.FAIL and check["data"] == {"failed": 4, "total": 7, "failed_share": 0.57}, check
+
+
+def test_dreaming_runs_ignore_running_dry_and_out_of_window_runs(world):
+    add_runs(world, ["running"] * 5)
+    add_runs(world, ["failed"] * 5, dry_run=1)
+    add_runs(world, ["failed"] * 5, hours_ago=60)  # older than 48 h
+    add_runs(world, ["ok"])
+    check = runs(world)
+    assert check["status"] == probe.PASS and check["data"]["total"] == 1, check
+
+
+def test_no_dreaming_runs_at_all_is_not_a_failure_here(world):
+    assert runs(world)["status"] == probe.PASS  # scheduled_slots in operational_review owns "no runs"
+
+
+def test_an_unreadable_run_table_is_a_fail_not_a_crash(world):
+    with edit(world.capture) as conn:
+        conn.execute("DROP TABLE dream_runs")
+    out = probe._guard("dreaming.runs", probe.check_dream_runs, world.capture, NOW, CFG)
+    assert out[0]["status"] == probe.FAIL and "could not run" in out[0]["detail"]
+
+
+def finish(job="steward", hours_ago=1.0, **extra):
+    return json.dumps({"event": "job_finish", "ts": iso(hours_ago).replace("+00:00", "Z"), "job": job,
+                       "exit_code": 0, "outcome": "ok", **extra})
+
+
+def steward(tmp_path, *lines):
+    log = tmp_path / "steward.log"
+    log.write_text("\n".join(["[MemoryMaster] steward cycle: {}", *lines, "not json {"]) + "\n", encoding="utf-8")
+    (check,) = probe.check_steward_recency(log, NOW, CFG)
+    return check
+
+
+def test_steward_recency_is_green_with_a_recent_completed_cycle(tmp_path):
+    check = steward(tmp_path, finish(hours_ago=20), finish(hours_ago=5))
+    assert check["status"] == probe.PASS and check["data"]["age_h"] == 5.0, check
+
+
+def test_steward_recency_is_red_after_two_missed_schedule_slots(tmp_path):
+    assert steward(tmp_path, finish(hours_ago=13))["status"] == probe.FAIL  # schedule 6 h, bound 12 h
+    assert steward(tmp_path, finish(hours_ago=11))["status"] == probe.PASS
+
+
+def test_only_a_completed_steward_cycle_counts(tmp_path):
+    lines = [finish(hours_ago=1, exit_code=1, outcome="failed"), finish("dream", hours_ago=1),
+             finish(hours_ago=2, outcome="error"), json.dumps({"event": "job_start", "ts": iso(0.5), "job": "steward"})]
+    check = steward(tmp_path, *lines, finish(hours_ago=30))
+    assert check["status"] == probe.FAIL and check["data"]["age_h"] == 30.0, check
+
+
+def test_a_missing_steward_log_is_red(tmp_path):
+    (check,) = probe.check_steward_recency(tmp_path / "nope.log", NOW, CFG)
+    assert check["status"] == probe.FAIL and check["data"]["newest"] == "none"
+
+
+# --------------------------------------------------------------------------- G-6 composite scenario
+
+def test_the_probe_is_red_when_hooks_drifted_and_dreaming_fails_although_every_store_is_fresh(world, hooks):
+    """audit repro G-6: fresh stores, hooks not the templates, every dream run failing. It used to pass green."""
+    canaries = world.tmp / "c.json"
+    canaries.write_text(json.dumps({"canaries": []}), encoding="utf-8")
+    (hooks["claude"] / "memorymaster-x.py").write_text("print('stale')\n", encoding="utf-8")
+    add_runs(world, ["failed"] * 10)
+    log = world.tmp / "steward.log"
+    log.write_text(finish(hours_ago=1) + "\n", encoding="utf-8")
+
+    def run(**extra):
+        return probe.run_probe(world.db, workspace=world.tmp, canaries_path=canaries, transcripts_db=world.transcripts,
+                               capture_db=world.capture, now=NOW, cfg=CFG, recallers={}, **extra)
+
+    report = run(hook_dirs={"claude": hooks["claude"]}, hook_allowlist=hooks["allow"], steward_log=log)
+    assert report["status"] == probe.FAIL
+    assert {"dreaming.runs", "hooks.template_drift"} <= set(report["failures"]), report["failures"]
+    assert "steward.recency" not in report["failures"]
+    assert not {"hooks.template_drift", "steward.recency"} & {c["name"] for c in run()["checks"]}, "opt-in: no dirs, no read"

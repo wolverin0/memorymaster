@@ -9,8 +9,9 @@ Read-only by construction: the authoritative DB is opened ``mode=ro`` + ``query_
 read-only ``MemoryService`` and its access spool, session-seen and metrics files are redirected to a
 throwaway directory, so a canary query can never raise a claim's ``access_count`` (self-reinforcement).
 
-Report: ``<out>/<UTC date>.json`` and ``<out>/latest.json``. Exit 1 on any FAIL. On FAIL one Orca message is
-sent to the Fleet run, at most once per UTC day unless the set of failing checks changes (``--no-alert`` off).
+Report: ``<out>/<UTC date>.json`` and ``<out>/latest.json``. Exit 1 on any FAIL. One Orca message goes to the
+Fleet run when the state CHANGES: a check turns red, a red one gets materially worse, one recovers, or (at most
+once per ``alert_reminder_days``) a check stays red (``--no-alert`` off).
 
     python scripts/memory_health_probe.py --db memorymaster.db --workspace . [--out DIR] [--no-alert]
 """
@@ -38,6 +39,8 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:  # `python scripts/x.py` puts scripts/, not the repo, on sys.path
     sys.path.insert(0, str(REPO))
 
+from scripts.check_hook_template_drift import TEMPLATE_DIR, compare_hook  # noqa: E402
+
 # Every tunable lives here. Ages are hours.
 CONFIG: dict = {
     "verbatim_max_age_h": 48,
@@ -59,6 +62,10 @@ CONFIG: dict = {
     "core_freshness_min": 1e-3,  # median freshness_score of core confirmed claims the canaries return
     "services": {"mcp_http": "http://127.0.0.1:8766/healthz"},
     "service_timeout_s": 4.0,
+    "dream_runs_window_h": 48,  # red when more than half of the finished dreaming runs in this window failed
+    "steward_max_age_h": 12,  # the steward is scheduled every 6 h: red after two missed cycles
+    "alert_reminder_days": 7,  # a check that stays red is re-announced at most this often
+    "alert_worse_factor": 1.5,  # a red check is "materially worse" at this multiple of its level at the last alert
 }
 
 # One constant sentence: plain Spanish, past tense, no digits or ids (checked by wezbridge lint-voz-line).
@@ -354,15 +361,114 @@ def check_dense(db: Path, now: datetime, cfg: dict) -> list[dict]:
     ]
 
 
+# --------------------------------------------------------------------------- 6. hooks, dreaming runs, steward
+
+def hook_dirs_default() -> dict[str, Path]:
+    home = Path.home()
+    return {"claude": home / ".claude" / "hooks", "codex": home / ".codex" / "hooks",
+            "agy": home / ".gemini" / "config", "opencode": home / ".config" / "opencode"}
+
+
+def _hook_candidates(dirs: dict[str, Path]):
+    """(label, templates, installed path): every hook an installer can put in each directory.
+
+    Several templates for one file means the installer picks one (the OpenCode plugin has two generations)."""
+    templates = Path(TEMPLATE_DIR)
+    for cli in ("claude", "codex"):
+        if cli in dirs:
+            for template in sorted(templates.glob("*.py")):
+                yield f"{cli}/{template.name}", [template], Path(dirs[cli]) / template.name
+    if "agy" in dirs:
+        yield "agy/memorymaster-agy.py", [templates / "memorymaster-agy.py"], Path(dirs["agy"]) / "memorymaster-agy.py"
+    if "opencode" in dirs:
+        opencode, base = templates.parent / "opencode", Path(dirs["opencode"])
+        yield "opencode/runtime.mjs", [opencode / "runtime.mjs"], base / "memorymaster" / "runtime.mjs"
+        yield ("opencode/memorymaster.js", [opencode / "plugin-v2.mjs", opencode / "plugin-v1.mjs"],
+               base / "plugins" / "memorymaster.js")
+
+
+def read_hook_allowlist(path: Path | None) -> set[str]:
+    """Operator-owned list of deliberately customised hooks: one file name (or ``cli/name``) per line, ``#`` comments."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines() if path else []
+    except OSError:  # missing file = empty list
+        return set()
+    return {line.split("#", 1)[0].strip() for line in lines if line.split("#", 1)[0].strip()}
+
+
+def check_hook_drift(dirs: dict[str, Path], allowlist_path: Path | None) -> list[dict]:
+    """Installed hooks must equal their template, placeholders and line endings aside (a stale hook ran for weeks unseen)."""
+    allowed = read_hook_allowlist(allowlist_path)
+    drifted, customised, same, absent = [], [], 0, 0
+    for label, templates, installed in _hook_candidates(dirs):
+        if not installed.is_file():
+            absent += 1  # a template with no installed copy is a note, not a failure
+            continue
+        text = installed.read_text(encoding="utf-8", errors="replace")
+        deltas = [compare_hook(t.read_text(encoding="utf-8"), text) for t in templates]
+        if None in deltas:
+            same += 1
+            continue
+        entry = f"{label} (+{deltas[0][0]}/-{deltas[0][1]})"
+        (customised if label in allowed or Path(label).name in allowed else drifted).append(entry)
+    detail = f"{same} installed hooks match their template; {absent} templates not installed (note)"
+    if customised:
+        detail += f"; customised by the operator: {', '.join(customised)}"
+    if drifted:
+        detail = f"installed hooks differ from the templates: {', '.join(drifted)}; " + detail
+    return [_result("hooks.template_drift", not drifted, detail,
+                    drifted=len(drifted), customised=len(customised), matching=same, not_installed=absent)]
+
+
+def check_dream_runs(capture_db: Path, now: datetime, cfg: dict) -> list[dict]:
+    """Red when more than half of the finished (non-dry) dreaming runs in the window failed."""
+    cutoff = now.timestamp() - cfg["dream_runs_window_h"] * 3600
+    with contextlib.closing(ro_connect(capture_db)) as conn:
+        rows = conn.execute("SELECT status, started_at FROM dream_runs WHERE dry_run=0 ORDER BY started_at DESC LIMIT 500").fetchall()
+    finished = [status for status, started in rows if status != "running" and (parse_ts(started) or now).timestamp() >= cutoff]
+    failed = finished.count("failed")
+    return [_result("dreaming.runs", failed * 2 <= len(finished),
+                    f"{failed} of {len(finished)} dreaming runs failed in the last {cfg['dream_runs_window_h']}h (red above half)",
+                    failed=failed, total=len(finished), failed_share=round(failed / len(finished), 2) if finished else 0.0)]
+
+
+def check_steward_recency(log: Path, now: datetime, cfg: dict) -> list[dict]:
+    """Newest completed steward cycle: the scheduled-task wrapper logs one ``job_finish`` per cycle (surfaces/scheduled_task.py)."""
+    newest = None
+    try:
+        with Path(log).open(encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if '"job_finish"' not in line or '"steward"' not in line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                stamp = parse_ts(event.get("ts")) if isinstance(event, dict) else None
+                if (stamp and event.get("event") == "job_finish" and event.get("job") == "steward"
+                        and not event.get("exit_code") and event.get("outcome") not in ("failed", "error")
+                        and (newest is None or stamp > newest)):
+                    newest = stamp
+    except OSError:
+        pass  # no log: no completed cycle on record, reported by _fresh as "none"
+    return [_fresh("steward.recency", newest, cfg["steward_max_age_h"], now, "last completed steward cycle")]
+
+
 # --------------------------------------------------------------------------- orchestration
 
 def run_probe(db: Path, *, workspace: Path, canaries_path: Path, transcripts_db: Path, capture_db: Path,
               verbatim_health: Path | None = None, now: datetime | None = None, cfg: dict | None = None,
-              recallers: dict | None = None) -> dict:
+              recallers: dict | None = None, hook_dirs: dict[str, Path] | None = None,
+              hook_allowlist: Path | None = None, steward_log: Path | None = None) -> dict:
     cfg = cfg or CONFIG
     now = now or datetime.now(timezone.utc)
     canaries = json.loads(Path(canaries_path).read_text(encoding="utf-8"))["canaries"]
     checks = _guard("ingest", check_ingest, db, transcripts_db, capture_db, now, cfg)
+    checks += _guard("dreaming.runs", check_dream_runs, capture_db, now, cfg)
+    if steward_log is not None:
+        checks += _guard("steward.recency", check_steward_recency, steward_log, now, cfg)
+    if hook_dirs is not None:  # opt-in: a caller that passes no directories never reads the machine's real hooks
+        checks += _guard("hooks.template_drift", check_hook_drift, hook_dirs, hook_allowlist)
     with tempfile.TemporaryDirectory(prefix="mm-health-") as tmp, isolated_recall_env(Path(tmp)):
         recallers = recallers or {"hook": lambda: hook_recaller(db, workspace), "mcp": lambda: mcp_recaller(db, workspace)}
         canary_checks, mcp_hits = check_canaries(canaries, recallers, cfg)
@@ -397,16 +503,25 @@ def write_report(report: dict, out_dir: Path) -> Path:
 
 # --------------------------------------------------------------------------- alert
 
-def alert_body(report: dict) -> str:
+RECOVERED_VOZ = "Terminó la sonda diaria de salud y las fallas que había avisado ya se resolvieron."
+
+
+def alert_body(report: dict, tags: dict[str, str] | None = None, recovered: tuple[str, ...] = ()) -> str:
+    """``tags`` annotates a failing check (new / worse / reminder); ``recovered`` names checks that turned green."""
+    tags = tags or {}
     lines = ["criteria:"]
     for check in report["checks"]:
         if check["status"] == FAIL:
-            lines.append(f"  {check['name']}: fail — {check['detail']}")
+            note = f" [{tags[check['name']]}]" if check["name"] in tags else ""
+            lines.append(f"  {check['name']}: fail — {check['detail']}{note}")
+    lines += [f"  {name}: pass — back to green" for name in recovered]
     passed = sum(1 for c in report["checks"] if c["status"] == PASS)
+    healthy = not report["failures"]
     lines += [f"  other checks: pass — {passed} of {len(report['checks'])} passed",
               "files_changed: none",
-              "next_action: read the latest health report in the MemoryMaster checkpoints folder and fix the failing stores",
-              f"voz: {VOZ}"]
+              "next_action: " + ("none, every check is green again" if healthy else
+                                 "read the latest health report in the MemoryMaster checkpoints folder and fix the failing stores"),
+              f"voz: {RECOVERED_VOZ if healthy else VOZ}"]
     return "\n".join(lines)
 
 
@@ -440,23 +555,70 @@ def send_orca(run_id: str, subject: str, body: str) -> None:
         raise RuntimeError(f"orca exit {done.returncode}: {why}")
 
 
-def maybe_alert(report: dict, out_dir: Path, orchestrators: Path, *, sender=None) -> dict:
-    """One alert per UTC day unless the failing set changes. State is written only after a delivered send."""
+# Severity of a red check, for "materially worse": the first of these numbers a check reports.
+SEVERITY_KEYS = ("waiting", "drifted", "failed_share", "age_h")
+
+
+def _severity(check: dict | None) -> float | None:
+    data = (check or {}).get("data") or {}
+    for key in SEVERITY_KEYS:
+        value = data.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
+def _load_alert_state(path: Path) -> dict[str, dict]:
+    """name -> {"on": date of the last alert naming it, "severity": its level then}. Reads the old
+    ``{"utc_date", "failures"}`` file too (its dates carry over, its severities are unknown)."""
+    with contextlib.suppress(OSError, ValueError, AttributeError, TypeError):
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(state.get("checks"), dict):
+            return {name: dict(entry) for name, entry in state["checks"].items() if isinstance(entry, dict)}
+        return {name: {"on": state.get("utc_date"), "severity": None} for name in state.get("failures", [])}
+    return {}
+
+
+def _days_since(date: object, day: str) -> float:
+    try:
+        return (datetime.strptime(day, "%Y-%m-%d") - datetime.strptime(str(date), "%Y-%m-%d")).days
+    except ValueError:
+        return float("inf")  # an unreadable date counts as long ago: one reminder, then the state is rewritten
+
+
+def maybe_alert(report: dict, out_dir: Path, orchestrators: Path, *, sender=None, cfg: dict | None = None) -> dict:
+    """Alert on a state CHANGE, not on a schedule: a check newly red, a red check materially worse than at its
+    last alert, a check recovered, or a reminder for one that stayed red for ``alert_reminder_days``. State is
+    written only after a delivered send."""
+    cfg = cfg or CONFIG
     failures = sorted(report["failures"])
-    if not failures:
-        return {"sent": False, "reason": "no failures"}
     day = parse_ts(report["generated_at"]).astimezone(timezone.utc).strftime("%Y-%m-%d")
     state_path = out_dir / "alert-state.json"
-    with contextlib.suppress(OSError, ValueError):
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        if state.get("utc_date") == day and state.get("failures") == failures:
-            return {"sent": False, "reason": "already alerted today for this failure set"}
+    previous = _load_alert_state(state_path)
+    severity = {c["name"]: _severity(c) for c in report["checks"]}
+    tags: dict[str, str] = {}
+    for name in failures:
+        before = previous.get(name)
+        if before is None:
+            tags[name] = "new"
+            continue
+        old, now_level = before.get("severity"), severity.get(name)
+        if old is not None and now_level is not None and now_level > old and now_level >= old * cfg["alert_worse_factor"]:
+            tags[name] = "worse than at the last alert"
+        elif _days_since(before.get("on"), day) >= cfg["alert_reminder_days"]:
+            tags[name] = f"reminder, still failing since {before.get('on')}"
+    recovered = tuple(sorted(name for name in previous if name not in failures))
+    if not tags and not recovered:
+        return {"sent": False, "reason": "no change since the last alert" if failures else "no failures"}
     try:
         run_id = json.loads(Path(orchestrators).read_text(encoding="utf-8"))["fleet"]["run_id"]
-        (sender or send_orca)(run_id, f"[MM-SALUD] {len(failures)} fallas", alert_body(report))
+        subject = f"[MM-SALUD] {len(failures)} fallas" if failures else "[MM-SALUD] recuperado"
+        (sender or send_orca)(run_id, subject, alert_body(report, tags, recovered))
     except Exception as exc:  # noqa: BLE001 - a failed alert must not hide the report; retried next run
         return {"sent": False, "reason": f"send failed: {type(exc).__name__}: {str(exc)[:160]}"}
-    state_path.write_text(json.dumps({"utc_date": day, "failures": failures}), encoding="utf-8")
+    state_path.write_text(json.dumps({"utc_date": day, "failures": failures,
+                                      "checks": {n: {"on": day, "severity": severity.get(n)} for n in failures}}),
+                          encoding="utf-8")
     return {"sent": True, "reason": "delivered"}
 
 
@@ -482,6 +644,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--capture-db", default=str(home / "capture-control.db"))
     parser.add_argument("--verbatim-health", default=str(home / "hook_state" / "verbatim-health.json"))
     parser.add_argument("--out", default=str(home / "checkpoints" / "health"))
+    parser.add_argument("--steward-log", default=str(home / "logs" / "steward.log"))
+    parser.add_argument("--hook-allowlist", default=str(home / "hook-drift-allowlist.txt"),
+                        help="operator-owned: one deliberately customised hook file name per line")
     parser.add_argument("--orchestrators", default=str(REPO.parent / "_intel" / "orchestrators.json"))
     parser.add_argument("--now", help="ISO timestamp override (tests)")
     parser.add_argument("--no-alert", action="store_true")
@@ -490,7 +655,9 @@ def main(argv: list[str] | None = None) -> int:
     with quiet_info_logs():
         report = run_probe(Path(args.db), workspace=Path(args.workspace).resolve(), canaries_path=Path(args.canaries),
                            transcripts_db=Path(args.transcripts_db), capture_db=Path(args.capture_db),
-                           verbatim_health=Path(args.verbatim_health), now=parse_ts(args.now) if args.now else None)
+                           verbatim_health=Path(args.verbatim_health), now=parse_ts(args.now) if args.now else None,
+                           hook_dirs=hook_dirs_default(), hook_allowlist=Path(args.hook_allowlist),
+                           steward_log=Path(args.steward_log))
     out_dir = Path(args.out)
     report["alert"] = {"sent": False, "reason": "--no-alert" if args.no_alert else "pending"}
     write_report(report, out_dir)  # first: it creates out_dir, and the report must exist even if the alert fails

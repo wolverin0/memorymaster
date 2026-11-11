@@ -18,10 +18,12 @@ Usage::
 Exits 0 if no drift, 1 if drift found. Intended to be wired into CI or
 run as a pre-flight check before ``memorymaster-setup-hooks`` runs.
 
-Placeholder handling: the template uses ``__MEMORYMASTER_PROJECT_ROOT__``
-as a sentinel that setup_hooks substitutes with the real root. We
-substitute it with the current repo root before diffing so the path-only
-difference does not count as drift.
+Placeholder handling: templates carry ``__MEMORYMASTER_*__`` sentinels
+(project root, db path, python executable) that the installers replace with
+machine-specific values. ``compare_hook`` treats each sentinel as "any text on
+that line", so only a real logic difference counts as drift; line endings and
+the sha stamp setup_hooks appends to the recall hook are ignored too. The
+health probe imports ``compare_hook`` for its ``hooks.template_drift`` check.
 """
 
 from __future__ import annotations
@@ -37,21 +39,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE_DIR = REPO_ROOT / "memorymaster" / "config_templates" / "hooks"
 INSTALL_DIR = Path(os.path.expanduser("~")) / ".claude" / "hooks"
-PLACEHOLDER = "__MEMORYMASTER_PROJECT_ROOT__"
+PLACEHOLDER_RE = re.compile(r"__MEMORYMASTER_[A-Z0-9_]+__")
+_STAMP_RE = re.compile(r"^# memorymaster-template-sha256: .*$", re.M)
 
 
-def _normalize_template(text: str, project_root: str) -> str:
-    """Replace template placeholders so content-diff ignores install-time paths.
+def _norm(text: str) -> str:
+    return _STAMP_RE.sub("", text.replace("\r\n", "\n").replace("\r", "\n")).rstrip("\n")
 
-    The sync script writes templates as ``"__MEMORYMASTER_PROJECT_ROOT__"``
-    (string literal). setup_hooks substitutes the placeholder with a raw
-    string ``r"<project_root>"``. So for the checker, matching installed
-    copies means turning the string literal into the same raw-string form
-    with *single* backslashes — never double-escape.
-    """
-    out = text.replace(f'"{PLACEHOLDER}"', f'r"{project_root}"')
-    out = out.replace(PLACEHOLDER, project_root)
-    return out
+
+def _template_pattern(template_text: str) -> re.Pattern[str]:
+    """The template as a regex: literal text, every placeholder a same-line wildcard."""
+    return re.compile("[^\n]*?".join(map(re.escape, PLACEHOLDER_RE.split(template_text))))
 
 
 def _read(path: Path) -> str:
@@ -71,10 +69,23 @@ def _diff_stat(a: list[str], b: list[str]) -> tuple[int, int]:
     return added, removed
 
 
+def compare_hook(template_text: str, installed_text: str) -> tuple[int, int] | None:
+    """None when the installed hook is the template (placeholders, line endings aside), else (added, removed)."""
+    template, installed = _norm(template_text), _norm(installed_text)
+    if _template_pattern(template).fullmatch(installed):
+        return None
+    installed_lines = installed.split("\n")
+    template_lines = []
+    for line in template.split("\n"):
+        if PLACEHOLDER_RE.search(line):  # a placeholder line the installed copy satisfies is not a delta
+            pattern = _template_pattern(line)
+            line = next((i for i in installed_lines if pattern.fullmatch(i)), line)
+        template_lines.append(line)
+    return _diff_stat(template_lines, installed_lines)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--project-root", default=str(REPO_ROOT),
-                    help=f"Project root used to resolve the template placeholder. Default: {REPO_ROOT}")
     ap.add_argument("--verbose", "-v", action="store_true", help="Print full diffs, not just stats")
     args = ap.parse_args()
 
@@ -94,15 +105,14 @@ def main() -> int:
     both = sorted(set(tpl_files) & set(inst_files))
 
     for name in both:
-        tpl_text = _normalize_template(_read(tpl_files[name]), args.project_root)
-        inst_text = _read(inst_files[name])
-        if tpl_text == inst_text:
+        tpl_text, inst_text = _read(tpl_files[name]), _read(inst_files[name])
+        delta = compare_hook(tpl_text, inst_text)
+        if delta is None:
             continue
-        tpl_lines = tpl_text.splitlines(keepends=True)
-        inst_lines = inst_text.splitlines(keepends=True)
-        added, removed = _diff_stat(tpl_lines, inst_lines)
-        drifted.append((name, added, removed))
+        drifted.append((name, *delta))
         if args.verbose:
+            tpl_lines = tpl_text.splitlines(keepends=True)
+            inst_lines = inst_text.splitlines(keepends=True)
             print(f"\n=== diff template -> installed: {name} ===")
             sys.stdout.writelines(difflib.unified_diff(
                 tpl_lines, inst_lines,
