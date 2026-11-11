@@ -197,7 +197,10 @@ def dedupe_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.executescript(
         """
-        CREATE TABLE claims (id INTEGER PRIMARY KEY, text TEXT, scope TEXT, status TEXT);
+        CREATE TABLE claims (id INTEGER PRIMARY KEY, text TEXT, scope TEXT, status TEXT,
+          supersedes_claim_id INTEGER, tenant_id TEXT, visibility TEXT DEFAULT 'public');
+        CREATE TABLE claim_links (source_id INTEGER, target_id INTEGER, link_type TEXT);
+        CREATE TABLE events (id INTEGER PRIMARY KEY, claim_id INTEGER, event_type TEXT, details TEXT, payload_json TEXT);
         CREATE VIRTUAL TABLE claims_fts USING fts5(text, content='claims', content_rowid='id');
         CREATE TRIGGER ai AFTER INSERT ON claims BEGIN
           INSERT INTO claims_fts(rowid, text) VALUES (new.id, new.text); END;
@@ -235,6 +238,10 @@ def test_dedupe_still_matches_confirmed_canonical(dedupe_conn):
     dedupe_conn.execute(
         "INSERT INTO claims (id, text, scope, status) VALUES (11, ?, 'project:x', 'confirmed')",
         (text,),
+    )
+    # the correction guard reads the candidate's own row (always present in production)
+    dedupe_conn.execute(
+        "INSERT INTO claims (id, text, scope, status) VALUES (99, ?, 'project:x', 'candidate')", (text,)
     )
 
     decision = candidate_dedupe.find_near_duplicate(
