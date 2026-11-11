@@ -127,15 +127,15 @@ def test_receipts_explain_every_omitted_id(world) -> None:
     assert report["turns_with_omissions"] == 4 and report["share_omissions_explained"] == 1.0
 
 
-def test_byte_budget_and_slot_cap_are_named_by_the_packer(world) -> None:
+def test_byte_budget_and_slot_cap_are_named_for_the_rows_left_out(world) -> None:
     ids = [world.claim(f"The zorblax cache invalidation strategy {n} is documented here {LONG}") for n in range(3)]
     rows = [{"claim": world.service.store.get_claim(cid, include_citations=False)} for cid in ids]
-    omitted: dict[int, str] = {}
-    _, rendered = context_hook._render_recall_lines(rows, budget=10, omitted=omitted)
-    assert rendered == [] and omitted == dict.fromkeys(ids, "byte_budget")
-    omitted = {}
-    _, rendered = context_hook._render_recall_lines(rows, budget=2000, limit=1, omitted=omitted)
-    assert len(rendered) == 1 and omitted == dict.fromkeys(ids[1:], "slot_cap")
+    _, rendered = context_hook._render_recall_lines(rows, budget=10)
+    assert rendered == []
+    assert context_hook._omission_reasons(rows, rendered, None) == dict.fromkeys(ids, "byte_budget")
+    _, rendered = context_hook._render_recall_lines(rows, budget=2000, limit=1)
+    assert len(rendered) == 1
+    assert context_hook._omission_reasons(rows, rendered, 1) == dict.fromkeys(ids[1:], "slot_cap")
 
 
 def test_receipts_and_the_staged_turn_carry_no_claim_or_prompt_text(world, tmp_path) -> None:
@@ -322,3 +322,20 @@ def test_codex_write_failure_does_not_suppress_an_identical_retry(world, monkeyp
     assert hook_policy.seen_ids("cxf-1") == frozenset() and world.spooled() == []
     assert world.tag(made) in world.hook.codex(ASK, "cxf-1"), "the identical retry was suppressed for 300 s"
     assert hook_policy.seen_ids("cxf-1") == frozenset({made})
+
+
+def test_the_seen_ids_a_client_sends_are_bounded_and_real_ints(world) -> None:
+    sent = [*range(300), True, "7", 3.0, None]  # a bool is an int in Python and is no claim id
+    seen = context_hook._session_seen({"session_id": "cap-1", "seen_ids": sent})
+    assert seen == frozenset(range(104, 300)) and len(seen) <= hook_policy.SEEN_MAX_IDS
+    assert context_hook._session_seen({"session_id": "cap-1", "seen_ids": "nope"}) == frozenset()
+
+
+def test_a_tilde_suffixed_tag_still_resolves_to_its_claim(world) -> None:
+    db = str(world.service.store.db_path)
+    made = world.claim("The zorblax cache invalidation strategy is the pelican strategy")
+    human_id = world.tag(made)[1:-1]
+    receipt = delivery.confirm_turn({"session_id": "tilde-1", hook_policy.DEFER_KEY: "x1"}, "claude",
+                                    emitted=f"- [{human_id}~2] a claim", query=ASK, db_path=db)
+    assert receipt["turn"] == "missing" and receipt["emitted"] == [made]
+    assert hook_policy.seen_ids("tilde-1") == frozenset({made})

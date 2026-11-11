@@ -150,7 +150,7 @@ def _ids(values) -> str:
     return ",".join(str(v) for v in values) or "-"
 
 
-_BULLET_TAG = re.compile(r"^- \[(mm-[0-9A-Za-z.]+(?:~\d+)?)\]", re.MULTILINE)
+_BULLET_TAG = re.compile(r"^- \[(mm-[0-9A-Za-z.]+)(?:~\d+)?\]", re.MULTILINE)  # the ~N suffix is not part of the stored id
 
 
 def defer_payload(data: dict) -> dict:

@@ -2285,7 +2285,9 @@ def _session_seen(hook_data: dict | None) -> frozenset[int]:
     # The adapter also sends the ids ITS state dir holds (T-2275): the staged turn and the seen set are
     # confirmed hook-side, so a server resolving another state dir must not re-inject them.
     sent = hook_data.get("seen_ids")
-    extra = frozenset(i for i in sent if isinstance(i, int)) if isinstance(sent, list) else frozenset()
+    # bounded and typed: client input (a bool is an int in Python, and is not a claim id)
+    extra = (frozenset(i for i in sent[-hook_policy.SEEN_MAX_IDS:] if type(i) is int)
+             if isinstance(sent, list) else frozenset())
     return hook_policy.seen_ids(session) | extra
 
 
@@ -2299,6 +2301,25 @@ RECEIPT_SELECTED_MAX = 12  # ids a delivery receipt lists as "selected"; a recei
 
 def _claim_ids(rows: list[dict]) -> list[int]:
     return [cid for row in rows if isinstance(cid := getattr(row.get("claim"), "id", None), int)]
+
+
+def _omission_reasons(ranked: list[dict], rendered_rows: list[dict], limit: int | None) -> dict[int, str]:
+    """Why each ranked row was not packed, derived from the packed set so ``_render_recall_lines`` keeps its
+    signature (``scripts/eval_recall_journey.py`` wraps it): packing is in order, so a row met after ``limit``
+    packed ones hit the slot cap, any earlier one did not fit the byte budget."""
+    packed = set(_claim_ids(rendered_rows))
+    reasons: dict[int, str] = {}
+    packed_so_far = 0
+    for row in ranked:
+        claim = row.get("claim")
+        cid = getattr(claim, "id", None)
+        if not hasattr(claim, "text") or not isinstance(cid, int):
+            continue
+        if cid in packed:
+            packed_so_far += 1
+        else:
+            reasons[cid] = "slot_cap" if limit is not None and packed_so_far >= limit else "byte_budget"
+    return reasons
 
 
 def _stage_turn(hook_data: dict, svc, offered: list[int], seen: frozenset[int], omitted: dict[int, str],
@@ -2339,8 +2360,7 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
         limit = hook_policy.max_claims()
     # Build output — top claims within budget
     stage_start = time.perf_counter()
-    omitted: dict[int, str] = {}
-    lines, rendered_rows = _render_recall_lines(ranked, budget, limit=limit, omitted=omitted)
+    lines, rendered_rows = _render_recall_lines(ranked, budget, limit=limit)
     if stages is not None:
         stages["render_ms"] = _stage_ms(stage_start)
     # S2 RECALL (Jev, 4.9.0): only the prompt hook opts in by passing its
@@ -2361,7 +2381,7 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
         # emitted (recall.delivery.confirm_turn); a failed write or a truncation leaves the claim retryable.
         if rendered_rows:
             svc._emit_recall_telemetry()  # a query was served; the per-claim access waits for the emission
-        _stage_turn(hook_data, svc, offered, seen, omitted, rendered_rows)
+        _stage_turn(hook_data, svc, offered, seen, _omission_reasons(ranked, rendered_rows, limit), rendered_rows)
         if stages is not None:
             stages["remember_ms"] = _stage_ms(stage_start)
     else:
@@ -2487,35 +2507,28 @@ def _recall_chunk(claim, labels: tuple[str, ...] = ()) -> str:
     return f"- {text}"
 
 
-def _render_recall_lines(rows, budget: int, labels=None, limit: int | None = None,
-                         omitted: dict[int, str] | None = None) -> tuple[list[str], list[dict]]:
+def _render_recall_lines(rows, budget: int, labels=None, limit: int | None = None) -> tuple[list[str], list[dict]]:
     """Pack complete bullets, counting framing in the four-character estimate.
 
     A claim that cannot fit must not hide later, smaller claims. Returning an
     ID for a silently truncated claim makes recall evaluation and exposure
     receipts misleading, so each included claim retains its full text. ``limit``
-    caps the number of claims (the prompt hook injects very few). When ``omitted`` is a dict it receives
-    ``{claim id: "slot_cap" | "byte_budget"}`` for each row left out (delivery receipts, T-2275).
+    caps the number of claims (the prompt hook injects very few).
     """
     lines = list(RECALL_HEADER)
     rendered_rows: list[dict] = []
     chars_used = len("\n".join(lines))
     char_budget = max(0, budget) * 4
     for row in rows:
+        if limit is not None and len(rendered_rows) >= limit:
+            break
         claim = row.get("claim")
         if not hasattr(claim, "text"):
-            continue
-        if limit is not None and len(rendered_rows) >= limit:
-            if omitted is None:
-                break
-            omitted.setdefault(getattr(claim, "id", None), "slot_cap")
             continue
         flags = labels.get(getattr(claim, "id", None), ()) if labels else ()
         chunk = _recall_chunk(claim, flags)
         chunk_chars = len(chunk) + 1  # join separator, including the first bullet
         if chars_used + chunk_chars > char_budget:
-            if omitted is not None:
-                omitted.setdefault(getattr(claim, "id", None), "byte_budget")
             continue
         lines.append(chunk)
         rendered_rows.append(row)
