@@ -481,6 +481,9 @@ _PAD = "for the zorblax billing exporter service in the staging environment as a
         (f"The legacy export is not used {_PAD}", f"The legacy export is used {_PAD}", "negation-differs"),
         (f"The legacy export isn't used {_PAD}", f"The legacy export is used {_PAD}", "candidate-adds-tokens"),
         (f"The primary host is alpha {_PAD}", f"The primary host is bravo {_PAD}", "candidate-adds-tokens"),
+        (f"The build runs on runner-a after the 2026 migration {_PAD}", f"The build runs on runner-b after the 2026 migration {_PAD}", "candidate-adds-tokens"),
+        (f"The chosen option is plan A {_PAD}", f"The chosen option is plan B {_PAD}", "candidate-adds-tokens"),
+        (f"The coordinator is node x {_PAD}", f"The coordinator is node y {_PAD}", "candidate-adds-tokens"),
         (f"The offset is 5 minutes {_PAD}", f"The offset is -5 minutes {_PAD}", "value-tokens-differ"),
         (
             f"The primary listens on 8010 and the replica on 9413 {_PAD}",
