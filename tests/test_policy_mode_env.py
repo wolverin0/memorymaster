@@ -11,6 +11,8 @@ for the full story.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 

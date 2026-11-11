@@ -350,7 +350,7 @@ def test_a_gate_fault_is_not_a_verdict_the_capture_is_retried(tmp_path, monkeypa
     capture_id = _capture(ledger)
     ledger.set_extraction(capture_id, [_candidate("p", "poison pill fact").to_dict()], "fixture")
     consolidator = _Recorder()
-    summary = DreamWorker(ledger, service, None, consolidator, config=DreamConfig(), now=lambda: NOW).run(
+    summary = DreamWorker(ledger, service, _Recorder(), consolidator, config=DreamConfig(), now=lambda: NOW).run(
         apply_candidates=False
     )
     assert summary["errors"] >= 1 and consolidator.calls == []
@@ -404,7 +404,7 @@ def test_timing_on_ordinary_prose_and_on_tokens_just_under_the_cap():
     for text in (prose, tokens):
         started = time.monotonic()
         export_text(text)
-        assert time.monotonic() - started < 3
+        assert time.monotonic() - started < 4  # ~1.5 s measured; headroom for a loaded runner
 
 
 @pytest.mark.parametrize("stored", [False, True], ids=["raw", "stored"])

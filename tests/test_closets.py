@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
+import pytest
 
 from memorymaster.knowledge.closets import (
     ensure_closets_schema,

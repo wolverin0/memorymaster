@@ -6,7 +6,9 @@ S2: claim_edges missing table now logs WARNING once via walk_neighbors.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
+import pytest
 
 import memorymaster.recall.claim_edges as claim_edges_module
 

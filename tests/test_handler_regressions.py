@@ -9,6 +9,8 @@ invoke each handler with arguments that would trigger the original bug.
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+import sys
 
 import pytest
 

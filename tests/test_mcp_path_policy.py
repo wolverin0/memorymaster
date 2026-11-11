@@ -9,10 +9,12 @@ Two layers:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Iterator
 
 import pytest
 
+from memorymaster.surfaces import mcp_path_policy
 from memorymaster.surfaces.mcp_path_policy import (
     ENV_ADMIN_MODE,
     ENV_DB_ALLOWLIST,

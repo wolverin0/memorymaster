@@ -10,12 +10,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import time
 from typing import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from memorymaster.core import webhook
 from memorymaster.core.webhook import (
     REPLAY_WINDOW_SECONDS,
     SIGNATURE_HEADER,

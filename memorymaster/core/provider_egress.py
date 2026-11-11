@@ -38,9 +38,9 @@ from memorymaster.profile.egress import (
 WITHHELD = "[WITHHELD:credential_grade]"
 GATE_ERROR = "[WITHHELD:gate_error]"
 LONG_TOKEN = "[WITHHELD:long_token]"
-# The patterns are quadratic on an unbroken run (200 KB of 2,000-char tokens: ~2.2 s): such a run is
+# The patterns are quadratic on an unbroken run (200 KB of 1,000-char tokens: ~1.5 s): such a run is
 # a blob, not prose, and is replaced by a marker while the rest of the text is gated normally.
-MAX_TOKEN = 2_000
+MAX_TOKEN = 1_000
 MAX_INPUT = 20_000  # callers that cut to a few hundred characters anyway bound the gate's input
 _LONG_TOKEN = re.compile(r"\S{%d,}" % (MAX_TOKEN + 1))
 

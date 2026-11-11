@@ -4,9 +4,11 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
 
 from memorymaster.recall.claim_edges import (
     MENTION_KIND,
+    SUPERSEDES_KIND,
     ensure_claim_edges_schema,
     extract_edges_for_claim,
     rebuild_edges,
