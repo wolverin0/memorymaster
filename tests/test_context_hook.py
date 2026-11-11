@@ -484,3 +484,15 @@ def test_d5_evidence_slot_cost_is_under_5ms_per_prompt() -> None:
         key(_PLAIN_CLAIMS, frag, _FW_QUERY)
     per_prompt_ms = (time.perf_counter() - started) * 1000 / 20
     assert per_prompt_ms < 5.0, f"evidence-slot decision took {per_prompt_ms:.3f} ms per prompt (limit 5 ms)"
+
+
+@pytest.mark.parametrize(("fragment", "created", "older"), [
+    ("2026-08-01T00:00:00Z", "2026-11-11T15:58:04+00:00", True),
+    ("2099-01-01T00:00:00Z", "2026-11-11T15:58:04+00:00", False),
+    ("2026-08-01T00:00:00", "2026-11-11T15:58:04+00:00", True),  # naive dates are read as UTC
+    (None, "2026-11-11T15:58:04+00:00", True),  # missing: fail closed
+    ("not a date", "2026-11-11T15:58:04+00:00", True),
+    ("2099-01-01T00:00:00Z", None, True),
+])
+def test_created_before_compares_the_fragment_with_the_correcting_claim(fragment, created, older) -> None:
+    assert context_hook._created_before(fragment, created) is older

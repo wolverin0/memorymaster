@@ -559,7 +559,7 @@ def _same_scope_correction(world) -> int:
     new = _correct(world, "The gateway ticket queue is drained nightly",  # the old claim is unrelated to the question
                    "Check the router firmware version on each deploy")
     world.claim("The router firmware version field must be in the deploy checklist")
-    return new.id
+    return new
 
 
 def test_d5_a_same_scope_correction_older_than_the_fragment_does_not_suppress(world) -> None:
