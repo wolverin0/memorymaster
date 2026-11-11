@@ -246,7 +246,7 @@ def receipt_explanation(hook_log: Path, since: datetime) -> dict:
     """Share of recall turns whose omissions (selected but not emitted) each carry a reason in the receipt (T-2275)."""
     if not hook_log.exists():
         return _unavailable("hook.log not found; delivery receipts are written there by the recall adapters")
-    turns = with_omissions = explained = 0
+    turns = with_omissions = explained = unstaged = 0
     reasons: Counter = Counter()
     with hook_log.open(encoding="utf-8", errors="replace") as stream:  # streamed: the log is never rotated
         for line in stream:
@@ -254,6 +254,9 @@ def receipt_explanation(hook_log: Path, since: datetime) -> dict:
                 continue
             parsed = parse_receipt(line)
             if parsed is None or parsed[0] < since:
+                continue
+            if " turn=missing " in line:  # emitted, but recall's staged turn never reached the hook
+                unstaged += 1
                 continue
             _, selected, emitted, omitted = parsed
             turns += 1
@@ -263,11 +266,12 @@ def receipt_explanation(hook_log: Path, since: datetime) -> dict:
             with_omissions += 1
             reasons.update(omitted[cid] for cid in missing if cid in omitted)
             explained += all(cid in omitted for cid in missing)
-    if not turns:
+    if not turns and not unstaged:
         return _unavailable("no delivery receipts in the window")
     return {
         "source": "hook.log recall receipts (selected -> packed -> emitted; ids and reasons only)",
         "turns_with_receipt": turns,
+        "turns_without_staged_turn": unstaged,
         "turns_with_omissions": with_omissions,
         "turns_omissions_fully_explained": explained,
         "share_omissions_explained": round(explained / with_omissions, 4) if with_omissions else None,

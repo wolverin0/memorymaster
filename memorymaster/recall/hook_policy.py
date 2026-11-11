@@ -227,23 +227,35 @@ def remember(session_id: str, ids: list[int], *, now: float | None = None) -> No
 # --- the turn staged between recall and emission (T-2275) -------------------------------------
 
 
+_TURN_ID = re.compile(r"[0-9A-Za-z]{1,32}")  # the id is a path component and arrives in a JSON payload
+
+
+def turn_id_of(hook_data: object) -> str | None:
+    """The turn id the adapter chose for this prompt (``DEFER_KEY``), None when it does not defer."""
+    value = hook_data.get(DEFER_KEY) if isinstance(hook_data, dict) else None
+    return value if isinstance(value, str) and _TURN_ID.fullmatch(value) else None
+
+
 def defers_delivery(hook_data: object) -> bool:
     """Whether the adapter that called recall confirms delivery itself (an older hook never sets it)."""
-    return isinstance(hook_data, dict) and hook_data.get(DEFER_KEY) is True and bool(hook_data.get("session_id"))
+    return turn_id_of(hook_data) is not None and bool(hook_data.get("session_id"))
 
 
-def _turn_path(session_id: str) -> Path:
-    return _seen_path(session_id).with_suffix(".turn.json")
+def _turn_path(session_id: str, turn_id: str) -> Path:
+    return _seen_path(session_id).with_suffix(f".{turn_id}.turn.json")
 
 
-def stage_turn(session_id: str, turn: dict, *, now: float | None = None) -> None:
+def stage_turn(session_id: str, turn_id: str, turn: dict, *, now: float | None = None) -> None:
     """Park the ids recall packed (ids and reasons only, never text) until the adapter confirms emission.
 
-    One turn per session: a newer prompt replaces an unconfirmed one. The server and the hook process
-    meet here, so this works for the shared-server and the local recall alike. Never raises.
+    One file per turn id, chosen by the adapter and sent in hook_data: the adapter consumes exactly its own
+    turn, so a prompt staged late or overtaken by the next one never confirms the wrong claims. The server and
+    the hook process meet here, so this works for the shared-server and the local recall alike. Never raises.
     """
     now = time.time() if now is None else now
-    path = _turn_path(session_id)
+    if _TURN_ID.fullmatch(turn_id) is None:
+        return
+    path = _turn_path(session_id, turn_id)
     temporary = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -263,10 +275,12 @@ def stage_turn(session_id: str, turn: dict, *, now: float | None = None) -> None
                 pass
 
 
-def take_turn(session_id: str, *, now: float | None = None) -> dict | None:
-    """The staged turn of this session, removed; None when absent, expired or unreadable."""
+def take_turn(session_id: str, turn_id: str, *, now: float | None = None) -> dict | None:
+    """The staged turn ``turn_id`` of this session, removed; None when absent, expired or unreadable."""
     now = time.time() if now is None else now
-    path = _turn_path(session_id)
+    if _TURN_ID.fullmatch(turn_id) is None:
+        return None
+    path = _turn_path(session_id, turn_id)
     try:
         turn = json.loads(path.read_text(encoding="utf-8"))
         path.unlink(missing_ok=True)
@@ -294,8 +308,9 @@ def _prune(directory: Path, now: float) -> None:
 
 def forget(session_id: str) -> None:
     """A new/compacted session lost the injected context: its claims may be injected again."""
-    for path in (_seen_path(session_id), _turn_path(session_id)):
-        try:
+    seen = _seen_path(session_id)
+    try:
+        for path in (seen, *seen.parent.glob(seen.stem + ".*.turn.json")):
             path.unlink(missing_ok=True)
-        except OSError:
-            pass
+    except OSError:
+        pass

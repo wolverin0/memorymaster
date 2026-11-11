@@ -148,7 +148,7 @@ def test_receipts_and_the_staged_turn_carry_no_claim_or_prompt_text(world, tmp_p
     for word in ("zorblax", "pelican", "quartzite", "strategy", "invalidation", "choose"):
         assert not any(word in line for line in lines), f"{word!r} leaked into a receipt"
     # the turn parked between recall and emission holds ids and tags only
-    data = {"cwd": world.hook.cwd, "session_id": "tx-3", hook_policy.DEFER_KEY: True}
+    data = {"cwd": world.hook.cwd, "session_id": "tx-3", hook_policy.DEFER_KEY: "tx3"}
     context_hook.recall(ASK, db_path=str(world.service.store.db_path), hook_data=data)
     staged = (tmp_path / "seen").glob("*.turn.json")
     raw = "".join(path.read_text(encoding="utf-8") for path in staged)
@@ -162,10 +162,10 @@ def test_recall_defers_seen_and_access_only_when_the_adapter_asks(world) -> None
     assert hook_policy.seen_ids("d-legacy") == frozenset({made}), "a caller without the flag keeps the old contract"
     assert world.spooled() == [made]
     context_hook.recall(ASK, db_path=db, hook_data={"cwd": world.hook.cwd, "session_id": "d-defer",
-                                                    hook_policy.DEFER_KEY: True})
+                                                    hook_policy.DEFER_KEY: "d1"})
     assert hook_policy.seen_ids("d-defer") == frozenset() and world.spooled() == [made], "nothing before emission"
-    receipt = delivery.confirm_turn({"session_id": "d-defer"}, "test", emitted=f"- {world.tag(made)} x",
-                                    query=ASK)
+    receipt = delivery.confirm_turn({"session_id": "d-defer", hook_policy.DEFER_KEY: "d1"}, "test",
+                                    emitted=f"- {world.tag(made)} x", query=ASK)
     assert receipt["emitted"] == [made] and hook_policy.seen_ids("d-defer") == frozenset({made})
     assert world.spooled() == [made, made]
 
@@ -184,8 +184,8 @@ def staged(tmp_path, monkeypatch):
     monkeypatch.delenv("AGY_BATCH_PROFILE", raising=False)
 
     def ranker(query, data, *, db_path, **_):
-        assert data[hook_policy.DEFER_KEY] is True
-        hook_policy.stage_turn(data["session_id"], {
+        assert hook_policy.defers_delivery(data)
+        hook_policy.stage_turn(data["session_id"], data[hook_policy.DEFER_KEY], {
             "turn": "t1", "db_path": str(tmp_path / "m.db"), "ranked_n": 2, "selected": [7, 8],
             "packed": [[7, "mm-0007"]], "omitted": {"8": "slot_cap"}})
         return "\n- [mm-0007] a fact", "shared"
@@ -248,7 +248,77 @@ def test_an_unconfirmed_turn_expires_and_leaves_its_claims_retryable(world, monk
     world.claim("The zorblax cache invalidation strategy is the pelican strategy")
     db = str(world.service.store.db_path)
     context_hook.recall(ASK, db_path=db, hook_data={"cwd": world.hook.cwd, "session_id": "e-1",
-                                                    hook_policy.DEFER_KEY: True})
-    assert hook_policy.take_turn("e-1", now=10**12) is None  # long expired: nothing to confirm
-    assert delivery.confirm_turn({"session_id": "e-1"}, "test", emitted="x") is None
+                                                    hook_policy.DEFER_KEY: "e1"})
+    assert hook_policy.take_turn("e-1", "e1", now=10**12) is None  # long expired: nothing to confirm
+    assert delivery.confirm_turn({"session_id": "e-1", hook_policy.DEFER_KEY: "e1"}, "test", emitted="x") is None
     assert hook_policy.seen_ids("e-1") == frozenset()
+
+
+def test_a_hook_and_a_server_on_different_state_dirs_do_not_loop(world, tmp_path, monkeypatch) -> None:
+    """The staged turn never reaches the hook (another HOME): what was emitted is still marked seen."""
+    from memorymaster.recall import remote
+
+    made = world.claim("The zorblax cache invalidation strategy is the pelican strategy")
+    real = remote.hook_recall
+
+    def server_side(query, data, **kwargs):  # recall, staging and the seen read happen in the "server" state dir
+        with monkeypatch.context() as patch:
+            patch.setenv("MEMORYMASTER_RECALL_SEEN_DIR", str(tmp_path / "server-seen"))
+            return real(query, data, **kwargs)
+
+    monkeypatch.setattr(remote, "hook_recall", server_side)
+    assert "pelican strategy" in world.hook.claude(ASK, "split-1")
+    assert hook_policy.seen_ids("split-1") == frozenset({made}), "the hook marks what it emitted"
+    assert world.hook.claude(ASK, "split-1") == "", "the claim is injected again: a re-injection loop"
+    missing = [line for line in world.log.read_text(encoding="utf-8").splitlines() if "turn=missing" in line]
+    assert len(missing) == 1 and "reason=no_staged_turn" in missing[0] and f"emitted={made}" in missing[0]
+    assert world.spooled() == [made]
+    assert not any(word in missing[0] for word in ("zorblax", "pelican", "strategy"))
+    report = dm.receipt_explanation(world.log, dm.parse_ts("2000-01-01T00:00:00+00:00"))
+    assert report["turns_without_staged_turn"] == 1
+
+
+def test_a_late_stage_never_confirms_another_turns_claims(world) -> None:
+    db = str(world.service.store.db_path)
+    first, second, third = (world.claim(f"The zorblax cache invalidation strategy {n} is documented") for n in range(3))
+    session = "late-1"
+
+    def stage(turn: str, claim_id: int, tag: str | None) -> None:
+        hook_policy.stage_turn(session, turn, {"turn": turn, "db_path": db, "ranked_n": 1, "selected": [claim_id],
+                                               "packed": [[claim_id, tag]], "omitted": {}})
+
+    def data(turn: str) -> dict:
+        return {"session_id": session, hook_policy.DEFER_KEY: turn}
+
+    # prompt 1: its hook confirms before recall's stage arrived
+    receipt = delivery.confirm_turn(data("t1"), "claude", emitted=f"- {world.tag(first)} x", query=ASK, db_path=db)
+    assert receipt["turn"] == "missing" and hook_policy.seen_ids(session) == frozenset({first})
+    # the stage of prompt 1 lands late; prompt 2 is staged and confirmed meanwhile
+    stage("t1", first, world.tag(first)[1:-1])
+    stage("t2", second, world.tag(second)[1:-1])
+    receipt = delivery.confirm_turn(data("t2"), "claude", emitted=f"- {world.tag(second)} x", query=ASK, db_path=db)
+    assert receipt["turn"] == "t2" and receipt["emitted"] == [second]
+    assert hook_policy.seen_ids(session) == frozenset({first, second})
+    assert hook_policy.take_turn(session, "t1") is not None, "prompt 2 consumed the late stage of prompt 1"
+    # a claim without a human id counts as emitted only for the turn that staged it
+    stage("t3", third, None)
+    assert delivery.confirm_turn(data("t4"), "claude", emitted="some text", query=ASK, db_path=db) is None
+    assert hook_policy.seen_ids(session) == frozenset({first, second})
+    assert delivery.confirm_turn(data("t3"), "claude", emitted="some text", query=ASK)["emitted"] == [third]
+
+
+def test_codex_write_failure_does_not_suppress_an_identical_retry(world, monkeypatch) -> None:
+    made = world.claim("The zorblax cache invalidation strategy is the pelican strategy")
+
+    class Broken(io.StringIO):
+        def write(self, text):
+            raise BrokenPipeError
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"prompt": ASK, "cwd": world.hook.cwd,
+                                                              "session_id": "cxf-1"})))
+    adapter = runpy.run_path(str(world.hook.hooks / "memorymaster-codex-recall.py"))
+    monkeypatch.setattr(sys, "stdout", Broken())
+    assert adapter["main"]("UserPromptSubmit") == 0
+    assert hook_policy.seen_ids("cxf-1") == frozenset() and world.spooled() == []
+    assert world.tag(made) in world.hook.codex(ASK, "cxf-1"), "the identical retry was suppressed for 300 s"
+    assert hook_policy.seen_ids("cxf-1") == frozenset({made})

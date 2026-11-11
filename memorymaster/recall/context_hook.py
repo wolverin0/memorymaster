@@ -2280,7 +2280,13 @@ def _recall_impl(
 def _session_seen(hook_data: dict | None) -> frozenset[int]:
     """Claim ids this session already received from the prompt hook (T-1351)."""
     session = hook_policy.session_id_of(hook_data)
-    return hook_policy.seen_ids(session) if session else frozenset()
+    if not session:
+        return frozenset()
+    # The adapter also sends the ids ITS state dir holds (T-2275): the staged turn and the seen set are
+    # confirmed hook-side, so a server resolving another state dir must not re-inject them.
+    sent = hook_data.get("seen_ids")
+    extra = frozenset(i for i in sent if isinstance(i, int)) if isinstance(sent, list) else frozenset()
+    return hook_policy.seen_ids(session) | extra
 
 
 def _stage_ms(started: float) -> float:
@@ -2298,16 +2304,15 @@ def _claim_ids(rows: list[dict]) -> list[int]:
 def _stage_turn(hook_data: dict, svc, offered: list[int], seen: frozenset[int], omitted: dict[int, str],
                 rendered_rows: list[dict]) -> None:
     """Park the turn's ids and omission reasons for ``recall.delivery.confirm_turn`` (ids only, never text)."""
-    from memorymaster.recall import delivery
-
     packed = [[row["claim"].id, getattr(row["claim"], "human_id", None)] for row in rendered_rows]
     packed_ids = {cid for cid, _ in packed}
     selected = offered[:RECEIPT_SELECTED_MAX]
     selected += [cid for cid in packed_ids if cid not in selected]  # a packed id is always a selected one
     reasons = {str(cid): "session_seen" if cid in seen else omitted.get(cid, "jev_surface")
                for cid in selected if cid not in packed_ids}
-    hook_policy.stage_turn(hook_data["session_id"], {
-        "turn": delivery.new_turn_id(), "db_path": str(getattr(svc.store, "db_path", "") or ""),
+    turn_id = hook_policy.turn_id_of(hook_data)
+    hook_policy.stage_turn(hook_data["session_id"], turn_id, {
+        "turn": turn_id, "db_path": str(getattr(svc.store, "db_path", "") or ""),
         "ranked_n": len(offered), "selected": selected, "packed": packed, "omitted": reasons,
     })
 

@@ -107,6 +107,7 @@ def main(event: str) -> int:
             sys.stdin = original_stdin
         # T-2275: the shared hook only staged the claim ids; they are "seen" and counted once THIS write
         # succeeded, and only the ids that survive the byte cut.
+        turn_data = shared.get("data") if isinstance(shared.get("data"), dict) else data  # carries the turn id
         confirmable = confirm is not None and event == "UserPromptSubmit" and shared.get("via") in ("shared", "local")
         emitted, failure = "", shared.get("delivery_failure") or "not_emitted"
         try:
@@ -121,10 +122,15 @@ def main(event: str) -> int:
             }}))
             sys.stdout.flush()
             emitted = context
+            if confirmable and shared.get("delivered_block"):
+                # the shared hook left the repeat fingerprint to this write: a failed write retries at once
+                from memorymaster.recall.delivery import record_delivered
+
+                record_delivered(turn_data, shared["delivered_block"])
         finally:
             if confirmable:
-                confirm(data, "codex", emitted=emitted, query=data.get("prompt", ""), failure=failure,
-                        drop_reason="adapter_truncation")
+                confirm(turn_data, "codex", emitted=emitted, query=data.get("prompt", ""), failure=failure,
+                        drop_reason="adapter_truncation", db_path=shared.get("DB_PATH") or "")
         try:
             from memorymaster.surfaces.hook_events import append_hook_event
 
