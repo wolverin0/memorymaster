@@ -13,6 +13,8 @@ from memorymaster.dreaming.ledger import (
     LANE_DREAM,
     SLOW_BACKOFF_BASE_HOURS,
     SLOW_CAPTURE_BYTES,
+    SESSION_PREFIX,
+    UNCHARGED_RETRY_WAIT_MINUTES,
     DreamLedger,
 )
 from memorymaster.dreaming.models import CaptureEnvelope, DreamMessage
@@ -116,15 +118,28 @@ def _set(ledger: DreamLedger, capture_id: int, **columns) -> None:
         conn.execute(f"UPDATE dream_captures SET {assignments} WHERE id=?", (*columns.values(), capture_id))
 
 
-def test_large_and_failed_captures_never_take_a_beat_slot(tmp_path: Path) -> None:
+def test_large_and_charged_captures_never_take_a_beat_slot(tmp_path: Path) -> None:
     ledger = DreamLedger(tmp_path / "capture.db")
-    small, large, failed, retry = (H["_capture"](ledger, session_hash=f"s{n}") for n in range(4))
+    small, large, charged = (H["_capture"](ledger, session_hash=f"s{n}") for n in range(3))
     _set(ledger, large, byte_count=SLOW_CAPTURE_BYTES)
-    _set(ledger, failed, error_count=1)
-    _set(ledger, retry, state="retryable")
+    _set(ledger, charged, error_count=1)
 
     assert _picked(ledger, 10, 2, lane=LANE_BEAT) == [small]
-    assert sorted(_picked(ledger, 10, 2)) == sorted([small, large, failed, retry])  # no lane rule: unchanged
+    assert sorted(_picked(ledger, 10, 2)) == sorted([small, large, charged])  # no lane rule: unchanged
+
+
+def test_an_uncharged_retryable_capture_stays_in_the_beat_after_a_short_wait(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "capture.db")
+    fine, retry = (H["_capture"](ledger, session_hash=f"s{n}") for n in range(2))
+    failed_at = datetime(2026, 7, 21, 13, tzinfo=timezone.utc)
+    _set(ledger, retry, state="retryable", updated_at=failed_at.isoformat())
+
+    def beat(at: datetime) -> list[int]:
+        rows = ledger.eligible(idle_minutes=0, max_sessions=10, now=at, oldest_reserve=2, lane=LANE_BEAT)
+        return sorted(int(row["id"]) for row in rows)
+
+    assert beat(failed_at + timedelta(minutes=UNCHARGED_RETRY_WAIT_MINUTES - 1)) == [fine]
+    assert beat(failed_at + timedelta(minutes=UNCHARGED_RETRY_WAIT_MINUTES + 1)) == sorted([fine, retry])
 
 
 def test_the_dream_run_takes_a_large_capture_and_respects_the_failure_backoff(tmp_path: Path) -> None:
@@ -145,6 +160,16 @@ def test_the_dream_run_takes_a_large_capture_and_respects_the_failure_backoff(tm
     assert picked(failed_at + timedelta(hours=wait + 1)) == sorted([large, failed])
 
 
+def test_the_dream_run_serves_due_slow_captures_before_the_ordinary_quota(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "capture.db")
+    old, new = _queue(ledger, backlog=0, fresh=5)
+    slow = new[0]  # the OLDEST activity of the five, but slow: nothing else will serve it
+    _set(ledger, slow, error_count=1, updated_at=(NOW - timedelta(days=3)).isoformat())
+
+    assert _picked(ledger, 2, 1, lane=LANE_DREAM)[0] == slow
+    assert slow not in _picked(ledger, 2, 1, lane=LANE_BEAT)
+
+
 def test_the_backoff_doubles_with_every_failure_and_stops_at_the_cap(tmp_path: Path) -> None:
     from memorymaster.dreaming.ledger import SLOW_BACKOFF_MAX_HOURS, _backoff_hours
 
@@ -154,46 +179,106 @@ def test_the_backoff_doubles_with_every_failure_and_stops_at_the_cap(tmp_path: P
 
 # --- one session stays in order ----------------------------------------------------------------------------
 
-def _second_capture(ledger: DreamLedger, session_hash: str) -> int:
+def _next_capture(ledger: DreamLedger, session_hash: str, index: int) -> int:
+    """Capture number ``index`` of one session: consecutive cursor range, texts ending in the index."""
+    stamp = NOW - timedelta(hours=3) + timedelta(minutes=index)
     messages = (
-        DreamMessage("m1", "user", "I prefer blue interfaces for daily work.", (NOW - timedelta(minutes=50)).isoformat()),
-        DreamMessage("m2", "assistant", "Blue interfaces will be treated as your preference 2", (NOW - timedelta(minutes=49)).isoformat()),
+        DreamMessage("m1", "user", "I prefer blue interfaces for daily work.", stamp.isoformat()),
+        DreamMessage("m2", "assistant", f"Blue interfaces will be treated as your preference {index}", stamp.isoformat()),
     )
     return ledger.enqueue(CaptureEnvelope(
-        provider="codex", session_hash=session_hash, scope="project:test",
-        captured_at=NOW.isoformat(), last_activity_at=messages[-1].timestamp,
-        messages=messages, cursor_start=100, cursor_end=200, content_hash="second-hash",
+        provider="codex", session_hash=session_hash, scope="project:test", captured_at=NOW.isoformat(),
+        last_activity_at=stamp.isoformat(), messages=messages, cursor_start=100 * index,
+        cursor_end=100 * (index + 1), content_hash=f"hash-{index}",
     ), coalesce=False)
 
 
-def test_a_newer_capture_of_a_session_waits_for_the_older_one(tmp_path: Path) -> None:
+def test_a_session_contributes_an_in_order_prefix_and_picking_a_capture_picks_its_predecessors(tmp_path: Path) -> None:
     ledger = DreamLedger(tmp_path / "capture.db")
-    first = H["_capture"](ledger, session_hash="same")
-    second = _second_capture(ledger, "same")
+    chain = [_next_capture(ledger, "same", n) for n in range(6)]
     other = H["_capture"](ledger, session_hash="other")
-    assert first < second
 
-    # Newest-first would take `second` (newer activity) before `first`: the guard must not.
-    assert _picked(ledger, 6, 1) == [other, first] or _picked(ledger, 6, 1) == [first, other]
-    assert second not in _picked(ledger, 6, 1)
+    picked = _picked(ledger, 10, 2)
 
-    _set(ledger, first, state="consolidated")  # decided but not applied yet: still blocks
-    assert second not in _picked(ledger, 6, 1)
-
-    _set(ledger, first, state="applied")
-    assert second in _picked(ledger, 6, 1)
+    assert [i for i in picked if i in chain] == chain[:SESSION_PREFIX]  # the next k, in id order, nothing later
+    assert other in picked and picked.index(chain[0]) < picked.index(chain[1])
 
 
-def test_two_captures_of_one_session_are_consolidated_and_applied_in_order(tmp_path: Path) -> None:
+def test_the_prefix_counts_against_the_slots_and_never_skips_a_predecessor(tmp_path: Path) -> None:
     ledger = DreamLedger(tmp_path / "capture.db")
-    first = H["_capture"](ledger, session_hash="same")
-    second = _second_capture(ledger, "same")
+    chain = [_next_capture(ledger, "same", n) for n in range(3)]
+
+    assert _picked(ledger, 2, 1) == chain[:2]  # the newest (chain[2]) needs 3 slots: not taken, the oldest is
+    assert _picked(ledger, 1, 1) == chain[:1]
+
+
+def test_a_gap_in_the_session_stops_the_prefix(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "capture.db")
+    chain = [_next_capture(ledger, "same", n) for n in range(3)]
+    _set(ledger, chain[1], error_count=1)  # charged: slow lane, not for the beat
+
+    assert _picked(ledger, 10, 2, lane=LANE_BEAT) == chain[:1]  # chain[2] must not overtake chain[1]
+    _set(ledger, chain[0], state="applied")
+    assert _picked(ledger, 10, 2, lane=LANE_BEAT) == []
+    _set(ledger, chain[1], state="applied")
+    assert _picked(ledger, 10, 2, lane=LANE_BEAT) == chain[2:]
+
+
+def test_an_older_consolidated_capture_blocks_the_newer_ones(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "capture.db")
+    first, second = (_next_capture(ledger, "same", n) for n in range(2))
+    _set(ledger, first, state="consolidated")  # decided but not applied yet
+
+    assert _picked(ledger, 10, 2) == []
+    assert ledger.has_open_predecessor(second) and not ledger.has_open_predecessor(first)
+    _set(ledger, first, state="applied")
+    assert _picked(ledger, 10, 2) == [second] and not ledger.has_open_predecessor(second)
+
+
+def test_three_captures_of_one_session_are_applied_in_order_in_one_run(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "capture.db")
+    chain = [_next_capture(ledger, "same", n) for n in range(3)]
     config = replace(DreamConfig(), idle_minutes=0, oldest_reserve=1, max_sessions=6)
     worker = DreamWorker(ledger, H["_service"](tmp_path), EXTRACTOR(), H["_Consolidator"](), config=config, now=lambda: NOW)
 
-    worker.run(apply_candidates=True)
-    assert (ledger.get_capture(first)["state"], ledger.get_capture(second)["state"]) == ("applied", "captured")
+    summary = worker.run(apply_candidates=True)
+
+    assert summary["applied"] == 3 and summary["errors"] == 0
+    assert [ledger.get_capture(i)["state"] for i in chain] == ["applied"] * 3
+    stamps = [ledger.get_capture(i)["updated_at"] for i in chain]
+    assert stamps == sorted(stamps)
+
+
+def test_a_failed_middle_capture_holds_back_the_third_at_extraction(tmp_path: Path) -> None:
+    class FailsMiddle(EXTRACTOR):
+        def extract(self, messages, *, scope, capture_hash):
+            if str(messages[-1]["text"]).endswith("1"):
+                raise ValueError("bad output")
+            return super().extract(messages, scope=scope, capture_hash=capture_hash)
+
+    ledger = DreamLedger(tmp_path / "capture.db")
+    chain = [_next_capture(ledger, "same", n) for n in range(3)]
+    config = replace(DreamConfig(), idle_minutes=0, oldest_reserve=1, max_sessions=6)
+    worker = DreamWorker(ledger, H["_service"](tmp_path), FailsMiddle(), H["_Consolidator"](), config=config, now=lambda: NOW)
 
     worker.run(apply_candidates=True)
-    assert ledger.get_capture(second)["state"] == "applied"
-    assert ledger.get_capture(first)["updated_at"] <= ledger.get_capture(second)["updated_at"]
+
+    assert [ledger.get_capture(i)["state"] for i in chain] == ["applied", "retryable", "captured"]
+
+
+def test_a_middle_capture_that_fails_consolidation_keeps_the_third_from_being_applied(tmp_path: Path) -> None:
+    class FailsMiddle(H["_Consolidator"]):
+        def consolidate(self, candidates, current_claims, *, scope):
+            if any(c.candidate_id.endswith("1") for c in candidates):
+                raise ValueError("invalid decision")
+            return super().consolidate(candidates, current_claims, scope=scope)
+
+    ledger = DreamLedger(tmp_path / "capture.db")
+    chain = [_next_capture(ledger, "same", n) for n in range(3)]
+    config = replace(DreamConfig(), idle_minutes=0, oldest_reserve=1, max_sessions=6, max_consolidate_candidates=1)
+    worker = DreamWorker(ledger, H["_service"](tmp_path), EXTRACTOR(), FailsMiddle(), config=config, now=lambda: NOW)
+
+    worker.run(apply_candidates=True)
+
+    states = [ledger.get_capture(i)["state"] for i in chain]
+    assert states[0] == "applied" and states[1] == "retryable" and states[2] == "consolidated"  # not applied

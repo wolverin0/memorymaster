@@ -336,3 +336,176 @@ def test_a_hung_consolidation_after_an_answer_charges_the_capture_and_moves_it_t
     far = datetime.now(timezone.utc) + timedelta(days=2)
     assert hung[0] not in {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=far, lane=LANE_BEAT)}
     assert hung[0] in {r["id"] for r in ledger.eligible(idle_minutes=0, max_sessions=9, now=far, lane=LANE_DREAM)}
+
+
+# --- the Claude CLI wraps its own timeout (ProviderCallError from TimeoutExpired) -----------------------------
+
+def _wrapped_timeout():
+    import subprocess
+
+    from memorymaster.dreaming.providers import ProviderCallError
+
+    try:
+        raise subprocess.TimeoutExpired("claude", 180)
+    except subprocess.TimeoutExpired as exc:
+        wrapper = ProviderCallError("Claude CLI extraction timed out")
+        wrapper.outcome = "timeout"
+        wrapper.__cause__ = exc
+        return wrapper
+
+
+def test_a_wrapped_timeout_is_charged_when_the_provider_answered_and_stops_the_run_after_two(tmp_path: Path) -> None:
+    class AnswersOnceThenTimesOut(EXTRACTOR):
+        calls = 0
+
+        def extract(self, messages, *, scope, capture_hash):
+            type(self).calls += 1
+            if type(self).calls > 1:
+                raise _wrapped_timeout()
+            return super().extract(messages, scope=scope, capture_hash=capture_hash)
+
+    worker, ledger = _worker(tmp_path, Clock(), AnswersOnceThenTimesOut(), TimedConsolidator(Clock()), max_sessions=6)
+    ids = _queue(ledger, 5)
+
+    summary = worker.run(apply_candidates=False)
+
+    assert AnswersOnceThenTimesOut.calls == 3  # one answer + two timeouts, then the run stops calling
+    assert summary["abandoned_calls"] == 2
+    charged = [ledger.get_capture(i) for i in ids if ledger.get_capture(i)["state"] == "retryable"]
+    assert len(charged) == 2 and all(row["error_count"] == 1 for row in charged)  # slow lane, backoff, quarantine
+
+
+def test_a_wrapped_timeout_with_no_answer_is_not_charged(tmp_path: Path) -> None:
+    class AlwaysTimesOut(EXTRACTOR):
+        def extract(self, messages, *, scope, capture_hash):
+            raise _wrapped_timeout()
+
+    worker, ledger = _worker(tmp_path, Clock(), AlwaysTimesOut(), TimedConsolidator(Clock()), max_sessions=6)
+    ids = _queue(ledger, 4)
+
+    summary = worker.run(apply_candidates=False)
+
+    assert summary["abandoned_calls"] == 2  # the dead provider is left alone after two
+    assert [ledger.get_capture(i)["error_count"] for i in ids] == [0, 0, 0, 0]
+
+
+# --- graph observations are under the same budget ------------------------------------------------------------
+
+def test_an_observation_call_is_skipped_when_the_budget_cannot_hold_it_and_guarded_otherwise(tmp_path: Path, monkeypatch, caplog) -> None:
+    import pytest
+
+    clock = Clock()
+    worker, _ = _worker(tmp_path, clock, TimedExtractor(clock), TimedConsolidator(clock), run_budget_seconds=100)
+    worker._deadline = clock() + 100
+    with pytest.raises(worker_module.DreamBudgetDeferred):
+        worker._observation_llm("system", "prompt")
+    assert worker._summary["graph_observation_calls_skipped"] == 1
+
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", lambda system, prompt: '{"decision":"no_signal"}')
+    worker._deadline = clock() + 10_000
+    with caplog.at_level(logging.INFO, logger="memorymaster.jobs"):
+        assert worker._observation_llm("system", "prompt") == '{"decision":"no_signal"}'
+    stages = [getattr(r, _FIELDS_ATTR)["stage"] for r in caplog.records if r.getMessage() == "dream_call_start"]
+    assert stages == ["observe"]
+
+
+# --- the beat drains a backlog even when a third of its extractions fail --------------------------------------
+
+def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool, failure_rate: float = 0.35) -> tuple[int, int]:
+    """48 simulated hours of 15-minute beat ticks (2 arrivals, 6 slots each); returns (initial, final) unfinished."""
+    import random
+
+    from memorymaster.dreaming import ledger as ledger_module
+    from memorymaster.dreaming.models import CaptureEnvelope, DreamCandidate, DreamMessage, ExtractionResult
+    from memorymaster.dreaming.providers import ProviderCallError
+
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    sim = {"now": datetime(2026, 7, 21, 0, tzinfo=timezone.utc)}
+    monkeypatch.setattr(ledger_module, "_utc_now", lambda: sim["now"])
+    if exile_retryable:  # the policy of ea294b75: any retryable capture leaves the beat
+        original = ledger_module._lane_clause
+
+        def exiling(lane, current):
+            sql, params = original(lane, current)
+            return sql + (" AND c.state != 'retryable'" if lane == LANE_BEAT else ""), params
+
+        monkeypatch.setattr(ledger_module, "_lane_clause", exiling)
+    rng = random.Random(11)
+
+    class Flaky:
+        model, provider = "gemini-3.5-flash", "google"
+
+        def extract(self, messages, *, scope, capture_hash):
+            if rng.random() < failure_rate:
+                raise ProviderCallError("provider request failed with HTTP 503", http_status=503)
+            tag = capture_hash.replace(":", "-")
+            return ExtractionResult((
+                DreamCandidate(f"project-{tag}", "The blue interface is selected for this project.", "decision", "interface",
+                               "uses", "blue", "project", "m2", "Blue interfaces", 0.8),
+            ), H["_usage"]("google", self.model))
+
+    counter = {"n": 0}
+
+    def arrive(ledger: DreamLedger, activity: datetime) -> None:
+        counter["n"] += 1
+        stamp = activity.isoformat()
+        messages = (DreamMessage("m1", "user", "I prefer blue interfaces for daily work.", stamp),
+                    DreamMessage("m2", "assistant", f"Blue interfaces will be treated as your preference {counter['n']}", stamp))
+        ledger.enqueue(CaptureEnvelope(provider="codex", session_hash=f"s{counter['n']}", scope="project:test",
+                                       captured_at=stamp, last_activity_at=stamp, messages=messages, cursor_start=0,
+                                       cursor_end=100, content_hash=f"h{counter['n']}"))
+
+    ledger = DreamLedger(tmp_path / "capture.db")
+    for n in range(60):
+        arrive(ledger, sim["now"] - timedelta(days=2, minutes=n))
+    cfg = replace(DreamConfig(), idle_minutes=0, jev_triage_enabled=False, max_sessions=6, oldest_reserve=2,
+                  max_consolidate_captures_per_run=6, lane=LANE_BEAT)
+    worker = DreamWorker(ledger, H["_service"](tmp_path), Flaky(), H["_Consolidator"](), config=cfg, now=lambda: sim["now"])
+
+    def unfinished() -> int:
+        with ledger._connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM dream_captures WHERE state IN ('captured','retryable','extracted')").fetchone()[0]
+
+    initial = unfinished()
+    for _ in range(96 * 2):
+        sim["now"] += timedelta(minutes=15)
+        for _ in range(2):
+            arrive(ledger, sim["now"] - timedelta(minutes=45))
+        worker.run(apply_candidates=False)
+    return initial, unfinished()
+
+
+def test_the_beat_drains_a_backlog_at_35_percent_extraction_failures(tmp_path: Path, monkeypatch) -> None:
+    initial, final = _simulate(tmp_path / "new", monkeypatch, exile_retryable=False)
+    assert final < initial  # the backlog shrank over 48 h although a third of the calls failed
+
+
+def test_exiling_every_retryable_capture_from_the_beat_does_not_drain(tmp_path: Path, monkeypatch) -> None:
+    _, with_wait = _simulate(tmp_path / "new", monkeypatch, exile_retryable=False)
+    monkeypatch.undo()
+    _, exiled = _simulate(tmp_path / "old", monkeypatch, exile_retryable=True)
+    print(f"final unfinished after 48 h at 35% failures: short wait={with_wait} exiled={exiled}")
+    assert exiled > with_wait
+
+
+# --- the selection is linear in the queue -----------------------------------------------------------------------
+
+def test_selection_stays_fast_on_a_ten_thousand_row_ledger(tmp_path: Path) -> None:
+    import sqlite3
+
+    ledger = DreamLedger(tmp_path / "capture.db")
+    first = H["_capture"](ledger, session_hash="seed")
+    with sqlite3.connect(ledger.db_path) as conn:
+        row = conn.execute("SELECT * FROM dream_captures WHERE id=?", (first,)).fetchone()
+        names = [c[1] for c in conn.execute("PRAGMA table_info(dream_captures)")]
+        record = dict(zip(names, row))
+        cols = [c for c in names if c != "id"]
+        for n in range(10_000):  # 800 sessions, chains of 12 unfinished captures
+            record.update(capture_key=f"k{n}", session_hash=f"sess{n % 800}", cursor_start=n, cursor_end=n + 1, content_hash=f"c{n}")
+            conn.execute(f"INSERT INTO dream_captures ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})",
+                         [record[c] for c in cols])
+    started = time.monotonic()
+    rows = ledger.eligible(idle_minutes=0, max_sessions=6, now=NOW + timedelta(days=1), oldest_reserve=2, lane=LANE_BEAT)
+    elapsed = time.monotonic() - started
+    print(f"eligible on 10k rows: {elapsed:.3f}s")
+    assert len(rows) == 6 and elapsed < 3.0

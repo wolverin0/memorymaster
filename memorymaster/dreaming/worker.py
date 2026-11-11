@@ -106,6 +106,17 @@ def _call_timeout(provider: Any) -> float:
     return DEFAULT_CALL_TIMEOUT_SECONDS
 
 
+def _is_timeout(error: BaseException | None) -> bool:
+    """A call timeout, however the provider wraps it (the Claude CLI raises ProviderCallError from TimeoutExpired)."""
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        if isinstance(error, subprocess.TimeoutExpired):
+            return True
+        seen.add(id(error))
+        error = error.__cause__
+    return False
+
+
 def _json_bytes(value: Any) -> int:
     return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
 # T-2123: hung consolidation calls (primary or fallback) one run tolerates before the breaker opens.
@@ -319,6 +330,7 @@ class DreamWorker:
         self._lease_owner: str | None = None
         self.clock = clock or time.monotonic  # run budget only; leases and ledger rows use ``now``
         self._deadline: float | None = None
+        self._summary: dict[str, Any] = {"abandoned_calls": 0, "graph_observation_calls_skipped": 0}
         self._answered = 0  # provider calls answered this run: a timeout after one is the capture's, not an outage
 
     def _decisions_ledger(self) -> Any:
@@ -405,7 +417,6 @@ class DreamWorker:
             while True:
                 left = timeout + WATCHDOG_GRACE_SECONDS - (time.monotonic() - started)
                 if left <= 0:
-                    summary["abandoned_calls"] += 1
                     raise subprocess.TimeoutExpired("provider call", timeout)
                 thread.join(min(left, max(_HEARTBEAT_FLOOR_S, self.config.lease_ttl_seconds / 3)))
                 if not thread.is_alive():
@@ -417,7 +428,8 @@ class DreamWorker:
             return box["result"]
         except BaseException as exc:
             error_type = type(exc).__name__
-            outcome = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else "error"
+            outcome = "timeout" if _is_timeout(exc) else "error"
+            summary["abandoned_calls"] += int(outcome == "timeout")
             raise
         finally:
             log_event(_JOB_LOG, "dream_call_end", outcome=outcome, error_type=error_type,
@@ -458,7 +470,9 @@ class DreamWorker:
             "recovered_stale_runs": 0,
             "abandoned_calls": 0,
             "budget_stop": None,
+            "graph_observation_calls_skipped": 0,
         }
+        self._summary = summary
         try:
             from memorymaster.core.model_preflight import alert, preflight_provider
 
@@ -546,14 +560,21 @@ class DreamWorker:
         No se fija proveedor a proposito: el default es el que sigue la migracion,
         asi que la proxima no vuelve a dejar este call site atras.
         """
+        from types import SimpleNamespace
+
         from memorymaster.core.llm_provider import call_llm
 
+        bounded = SimpleNamespace(provider="default", model="", timeout=DEFAULT_CALL_TIMEOUT_SECONDS)
+        if not self._fits(bounded):  # the engine retries the job from its ids in a later run
+            self._summary["graph_observation_calls_skipped"] += 1
+            raise DreamBudgetDeferred("run budget cannot hold another observation call")
         safe = export_stored(prompt)
         if safe is None:  # the existing no-verdict answer: the job completes, nothing is sent
             self.observations_withheld += 1
             return '{"decision":"no_signal"}'
         prompt = safe
-        return call_llm(system, prompt)
+        return self._guarded_call(lambda: call_llm(system, prompt), provider=bounded, stage="observe",
+                                  capture_ids=[], size=len(prompt.encode("utf-8")), summary=self._summary)
 
     def _run_graph_observations(
         self, *, owner: str, scope: str | None, synthesize: bool
@@ -608,7 +629,11 @@ class DreamWorker:
         rows = self.ledger.eligible(idle_minutes=self.config.idle_minutes, max_sessions=limit, scope=scope, now=self.now(),
                                     oldest_reserve=self.config.oldest_reserve, lane=self.config.lane)
         extracted: list[dict[str, Any]] = []
+        held_back: set[tuple] = set()  # sessions with an unfinished capture in this run: later ones wait (order)
         for row in rows:
+            session = (row["provider"], row["session_hash"], row["scope"])
+            if session in held_back:
+                continue
             if row.get("extraction") is not None and extraction_complete(row):
                 extracted.append(row)
                 continue
@@ -618,6 +643,8 @@ class DreamWorker:
             done, stop = self._extract_windows(run_id, row, summary)
             if done is not None:
                 extracted.append(done)
+            else:
+                held_back.add(session)
             if stop:
                 break
         return extracted
@@ -688,7 +715,7 @@ class DreamWorker:
                 self._mark_semantic_failure(row, run_id, exc, stage="extract", charge=self._timeout_charged(exc))
                 summary["errors"] += 1
                 return None, (isinstance(exc, ProviderCallError) and exc.http_status == 429) or (
-                    isinstance(exc, subprocess.TimeoutExpired) and summary["abandoned_calls"] >= MAX_ABANDONED_CALLS)
+                    _is_timeout(exc) and summary["abandoned_calls"] >= MAX_ABANDONED_CALLS)
             appended = saved["content_hash"] != row["content_hash"]
             row = saved
             if extraction_complete(row):
@@ -701,7 +728,7 @@ class DreamWorker:
     def _timeout_charged(self, error: BaseException) -> bool:
         """A timeout is charged to the capture (error_count, so backoff and quarantine apply) only when the
         provider answered another call in this run; otherwise it may be an outage and costs nothing."""
-        return isinstance(error, subprocess.TimeoutExpired) and self._answered > 0
+        return _is_timeout(error) and self._answered > 0
 
     def _mark_semantic_failure(
         self, row: dict[str, Any], run_id: str, error: Exception, *, stage: str, charge: bool = False,
@@ -1298,6 +1325,8 @@ class DreamWorker:
 
     def _apply(self, run_id: str, rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
         for row in rows:
+            if self.ledger.has_open_predecessor(int(row["id"])):
+                continue  # an older capture of this session is unfinished: stay consolidated, apply in order
             try:
                 self._apply_capture(run_id, row, summary)
                 self._hold_lease()
