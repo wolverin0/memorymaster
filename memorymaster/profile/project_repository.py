@@ -793,6 +793,9 @@ def _read_claims(
                 value = dict(citation)
                 value.pop("_source_bytes")
                 citations.setdefault(citation["claim_id"], []).append(value)
+        # The deadline bounds the SQL reads above. Building items (egress scanning) is Python time and must not
+        # make the PRAGMA below fail: on a loaded Windows host it did, reporting claims_unavailable.
+        conn.set_progress_handler(None, 0)
         items = {}
         for row in rows:
             if row["id"] in oversized:
