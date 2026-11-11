@@ -69,6 +69,7 @@ _FTS_TOP_K = 5
 _VALUE_TOKEN_RE = re.compile(
     r"(?<![a-z0-9_])(?:(?<![a-z0-9_-])-)?[a-z0-9_]*\d[a-z0-9_]*(?:[.:/-][a-z0-9_]*\d[a-z0-9_]*)*"
 )
+_ANY_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")  # keeps 1-char tokens ("runner-a" vs "runner-b"); Jaccard keeps _TOKEN_RE
 _WORD_RE = re.compile(r"[a-zà-ÿ]+(?:['’][a-z]+)?")
 _NEGATIONS = frozenset(
     {"not", "no", "never", "nor", "none", "without", "cannot", "sin", "nunca", "ni", "tampoco", "jamas", "jamás"}
@@ -290,7 +291,7 @@ def find_near_duplicate(
         if _value_tokens(candidate_text) != _value_tokens(best_text):
             return _pass("value-tokens-differ")
         # A real duplicate adds nothing: a candidate-only word is a changed fact ("eight" -> "nine").
-        if not _tokenize(candidate_text) <= _tokenize(best_text):
+        if not set(_ANY_TOKEN_RE.findall(candidate_text.lower())) <= set(_ANY_TOKEN_RE.findall(best_text.lower())):
             return _pass("candidate-adds-tokens")
         if _negations(candidate_text) != _negations(best_text):
             return _pass("negation-differs")
