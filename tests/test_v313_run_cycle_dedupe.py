@@ -75,7 +75,7 @@ def test_run_cycle_shadow_records_pair_details(
     service.init_db()
     canonical_id = _seed(
         service,
-        "user prefers vim editor with vim plugins for python development",
+        "user prefers vim editor with vim plugins for python development coding",
         "editor_pref",
         "vim",
     )
@@ -83,7 +83,7 @@ def test_run_cycle_shadow_records_pair_details(
 
     paraphrase_id = _seed(
         service,
-        "user prefers vim editor with vim plugins for python coding",
+        "user prefers vim editor with vim plugins for python development",
         "editor_pref_alt",
         "vim",
     )
@@ -118,7 +118,7 @@ def test_run_cycle_active_archives_paraphrase(
     service.init_db()
     canonical_id = _seed(
         service,
-        "user prefers vim editor with vim plugins for python development",
+        "user prefers vim editor with vim plugins for python development coding",
         "editor_pref",
         "vim",
     )
@@ -126,7 +126,7 @@ def test_run_cycle_active_archives_paraphrase(
 
     paraphrase_id = _seed(
         service,
-        "user prefers vim editor with vim plugins for python coding",
+        "user prefers vim editor with vim plugins for python development",
         "editor_pref_alt",
         "vim",
     )
@@ -160,14 +160,14 @@ def test_run_cycle_dedupe_runs_before_validator(
     service.init_db()
     canonical_id = _seed(
         service,
-        "user prefers vim editor with vim plugins for python development",
+        "user prefers vim editor with vim plugins for python development coding",
         "editor_pref",
         "vim",
     )
     _force_confirmed(tmp_db, canonical_id)
     _seed(
         service,
-        "user prefers vim editor with vim plugins for python coding",
+        "user prefers vim editor with vim plugins for python development",
         "editor_pref_alt",
         "vim",
     )
