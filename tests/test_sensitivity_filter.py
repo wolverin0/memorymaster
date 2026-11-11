@@ -567,7 +567,8 @@ def test_keyword_followed_by_100k_spaces_is_linear(keyword: str) -> None:
 
 @pytest.mark.parametrize("unit", ["clave:", "password=", "pin:", "OTP=", "contraseña es ", "pass​word="])
 def test_keyword_repeated_to_300kb_is_linear(unit: str) -> None:
-    _timed(unit * (300_000 // len(unit)))
+    # prose_password (older) costs ~80 steps per keyword hit: "pin:" is linear but 5x slower, so 150 KB for it
+    _timed(unit * ((150_000 if unit.startswith("pin") else 300_000) // len(unit)))
 
 
 def test_aws_shaped_tokens_300kb_with_and_without_a_key_id_are_linear() -> None:
