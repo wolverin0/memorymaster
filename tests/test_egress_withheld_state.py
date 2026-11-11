@@ -208,6 +208,7 @@ def test_mine_rules_counts_no_llm_call_for_a_withheld_window(env):  # noqa: F811
     assert holder["calls"] == 0 and stats["llm_calls"] == 0 and stats["skipped"] == 1 and stats["ingested"] == 0
 
 
+# GUARD: passed before the S-6 state fixes; it pins behaviour, it does not discriminate.
 def test_stop_hook_rule_mining_counts_no_llm_call_for_a_withheld_window(tmp_path, monkeypatch):
     from memorymaster.knowledge import rule_miner
 
@@ -276,7 +277,7 @@ def test_wiki_absorb_single_claim_writes_nothing_and_binds_nothing_for_a_withhel
     assert not dict(zip(cols, row)).get("wiki_article")  # not bound to an article
 
 
-def test_skills_withheld_item_is_closed_as_not_judged_without_a_failure(monkeypatch):
+def test_skills_withheld_item_stays_pending_and_is_not_a_failure(monkeypatch):
     from memorymaster.knowledge import skills
 
     outcomes: list[str] = []
@@ -285,11 +286,10 @@ def test_skills_withheld_item_is_closed_as_not_judged_without_a_failure(monkeypa
     monkeypatch.setattr(skills, "_record_review_completion", lambda service, cid, outcome: outcomes.append(outcome))
     stats = {"llm_calls": 0, "blocked": 0, "errors": []}
     skills._review_one_input(None, {"claim_id": 7, "scope": "project:x", "text": GATED}, stats)
-    assert (
-        outcomes == ["egress_withheld"] and stats["errors"] == [] and stats["blocked"] == 0 and stats["llm_calls"] == 0
-    )
+    assert outcomes == [] and stats["errors"] == [] and stats["blocked"] == 0 and stats["llm_calls"] == 0
 
 
+# GUARD: passed before the S-6 state fixes; it pins behaviour, it does not discriminate.
 def test_vault_curator_files_a_withheld_claim_like_any_uncategorised_one(monkeypatch):
     from memorymaster.knowledge import vault_curator as vc
 
@@ -301,6 +301,7 @@ def test_vault_curator_files_a_withheld_claim_like_any_uncategorised_one(monkeyp
     ]  # same as an omitted one; nothing stored
 
 
+# GUARD: passed before the S-6 state fixes; it pins behaviour, it does not discriminate.
 def test_vault_linter_leaves_a_withheld_contradiction_unverified(monkeypatch):
     from memorymaster.knowledge import vault_linter as vl
 
@@ -310,6 +311,7 @@ def test_vault_linter_leaves_a_withheld_contradiction_unverified(monkeypatch):
     assert out == [{"key": "k", "claims": [{"value": GATED}, {"value": BENIGN}]}] and "verified" not in out[0]
 
 
+# GUARD: passed before the S-6 state fixes; it pins behaviour, it does not discriminate.
 def test_rerank_withheld_request_keeps_input_order_and_charges_no_failure(monkeypatch):
     from memorymaster.recall import llm_rerank as lr
 
@@ -322,6 +324,7 @@ def test_rerank_withheld_request_keeps_input_order_and_charges_no_failure(monkey
     assert after["failures"] == before["failures"] and after["attempts"] == before["attempts"] and not after["disabled"]
 
 
+# GUARD: passed before the S-6 state fixes; it pins behaviour, it does not discriminate.
 def test_entity_extractor_withheld_text_has_no_state_effect(monkeypatch):
     from memorymaster.knowledge import entity_extractor as ee
 
@@ -377,3 +380,189 @@ def test_trusted_mode_blocks_a_credential_with_a_marker_spliced_into_its_middle(
     assert export_stored("x AKIA[REDACTED:private_ip]IOSFODNN7EXAMPLE y", trusted=True) is None
     assert export_stored("k sk-ant-api03-A1b2C3d4[REDACTED:private_ip]E5f6G7h8I9j0K1l2M3n4O5p6", trusted=True) is None
     assert export_stored("config at[REDACTED:home_path_unix]proj/app.yml is up", trusted=True) is not None
+
+
+# ---- hogging: `limit` counts items actually judged, a withheld item does not consume it --------
+
+
+def test_gating_500_blocked_rows_is_cheap():
+    import time
+
+    from memorymaster.core.provider_egress import export_stored
+
+    texts = [f"{GATED} number {i}" for i in range(500)]
+    started = time.monotonic()
+    assert all(export_stored(t) is None for t in texts)
+    elapsed_ms = (time.monotonic() - started) * 1000
+    assert elapsed_ms < 5000, f"gating 500 blocked rows took {elapsed_ms:.0f} ms"
+    print(f"gate_500_blocked_ms={elapsed_ms:.0f}")
+
+
+def test_run_steward_pages_past_withheld_candidates_instead_of_stalling(tmp_path, monkeypatch):
+    from memorymaster.govern import llm_steward as ls
+
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+    texts = [f"{GATED} blocked number {i}" for i in range(8)] + [f"{BENIGN} benign number {i}" for i in range(3)]
+    path = _steward_db(tmp_path, texts)
+    prompts: list[str] = []
+
+    def reply(*args, **kwargs):
+        prompts.append(" ".join(str(a) for a in args))
+        n = len(prompts)
+        return json.dumps(
+            [{"subject": f"s{n}", "predicate": f"p{n}", "object_value": "v", "action": "confirm", "confidence": 0.8}]
+        )
+
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", reply)
+    runs = [
+        ls.run_steward(
+            str(path), api_key="x", provider="gemini", limit=5, delay=0.0, auto_validate=False, use_llm_provider=True
+        )
+        for _ in range(4)
+    ]
+    assert runs[0]["confirmed"] == 3 and len(prompts) == 3  # the benign ones are reached in the FIRST run
+    assert all(r["egress_withheld"] == 8 for r in runs) and sum(r["confirmed"] for r in runs[1:]) == 0
+    conn = sqlite3.connect(path)
+    try:
+        withheld_status = {r[0] for r in conn.execute("SELECT status FROM claims WHERE text LIKE '%blocked number%'")}
+    finally:
+        conn.close()
+    assert withheld_status == {"candidate"}
+
+
+def test_auto_resolver_reaches_a_benign_pair_behind_many_withheld_ones():
+    from memorymaster.govern import auto_resolver as ar
+
+    claims = []
+    for g in range(10):
+        for j in range(2):
+            claims.append(
+                SimpleNamespace(
+                    id=g * 2 + j + 1,
+                    text=f"{GATED} {g} {j}",
+                    confidence=0.5,
+                    updated_at="x",
+                    citations=[],
+                    status="conflicted",
+                    subject=f"s{g}",
+                    predicate="p",
+                    scope="project:t",
+                )
+            )
+    claims += [
+        SimpleNamespace(
+            id=100 + j,
+            text=BENIGN + f" {j}",
+            confidence=0.5,
+            updated_at="x",
+            citations=[],
+            status="conflicted",
+            subject="ok",
+            predicate="p",
+            scope="project:t",
+        )
+        for j in range(2)
+    ]
+    by_id = {c.id: c for c in claims}
+    store = MagicMock()
+    store.find_by_status.side_effect = lambda status, limit=50, **kw: claims[:limit]  # the fetch cap
+    store.get_claim.side_effect = lambda cid, **kw: by_id[cid]
+    resolved = {"resolved": True, "winner_id": 100, "loser_id": 101, "reason": "x"}
+    with (
+        patch.object(ar, "call_llm", return_value='{"winner": "A", "reason": "x"}'),
+        patch.object(ar, "_apply_conflict_resolution", return_value=resolved),
+    ):
+        result = ar.auto_resolve_conflicts(store, limit=5)
+    assert result["pairs_evaluated"] == 1 and result["resolved"] == 1
+
+
+def _archive(store, texts, subject_of):
+    from memorymaster.core.lifecycle import transition_claim
+    from memorymaster.core.models import CitationInput
+
+    ids = []
+    for i, text in enumerate(texts):
+        claim = store.create_claim(
+            text=text,
+            citations=[CitationInput(source="t")],
+            subject=subject_of(i),
+            predicate=f"p{i}",
+            object_value=f"v{i}",
+        )
+        transition_claim(
+            store,
+            claim.id,
+            to_status="confirmed",
+            reason="t",
+            event_type="transition",
+            event_payload={"actor": "operator"},
+        )
+        transition_claim(store, claim.id, to_status="stale", reason="t", event_type="decay")
+        transition_claim(store, claim.id, to_status="archived", reason="t", event_type="compactor")
+        ids.append(claim.id)
+    return ids
+
+
+def test_compact_summaries_reaches_a_benign_cluster_behind_many_withheld_claims(tmp_path):
+    from memorymaster.govern.jobs.compact_summaries import run
+    from memorymaster.stores.storage import SQLiteStore
+
+    store = SQLiteStore(tmp_path / "c.db")
+    store.init_db()
+    _archive(
+        store,
+        [f"{GATED} {i}" for i in range(12)] + [f"DNS record {i} points to cloudflare" for i in range(3)],
+        lambda i: "blocked" if i < 12 else "dns",
+    )
+    answer = json.dumps(
+        {
+            "summary_text": "DNS uses cloudflare.",
+            "subject": "dns",
+            "predicate": "summary_of",
+            "object_value": "cloudflare",
+            "confidence": 0.9,
+        }
+    )
+    prompts: list[str] = []
+    with patch(
+        "memorymaster.govern.jobs.compact_summaries._call_llm",
+        side_effect=lambda *a, **k: prompts.append(a[3]) or answer,
+    ):
+        result = run(store, provider="gemini", api_key="k", min_cluster=3, limit=5, dry_run=False)
+    assert result.summaries_created == 1 and len(prompts) == 1
+
+
+def test_compact_summaries_applies_min_cluster_after_gating(tmp_path):
+    from memorymaster.govern.jobs.compact_summaries import run
+    from memorymaster.stores.storage import SQLiteStore
+
+    store = SQLiteStore(tmp_path / "c.db")
+    store.init_db()
+    ids = _archive(store, ["DNS record zero points to cloudflare", GATED + " a", GATED + " b"], lambda i: "dns")
+    with patch(
+        "memorymaster.govern.jobs.compact_summaries._call_llm",
+        side_effect=AssertionError("a 1-claim summary must not be made"),
+    ):
+        result = run(store, provider="gemini", api_key="k", min_cluster=3, dry_run=False)
+    assert result.summaries_created == 0 and result.errors == 0
+    assert all(store.get_claim(i).status == "archived" for i in ids)
+
+
+def test_skills_review_gates_summaries_separately_and_pages_past_withheld_items(monkeypatch):
+    from memorymaster.knowledge import skills
+
+    bodies: list[str] = []
+    monkeypatch.setattr(skills.llm_provider, "call_llm", lambda system, body: bodies.append(body) or "")
+    monkeypatch.setattr(
+        skills,
+        "_existing_skill_summaries",
+        lambda service, scope: [{"title": GATED, "slug": "ssh-skill"}, {"title": "release checklist", "slug": "rc"}],
+    )
+    monkeypatch.setattr(skills, "_record_review_diagnostic", lambda *a, **k: None)
+    items = [{"claim_id": i, "scope": "project:x", "text": GATED + f" {i}", "correction_count": 9} for i in range(8)]
+    items += [{"claim_id": 100 + i, "scope": "project:x", "text": BENIGN, "correction_count": 1} for i in range(3)]
+    monkeypatch.setattr(skills, "_review_inputs", lambda service, scopes, limit: items[:limit])
+    stats = skills.review_due_skills(None, scopes=["project:x"], limit=3)
+    assert len(bodies) == 3 and stats["llm_calls"] == 3  # all benign items judged, none closed on the way
+    assert all("ssh-skill" not in b and "release checklist" in b and "203.0.113.9" not in b for b in bodies)
+    assert stats["egress_withheld"] == 8
