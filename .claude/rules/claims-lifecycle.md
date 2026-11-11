@@ -13,8 +13,9 @@ Canonical statuses are defined in `memorymaster/models.py:CLAIM_STATUSES` — si
 | `stale` | Decayed — no recent validation, past freshness window | `jobs/decay.py` |
 | `superseded` | Replaced by a newer claim via explicit link | `auto_resolver.py`, `conflict_resolver.py` |
 | `conflicted` | Contradicts another claim; needs human/steward arbitration | surfaced by `dashboard.py` + resolver jobs |
-| `archived` | Terminal — retired by compaction, dedup, or explicit action | `jobs/compactor.py`, `jobs/dedup.py`, `llm_steward.py` |
+| `archived` | Terminal (one exception below) — retired by compaction, dedup, or explicit action | `jobs/compactor.py`, `jobs/dedup.py`, `llm_steward.py` |
 
+- `archived` is terminal except the documented same-author re-ingest revival to `candidate` (`MemoryService._revive_archived_dedup_match`; blocked for claims archived by `forget`). `reconcile_integrity` accepts exactly that event (`core.lifecycle.is_reingest_revival`) and still reports any other `archived -> *`.
 - Transitions MUST go through `service.py` or the lifecycle helpers in `_storage_lifecycle.py` — never update `status` via direct SQL.
 - Use `CLAIM_STATUSES` from `models.py` as the single source of truth when writing filters or validators. Adding a new status requires updating `models.py` + `schema.sql` CHECK constraint + `schema_postgres.sql`.
 - When superseding, set both `supersedes_claim_id` on the new claim AND `replaced_by_claim_id` on the old one. Steward enforces the invariant; broken pairs break the wiki.

@@ -11,6 +11,7 @@ import os
 from memorymaster.core import access_recording, observability
 from memorymaster.core.claim_authorization import authorize_claims, filter_agent_visibility as _filter_agent_visibility
 from memorymaster.core import llm_budget
+from memorymaster.core.lifecycle import REVIVAL_REASON_PREFIX
 from memorymaster.govern import candidate_dedupe
 from memorymaster.knowledge import entity_ingest
 from memorymaster.recall import graph_expansion, query_cache
@@ -507,7 +508,7 @@ class MemoryService(IntegrationService):
             revived = self.store.apply_status_transition(
                 claim,
                 to_status="candidate",
-                reason=f"reingest_revival:{source_agent or 'unknown'}",
+                reason=f"{REVIVAL_REASON_PREFIX}{source_agent or 'unknown'}",
                 event_type="transition",
             )
         except ConcurrentModificationError:
