@@ -307,7 +307,8 @@ def run(
         log.info("Key rotation enabled with %d keys", key_rotator.key_count)
 
     # 1. Find unsummarized archived claims
-    archived_claims = _get_unsummarized_archived_claims(store, limit=limit)
+    # Scan up to 10x limit: a claim the egress gate withholds is not summarised and must not use up `limit`.
+    archived_claims = _get_unsummarized_archived_claims(store, limit=limit * 10)
     if not archived_claims:
         log.info("No unsummarized archived claims found")
         return CompactSummaryResult(
@@ -353,6 +354,8 @@ def run(
             for i in range(0, len(cluster), max_cluster)
         ]
         for sub_cluster in sub_clusters:
+            if source_claims_summarized >= limit:
+                break
             if len(sub_cluster) < min_cluster:
                 continue
 
@@ -366,6 +369,13 @@ def run(
                 continue
             # Only the claims whose lines went out are summarised, linked and retired by this summary;
             # a withheld claim stays exactly as it was.
+            if len(sent_claims) < min_cluster:  # min_cluster counts what was actually summarised
+                details.append({
+                    "source_claim_ids": [c.id for c in sub_cluster],
+                    "cluster_size": len(sub_cluster),
+                    "action": "egress_withheld",
+                })
+                continue
             sub_cluster = sent_claims
             prompt = SUMMARIZE_PROMPT.replace("{claims_text}", claims_text)
 

@@ -511,8 +511,10 @@ def test_compact_summaries_reaches_a_benign_cluster_behind_many_withheld_claims(
     store.init_db()
     _archive(
         store,
-        [f"{GATED} {i}" for i in range(12)] + [f"DNS record {i} points to cloudflare" for i in range(3)],
-        lambda i: "blocked" if i < 12 else "dns",
+        [f"{GATED} {i}" for i in range(6)]
+        + [f"DNS record {i} points to cloudflare" for i in range(3)]
+        + [f"{GATED} late {i}" for i in range(6)],
+        lambda i: "dns" if 6 <= i < 9 else "blocked",
     )
     answer = json.dumps(
         {

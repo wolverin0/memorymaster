@@ -573,6 +573,9 @@ def _sanitize_extraction(
     return sanitized.subject, sanitized.predicate, sanitized.object_value, list(sanitized.findings)
 
 
+SCAN_FACTOR = 10  # rows scanned per run = limit x this, so a blocked backlog cannot make a cycle unbounded
+
+
 def run_steward(
     db_path: str,
     api_key: str,
@@ -670,7 +673,7 @@ def run_steward(
             "FROM claims WHERE status = 'candidate' "
             "AND COALESCE(claim_type, '') <> 'observation' "
             f"AND text IS NOT NULL AND scope = ? {policy_sql}ORDER BY id LIMIT ?",
-            (scope, *blocked, limit),
+            (scope, *blocked, limit * SCAN_FACTOR),
         ).fetchall()
     else:
         candidates = conn.execute(
@@ -678,7 +681,7 @@ def run_steward(
             "FROM claims WHERE status = 'candidate' "
             "AND COALESCE(claim_type, '') <> 'observation' "
             f"AND text IS NOT NULL {policy_sql}ORDER BY id LIMIT ?",
-            (*blocked, limit),
+            (*blocked, limit * SCAN_FACTOR),
         ).fetchall()
 
     confirmed_claim_ids: list[int] = []
@@ -714,9 +717,13 @@ def run_steward(
         "observation_review": observation_review,
     }
 
+    judged = 0  # `limit` counts claims the steward actually handled: a withheld one does not consume it
     for row in candidates:
         from memorymaster.dreaming.source_review import is_dream_claim
 
+        if judged >= limit:
+            break
+        judged += 1
         if is_dream_claim(conn, row["id"]):
             stats["dream_source_review_pending"] = stats.get("dream_source_review_pending", 0) + 1
             continue
@@ -816,6 +823,7 @@ def run_steward(
         if result.action == "skip" and not result.extractions:
             # Withheld by the egress gate: never judged, so it stays a candidate, untouched.
             stats["egress_withheld"] += 1
+            judged -= 1
             continue
 
         if result.action == "archive":

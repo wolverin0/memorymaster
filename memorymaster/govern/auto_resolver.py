@@ -236,7 +236,7 @@ def auto_resolve_conflicts(store, *, limit: int = 50) -> dict[str, int]:
     Returns immediately with empty counts if no conflicted claims found.
     """
     try:
-        conflicted = store.find_by_status("conflicted", limit=limit * 2, include_citations=True)
+        conflicted = store.find_by_status("conflicted", limit=limit * 10, include_citations=True)  # withheld pairs cost no limit
     except Exception as exc:
         logger.error("Failed to find conflicted claims: %s", exc)
         return {"pairs_evaluated": 0, "resolved": 0, "failed": 0}
