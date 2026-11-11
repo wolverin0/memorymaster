@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from memorymaster.bridges.dream_bridge import _DREAM_EXTRA_PATTERNS
 from memorymaster.core.security import (
     _CLAIM_ONLY_PATTERNS,
+    _SECRET_PATTERNS,
     redact_text,
     scan_text_for_findings,
 )
@@ -76,6 +77,13 @@ def prepare_claim_egress(text: str) -> ClaimEgress:
 
 
 _TOKEN_CHAR = re.compile(r"[A-Za-z0-9_-]")
+# Marker names this machinery can actually emit: trusted neutralisation accepts no other name.
+_EMITTED_NAMES = frozenset(
+    {name for name, _ in _SECRET_PATTERNS}
+    | {name for name, _ in _CLAIM_ONLY_PATTERNS}
+    | {name for name, _ in _EGRESS_PATTERNS}
+    | {"encoded_secret", "structured_secret", "absolute_path", "home_path", "numeric"}
+)
 _INDEXED_MARKER = re.compile(r"\[REDACTED:[A-Za-z0-9_]+(?:#\d+)?\]")
 
 
@@ -93,6 +101,8 @@ def _neutralise(text: str, *, trusted: bool) -> tuple[str, Callable[[str], str]]
 
     def hold(match: re.Match[str]) -> str:
         start, end = match.span()
+        if trusted and match.group(0)[len("[REDACTED:") : -1] not in _EMITTED_NAMES:
+            return match.group(0)  # a name our gate never emits is text: it blocks
         if not trusted and (
             (start and _TOKEN_CHAR.match(text[start - 1])) or (end < len(text) and _TOKEN_CHAR.match(text[end]))
         ):
@@ -123,8 +133,8 @@ def prepare_indexed_egress(texts: list[str]) -> list[ClaimEgress]:
 
     Redacted private IPs, paths and emails become ``[REDACTED:<name>#<k>]`` where the same original
     value gets the same ``k`` across ALL ``texts`` and a different value a different ``k``, so the
-    model can tell two redacted values apart without seeing them. A text with a literal credential is
-    blocked (masked credentials would read equal).
+    model can tell two redacted values apart without seeing them. Blocking is the claim gate's: only a
+    credential-grade finding that survives redaction (literal credentials are substituted, like there).
     """
     seen: dict[tuple[str, str], int] = {}
     out: list[ClaimEgress] = []
@@ -140,7 +150,7 @@ def prepare_indexed_egress(texts: list[str]) -> list[ClaimEgress]:
             redacted, count = pattern.subn(index, redacted)
             if count:
                 findings.append(name)
-        blocked = bool(literal) or bool(scan_text_for_findings(redacted))
+        blocked = bool(scan_text_for_findings(redacted))
         if "[redacted" in neutral.lower() or _DREAM_EXTRA_PATTERNS.search(_INDEXED_MARKER.sub(" ", redacted)):
             findings.append("export_refused")
             blocked = True
