@@ -107,12 +107,13 @@ class AgyRead(NamedTuple):
 
 _AGY_OWN_DIRS = {".gemini", "antigravity", "antigravity-cli", "antigravity-ide", "brain"}  # agy's own files, not the project
 _MAX_TOUCHED_PATHS = 4000
+_MIN_ATTRIBUTABLE_FILES = 3  # a "majority" of one or two files is an accident, not evidence of a workspace
 
 
 def _agy_touched_scope(database: Path | None, scope_of: Callable[[str], str]) -> tuple[str, bool]:
     """Workspace of a session whose executor metadata carries no workspace field (newer agy): the project most
-    of the files the session touched belong to (executor_metadata field path 18.1.3 lists them).  A strict
-    majority of the attributable files is required, so a session straying into other projects is not
+    of the files the session touched belong to (executor_metadata field path 18.1.3 lists them).  At least 3
+    attributable files and a strict majority of them are required, so a session straying into other projects is not
     attributed to one of them by accident.  Returns ``(scope, automated)``."""
     from memorymaster.dreaming.agy_source import MAX_METADATA_BYTES, MAX_METADATA_ROWS, _fields
 
@@ -152,7 +153,8 @@ def _agy_touched_scope(database: Path | None, scope_of: Callable[[str], str]) ->
     if not by_scope:
         return "", False
     scope, count = by_scope.most_common(1)[0]
-    return (scope, False) if count * 2 > sum(by_scope.values()) else ("", False)
+    total = sum(by_scope.values())
+    return (scope, False) if total >= _MIN_ATTRIBUTABLE_FILES and count * 2 > total else ("", False)
 
 
 def agy_session(session: Any, scope_of: Callable[[str], str], include_automated: bool = False) -> AgyRead:
@@ -246,6 +248,14 @@ def opencode_session(root: Path, session_id: str) -> tuple[str | None, list[Msg]
     return directory or None, messages
 
 
+def is_unreadable_agy(exc: Exception) -> bool:
+    """The agy reader refused the data itself (``AgySourceError``: a malformed or oversized record): a property of
+    the file, so it is recorded with its stamp and retried only when the file changes."""
+    from memorymaster.dreaming.agy_source import AgySourceError
+
+    return isinstance(exc, AgySourceError)
+
+
 def is_oversized(exc: Exception) -> bool:
     """The dreaming reader's size bounds (``oversized OpenCode session/record/message``): a property of the data."""
     return isinstance(exc, ValueError) and "oversized" in str(exc)
@@ -256,4 +266,4 @@ def is_locked(exc: sqlite3.Error) -> bool:
 
 
 __all__ = ["AgyRead", "Msg", "OcSession", "agy_session", "agy_sessions", "agy_stamp", "is_generated_cwd",
-           "is_locked", "is_oversized", "opencode_session", "opencode_sessions", "usable_text"]
+           "is_locked", "is_oversized", "is_unreadable_agy", "opencode_session", "opencode_sessions", "usable_text"]

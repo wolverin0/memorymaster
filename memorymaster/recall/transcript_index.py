@@ -593,8 +593,12 @@ def _index_agy(run: _Run, root: Path) -> None:
         try:
             read = ts.agy_session(session, lambda cwd: _scope_for_cwd(cwd, run.scopes), run.include_automated)
         except (OSError, ValueError, UnicodeError) as exc:  # AgySourceError is a ValueError
-            logger.warning("transcript_index: cannot read an agy session: %s", type(exc).__name__)
-            _tick(stats, "agy", "errors")
+            if ts.is_unreadable_agy(exc):  # the file itself is refused: remember it under this stamp
+                _write_session(conn, "agy", rel, _opaque_id("agy", uuid), [], replace=bool(row), size=size, mtime_ns=mtime_ns)
+                _tick(stats, "agy", "skipped_unreadable")
+            else:
+                logger.warning("transcript_index: cannot read an agy session: %s", type(exc).__name__)
+                _tick(stats, "agy", "errors")
             continue
         frags = _pack(read.messages, read.scope, _mtime_iso(mtime_ns))
         _write_session(conn, "agy", rel, _opaque_id("agy", uuid), frags, replace=bool(row), size=size, mtime_ns=mtime_ns,
@@ -698,7 +702,7 @@ def index_transcripts(
     index_path = index_path or default_index_path()
     plan, switched_off = _plan(root)
     stats = {"files_seen": 0, "files_indexed": 0, "files_skipped": 0, "fragments_added": 0, "files_automated": 0,
-             "files_removed": 0, "rebuilt": 0, "errors": 0, "skipped_no_workspace": 0, "skipped_oversized": 0,
+             "files_removed": 0, "rebuilt": 0, "errors": 0, "skipped_no_workspace": 0, "skipped_oversized": 0, "skipped_unreadable": 0,
              "sources_failed": 0}
     for name, _ in plan:
         stats.update({f"{name}_{key}": 0 for key in _PER_SOURCE})

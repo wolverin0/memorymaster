@@ -270,11 +270,13 @@ def _run_transcript_index(args: argparse.Namespace) -> int:
     from memorymaster.recall import transcript_index
 
     stats = transcript_index.index_transcripts(since_days=TRANSCRIPT_INDEX_SINCE_DAYS)
-    log_event(_JOB_LOG, "transcript_index_result", surface="job", job="transcript-index", **stats)
-    # A failed RUN, not a skipped session: the Claude source could not be read, or nothing at all could be.  Per-source
-    # and per-session counts stay in the logged stats; a side source being down must not fail the task forever.
+    failed = sorted(key[: -len("_failed")] for key, value in stats.items() if key.endswith("_failed") and value)
+    log_event(_JOB_LOG, "transcript_index_result", surface="job", job="transcript-index",
+              failed_sources=",".join(failed), **stats)
+    # A failed RUN, not a skipped or unreadable session: a whole source could not be read (named in the log line),
+    # or nothing at all could be.  Per-session errors alone stay exit 0.
     nothing_done = not (stats.get("files_indexed") or stats.get("files_skipped"))
-    return 1 if stats.get("claude_failed") or (stats.get("errors") and nothing_done) else 0
+    return 1 if failed or (stats.get("errors") and nothing_done) else 0
 
 
 def _run_steward(args: argparse.Namespace) -> int:

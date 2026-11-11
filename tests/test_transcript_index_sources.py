@@ -349,6 +349,15 @@ def test_agy_new_shape_with_many_touched_files_in_one_blob_is_resolved(world):
     assert world.index()["agy_files_indexed"] == 1 and len(world.search("marzipan snapshots cadence")) == 1
 
 
+@pytest.mark.parametrize("n, attributed", [(1, False), (2, False), (3, True)])
+def test_agy_new_shape_needs_at_least_three_attributable_files(world, n, attributed):
+    write_agy(world.home, "11111111-2222-4333-8444-555555555555", None,
+              agy_rows("Which cadence for the marzipan snapshots?", "We decided the marzipan snapshots run every 7 hours, final."),
+              touched=_touch(world, world.cwd, n))
+    stats = world.index()
+    assert (stats["agy_files_indexed"], stats["agy_skipped_no_workspace"]) == ((1, 0) if attributed else (0, 1))
+
+
 def test_agy_new_shape_without_a_clear_majority_is_not_attributed(world):
     touched = _touch(world, world.cwd, 3) + _touch(world, world.other_cwd, 3)
     write_agy(world.home, "11111111-2222-4333-8444-555555555555", None,
@@ -470,10 +479,12 @@ def test_a_corrupt_or_locked_source_is_counted_and_never_stops_the_others(world)
     (oc_root / "opencode.db").write_bytes(b"not a sqlite database at all" * 40)
     stats = world.index()
     assert stats["opencode_errors"] == 1 and stats["opencode_files_indexed"] == 0
-    assert stats["agy_errors"] == 1 and stats["agy_files_indexed"] == 1
+    assert stats["agy_errors"] == 0 and stats["agy_skipped_unreadable"] == 1 and stats["agy_files_indexed"] == 1
     assert stats["codex_errors"] == 1 and stats["codex_files_indexed"] == 1  # the garbage rollout is counted, not fatal
     assert len(world.search("quartzite audit logs retention")) == 1 and len(world.search("thimble queue")) == 1
-    assert stats["errors"] == 3
+    assert stats["errors"] == 2
+    again = world.index()  # the unreadable agy session is remembered under its stamp, not re-read
+    assert again["agy_skipped_unreadable"] == 0 and again["agy_files_seen"] == 2 and again["files_skipped"] >= 2
 
 
 def test_a_locked_opencode_database_skips_the_round_and_keeps_the_rest(world):
