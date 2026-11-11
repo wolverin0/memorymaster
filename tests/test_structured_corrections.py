@@ -505,12 +505,16 @@ def test_a_replacement_nobody_ruled_on_still_holds_the_slot(svc) -> None:
 
 
 def test_any_confirmed_replacement_hides_the_target(svc) -> None:
+    """Two live proposals on one target: the older replacement failed validation (slot released), a newer one was
+    filed, then the OLDER one is confirmed. The target must be hidden whichever replacement is deliverable."""
     old = _claim(svc, "The staging admin panel listens on port 8080", source_agent="agent-a")
-    first = _claim(svc, "The staging admin panel listens on port 9443 since the 2026 migration",
-                   source_agent="agent-b", supersedes=[old.human_id], confirm=False)
-    assert svc.validate_now(first.id)["status"] == "confirmed"  # cross-agent: confirmed, never applied
-    stuck = _claim(svc, "port 7", source_agent="agent-a", confirm=False)
-    queue_prose_corrections(svc.store, dataclasses.replace(stuck, text=f"port 7, corrects {old.human_id}"), 0.5)
+    first = _claim(svc, "port 9443", source_agent="agent-b", supersedes=[old.human_id], confirm=False)
+    assert svc.validate_now(first.id)["status"] == "candidate"  # examined, too short: releases the slot
+    _claim(svc, "The staging admin panel listens on port 9444 since the 2026 migration", source_agent="agent-c",
+           supersedes=[old.human_id], confirm=False)
+    assert len(_proposals(svc, old.id)) == 2
+    assert old.id not in pending_supersession_ids(svc, use_cache=False)
+    lifecycle.transition_claim(svc.store, first.id, "confirmed", reason="fixture", event_type="validator")
     assert old.id in pending_supersession_ids(svc, use_cache=False)
 
 
