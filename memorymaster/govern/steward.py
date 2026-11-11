@@ -1559,6 +1559,15 @@ def resolve_steward_proposal(
     if actor == "agent" and action == "approve" and is_operator_only_proposal(payload) and not is_jev_proposal(payload):
         # An agent cannot authenticate who filed a cross-identity supersession, so it must not approve one
         # (reject stays allowed: it restores the status quo). Jev proposals fall through to the check below.
+        # recorded so repeated attempts are visible; not a resolution: every consumer matches the exact
+        # ``steward_proposal_approved``/``_rejected`` details, so the proposal stays pending
+        service.store.record_event(
+            claim_id=target_claim_id,
+            event_type="audit",
+            details="steward_proposal_refused",
+            payload={"source": _ACTOR_SOURCE[actor], "actor": actor,
+                     "proposal_event_id": int(target["proposal_event_id"]), "reason": "operator_only"},
+        )
         raise OperatorOnlyProposalRefused(
             "this proposal requires operator approval (dashboard, or the CLI with --actor operator)")
     if (actor == "automation" and is_operator_only_proposal(payload)) or (not allow_jev and is_jev_proposal(payload)):
