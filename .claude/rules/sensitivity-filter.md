@@ -30,7 +30,7 @@ Formas que el filtro cubre además de las claves de proveedor: contraseña en pr
 (`la contraseña ... es X`, `clave: X`; el valor lleva un símbolo `!@#$%^&*+~?`, o mayúscula+minúscula+2 dígitos, o va entre comillas con letra y dígito; `clave primaria`, el verbo `pass` y valores tipo `utf8mb4`/`admin1234` pasan),
 `esquema://usuario:clave@host` de cualquier esquema (sólo se redacta la clave), AWS secret access key con
 contexto AWS, OTP/PIN con palabra clave, CUIT/CUIL con dígito verificador válido, rutas home con `/` o `\`.
-Fuera de alcance: secretos partidos por espacios o saltos de línea, o en hex puro. Una huella SSH
+Fuera de alcance: secretos partidos por espacios o saltos de línea, o en hex puro; palabra clave seguida de 9+ espacios o salto de línea antes del valor; `pin 8080` (puerto) y ids de 11 dígitos con dígito CUIT válido; contraseñas en minúsculas+dígitos sin símbolo ni comillas (`admin1234`) o con más de 256 caracteres; `/Users/Shared`, `C:/Users/Public` no se tratan como usuarios. Una huella SSH
 `SHA256:<43 b64>` es pública y no se redacta.
 
 ## Where the filter applies

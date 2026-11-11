@@ -601,3 +601,28 @@ def test_persisted_home_path_redaction_is_linear_and_leaves_bare_names() -> None
     assert time.perf_counter() - start < 3.0
     text = "the user pauolx19 logged in; see /users/:id and c:/windows/system32"
     assert sanitize_persisted_text(text) == (text, [])
+
+
+@pytest.mark.parametrize("text, secret", [
+    ("la contraseña es admin@123", "admin@123"),
+    ("la contraseña es admin#123", "admin#123"),
+    ("la contraseña es hunter!2", "hunter!2"),
+    ("la clave es qwerty!123", "qwerty!123"),
+    ("la contraseña es j0hn@acme.io", "j0hn@acme.io"),
+    ("contraseña: " + "Xy7#" * 20, "Xy7#Xy7#"),
+    ("passphrase was Abc=123def4567", "Abc=123def4567"),
+    ("https://" + "u" * 100 + ":Xy7#kPq9@host.example.test/x", "Xy7#kPq9"),
+])
+def test_real_looking_passwords_are_redacted_after_the_judge_round(text: str, secret: str) -> None:
+    redacted, findings = redact_text(text)
+    assert findings and secret not in redacted, redacted
+
+
+@pytest.mark.parametrize("text", [
+    "la clave es user_id%16",
+    "la clave de dedupe es scope+subject",
+    "la clave es user@example.com",
+    "C:/Users/Public/Documents/x.txt and /Users/Shared/Library",
+])
+def test_identifier_joins_emails_and_shared_profiles_stay_readable(text: str) -> None:
+    assert redact_text(text) == (text, [])

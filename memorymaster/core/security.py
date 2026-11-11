@@ -70,7 +70,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # S-1: scheme://user:password@host for any scheme (https, ftp, smb, mqtt, rtsp...). Only the password span
     # (group "secret") is redacted, user and host stay readable. '/' ends the password, so ports and paths pass.
     ("url_basic_auth_password", re.compile(
-        r"(?i)\b[a-z][a-z0-9+.\-]{1,15}://(?!\[REDACTED)[^:\s/@]{0,64}:(?!\[REDACTED)(?P<secret>[^\s/]{1,256})@"
+        r"(?i)\b[a-z][a-z0-9+.\-]{1,15}://(?!\[REDACTED)[^:\s/@]{0,256}:(?!\[REDACTED)(?P<secret>[^\s/]{1,256})@"
     )),
     # Key=value assignments in plain text
     ("password_assignment", re.compile(r"(?i)\b(password|passwd|pwd)\s*[:=]\s*([^\s,;]+)")),
@@ -113,7 +113,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"(?<![A-Za-z0-9_])"
         # Exempt only a lowercase config shape (min_length=12, hashing=bcrypt2) that does not follow a
         # connector: "the secret is Abc=123def4567" / "reset to Abc=Def123456" are still passwords.
-        r"(?:(?<=\bis )|(?<=\bto )|(?<=\bes )|(?<=:)|(?<=: )|(?<=\n)"
+        r"(?:(?<=\bis )|(?<=\bto )|(?<=\bes )|(?<=\bwas )|(?<=\bera )|(?<=:)|(?<=: )|(?<=\n)"
         r"|(?![a-z_][a-z_.]{0,30}=[a-z0-9_.\-]{1,16}(?![A-Za-z0-9])))("
         r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[A-Z])"
         r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[0-9])"
@@ -137,7 +137,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r")"
         r"[ \t]{0,8}(?!\[REDACTED)"
         r"(?P<q>[`'\"])?"
-        r"(?P<secret>[^\s`'\",;]{6,64})(?![^\s`'\",;])"
+        r"(?P<secret>[^\s`'\",;]{6,256})(?![^\s`'\",;])"
     )),
     # S-1: one-time code / PIN, only with an explicit keyword right before 4-8 digits ("OTP 493021",
     # "código de verificación: 493021", "el pin es 4821"). Bare numbers never match. Only the digits are redacted.
@@ -164,13 +164,13 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # S-8: both slash styles, and the Git Bash spelling /c/Users/<name>. "Users" stays case-sensitive: the lowercase
     # spellings are the egress absolute-path rules' job (they redact the whole path, this one only the prefix).
     ("home_path_windows", re.compile(
-        r"(?:[Cc]:(?:\\\\|[\\/])|(?<![\w/])/[Cc]/)Users(?:\\\\|[\\/])([A-Za-z][A-Za-z0-9._\-]{1,40})"
+        r"(?:[Cc]:(?:\\\\|[\\/])|(?<![\w/])/[Cc]/)Users(?:\\\\|[\\/])(?!(?:Public|Shared|Default)\b)([A-Za-z][A-Za-z0-9._\-]{1,40})"
     )),
     # v2-refresh (home_path_unix): /home/<name>/ or /Users/<name>/ likewise
     # exposes usernames. Anchored to start-of-string, whitespace, or a few
     # common surrounding chars so we don't match arbitrary substrings.
     ("home_path_unix", re.compile(
-        r"(?:^|[\s=(\"'])((?:/home|/Users)/[A-Za-z][A-Za-z0-9._\-]{1,40}/)"
+        r"(?:^|[\s=(\"'])((?:/home|/Users)/(?!Shared/)[A-Za-z][A-Za-z0-9._\-]{1,40}/)"
     )),
     # v2-refresh (card_number_prose): PAN-shaped runs (Visa/MC/Amex BIN +
     # 12-15 more digits, optionally group-separated). Synthetic test values
@@ -436,9 +436,11 @@ _aws_id_seen: tuple[str, bool] = ("", False)
 def _text_has_aws_key_id(text: str) -> bool:
     """Search once per text object (a 300 KB text with thousands of candidates must not rescan per match)."""
     global _aws_id_seen
-    if _aws_id_seen[0] is not text:
-        _aws_id_seen = (text, bool(_AWS_KEY_ID_RE.search(text)))
-    return _aws_id_seen[1]
+    seen = _aws_id_seen  # one read: another thread may replace the module tuple between check and use
+    if seen[0] is not text:
+        seen = (text, bool(_AWS_KEY_ID_RE.search(text)))
+        _aws_id_seen = seen
+    return seen[1]
 
 
 def _aws_secret_has_context(match: re.Match[str]) -> bool:
@@ -448,8 +450,13 @@ def _aws_secret_has_context(match: re.Match[str]) -> bool:
     )
 
 
-_EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[A-Za-z]{2,}")
-_IDENT_JOIN_RE = re.compile(r"[a-z_][a-z_.]*[+#%@*&^~$!\-]+(?:[a-z_][a-z_.]*|\d{1,3})")
+# Plain address: local part without digits/symbols typical of passwords, real domain with a letters-only TLD.
+# "j0hn@acme.io" / "admin@123" are judged on evidence instead (email-shaped passwords exist).
+_EMAIL_RE = re.compile(r"[A-Za-z][A-Za-z._\-]*@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
+# Two identifier words joined by an operator: lowercase words of 2+ letters (no digits), "_" / "." allowed inside;
+# a short number on the right is allowed only after a "_"/"." identifier (user_id%16, not hunter!2 / admin#123).
+_WORD = r"[a-z]{2,}(?:[_.][a-z]{2,})*"
+_IDENT_JOIN_RE = re.compile(rf"{_WORD}[+#%@*&^~$!\-]+{_WORD}|[a-z]{{2,}}(?:[_.][a-z]{{2,}})+[+#%@*&^~$!\-]+\d{{1,3}}")
 _PROSE_SYMBOLS = frozenset("!@#$%^&*+~")
 
 
@@ -729,7 +736,7 @@ def validate_persisted_metadata(fields: Mapping[str, object]) -> None:
 # slash, MSYS /c/. Not in _SECRET_PATTERNS because the export/egress redactors treat the lowercase spellings as
 # whole absolute paths (tests/test_home_path_egress_spellings.py).
 _PERSISTED_HOME_PATH_RE = re.compile(
-    r"(?i)(?:\b[a-z]:(?:\\\\|[\\/])|(?<![\w/])/[a-z]/)users(?:\\\\|[\\/])[a-z][a-z0-9._\-]{1,40}"
+    r"(?i)(?:\b[a-z]:(?:\\\\|[\\/])|(?<![\w/])/[a-z]/)users(?:\\\\|[\\/])(?!(?:public|shared|default)\b)[a-z][a-z0-9._\-]{1,40}"
 )
 
 
