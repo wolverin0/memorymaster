@@ -446,7 +446,10 @@ def test_d5_a_failing_proposal_scan_fails_closed(world, monkeypatch) -> None:
 def test_d5_known_limit_a_retired_claim_whose_replacement_is_not_injected_leaves_the_old_quote(world) -> None:
     """Limit: nothing on the injected claims flags this correction; the old value arrives labelled and dated."""
     old = _old_port_world(world)
-    lifecycle.transition_claim(world.service.store, old, "superseded", reason="fixture", event_type="validator")
+    replacement = world.service.ingest("Vault now manages the gateway secret rotation", [CitationInput(
+        source="test://fb", locator="z")], scope="project:here", source_agent="fixture")  # candidate: not injected
+    lifecycle.transition_claim(world.service.store, old, "superseded", reason="fixture", event_type="validator",
+                               replaced_by_claim_id=replacement.id)
     world.claim("The router proxy port field must be in the deploy checklist")
     world.claim("The router proxy port is documented in the deploy page")
     out, ids = world.ask(PORT_ASK)
