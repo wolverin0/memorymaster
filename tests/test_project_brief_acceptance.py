@@ -1,4 +1,4 @@
-"""T-2278 Track B acceptance on synthetic data: 4 projects x {Claude, Codex} SessionStart hooks.
+"""T-2278 Track B acceptance on synthetic data: 4 projects x {Claude, Codex, agy, OpenCode} SessionStart consumers.
 
 Port of the audit's brief2.py 16-cell idea: a real-schema tmp DB with four project scopes (one with 40,000
 claims), a tmp ledger and ROADMAP.md per project, the flags on in a tmp HOME, the hooks rendered from the shipped
@@ -157,7 +157,32 @@ def world(template, tmp_path, monkeypatch):
     project_runtime._refresh_cache.clear()
 
 
-def run_hook(hooks: Path, cli: str, cwd: str, monkeypatch) -> str:
+def run_agy(cwd: str, db: Path) -> str:
+    from memorymaster.surfaces import agy_hooks
+
+    raw = agy_hooks.run_hook("SessionStart", {"conversationId": "acceptance-agy", "workspacePaths": [cwd],
+                                              "lastUserInput": ""}, db_path=str(db))
+    return json.loads(raw)["injectSteps"][0]["ephemeralMessage"] if raw else ""
+
+
+def run_opencode(cwd: str, monkeypatch) -> str:
+    """The Python entry point the OpenCode plugin spawns with --session-start (the plugin itself: test_opencode_hooks)."""
+    from memorymaster.surfaces import hook_recall
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"cwd": cwd, "session_id": "acceptance-opencode"})))
+    stdout = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    assert hook_recall.main(["--cli", "opencode", "--session-start"]) == 0
+    out = stdout.getvalue()
+    assert not out or out.startswith(hook_recall.BRIEF_PREFIX), out[:80]
+    return out
+
+
+def run_hook(hooks: Path, cli: str, cwd: str, monkeypatch, db: Path | None = None) -> str:
+    if cli == "agy":
+        return run_agy(cwd, db)
+    if cli == "opencode":
+        return run_opencode(cwd, monkeypatch)
     data = json.dumps({"cwd": cwd, "session_id": f"acceptance-{cli}", "hook_event_name": "SessionStart"})
     out = io.StringIO()
     monkeypatch.setattr(sys, "stdin", io.StringIO(data))
@@ -191,8 +216,8 @@ def test_sixteen_cells_every_cli_shows_running_next_and_three_resolvable_failure
         assert result["status"] == "ok", f"{slug}: refresh did not publish ({result})"
     sizes = {}
     for slug in SLUGS:
-        for cli in ("claude", "codex"):
-            context = run_hook(hooks, cli, str(tmp_path / "repos" / slug), monkeypatch)
+        for cli in ("claude", "codex", "agy", "opencode"):
+            context = run_hook(hooks, cli, str(tmp_path / "repos" / slug), monkeypatch, tmp_path / "memorymaster.db")
             cell = f"{slug}/{cli}"
             assert "Brief " + slug in context, f"{cell}: no brief in {context[:200]!r}"
             running = section(context, "RUNNING")
@@ -212,7 +237,7 @@ def test_sixteen_cells_every_cli_shows_running_next_and_three_resolvable_failure
         print("brief context bytes per cell:", sizes)
         print("brief bytes per project:", {c: len(read_manifest(configs[c])["brief"].encode()) for c in SLUGS})
     assert max(sizes.values()) <= 3000
-    assert max(size for cell, size in sizes.items() if cell.endswith("codex")) <= 1800
+    assert max(size for cell, size in sizes.items() if not cell.endswith("claude")) <= 1800 + 64  # opencode: + its prefix
 
 
 def test_large_scope_publishes_complete_and_overflow_publishes_degraded(world):

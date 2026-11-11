@@ -5,6 +5,15 @@ import { spawn } from "node:child_process";
 const python = __MEMORYMASTER_PYTHON_JSON__;
 const projectRoot = __MEMORYMASTER_ROOT_JSON__;
 const prefix = "[MemoryMaster recall]\n";
+// The project-brief consumer switches, as memorymaster.profile.project_runtime.active() reads them.
+const briefFlags = ["MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "MEMORYMASTER_PROJECT_PROJECTION_SESSION_START"];
+const truthy = (n) => ["1", "true", "yes", "on"].includes((process.env[n] ?? "").trim().toLowerCase());
+// Our own pipelines never get a brief: machine_traffic.internal_run() and filter_enabled("opencode").
+const internalRun = () => ["MEMORYMASTER_INTERNAL_RUN", "MEMORYMASTER_INTERNAL_CODEX"].some(truthy)
+  && !["0", "false", "no", "off"].includes((process.env.MEMORYMASTER_RECALL_MACHINE_FILTER_OPENCODE ?? "").trim().toLowerCase());
+const briefOn = () => briefFlags.every(truthy) && !internalRun();
+const MAX_BRIEF_TRIES = 3;
+const briefPrefix = "[MemoryMaster project brief]\n";
 
 function command(module, payload, extra = [], timeout = 2800) {
   return new Promise((resolve) => {
@@ -51,8 +60,17 @@ export function latestUser(messages) {
   }
 }
 
+function inject(system, structured, block, blockPrefix) {
+  for (let i = system.length - 1; i >= 0; i--) {
+    const text = structured ? system[i]?.text : system[i];
+    if (typeof text === "string" && text.startsWith(blockPrefix)) system.splice(i, 1);
+  }
+  system.push(structured ? { type: "text", text: block } : block);
+}
+
 export function createAdapter(cwd) {
   const sessions = new Map();
+  const briefs = new Map(); // sessionID -> {id, pending}: the project brief rides only the session's first prompt
   function remember(sessionID, prompt, id = prompt) {
     if (typeof sessionID !== "string" || !sessionID || typeof prompt !== "string" || !prompt.trim()) return;
     const previous = sessions.get(sessionID);
@@ -68,13 +86,29 @@ export function createAdapter(cwd) {
     state.pending ??= command("memorymaster.surfaces.hook_recall", {
       prompt: state.prompt, cwd, session_id: sessionID,
     });
-    const block = await state.pending;
-    if (signal?.aborted || !block.startsWith(prefix)) return;
-    for (let i = system.length - 1; i >= 0; i--) {
-      const text = structured ? system[i]?.text : system[i];
-      if (typeof text === "string" && text.startsWith(prefix)) system.splice(i, 1);
+    let brief = briefs.get(sessionID);
+    if (briefOn() && (!brief || (brief.retry && brief.tries < MAX_BRIEF_TRIES))) {
+      if (!brief && briefs.size >= 1000) briefs.delete(briefs.keys().next().value);
+      brief = { id: state.id, tries: (brief?.tries ?? 0) + 1, pending: command("memorymaster.surfaces.hook_recall", {
+        cwd, session_id: sessionID,
+      }, ["--session-start"]) };
+      briefs.set(sessionID, brief);
     }
-    system.push(structured ? { type: "text", text: block } : block);
+    const [block, briefBlock] = await Promise.all([state.pending, brief?.id === state.id ? brief.pending : ""]);
+    if (signal?.aborted) {
+      if (brief) brief.retry = true; // an aborted call delivered nothing: the next prompt asks again, up to MAX_BRIEF_TRIES
+      return;
+    }
+    // A failed or silent call yields "" and the prompt proceeds untouched; the receipt follows the actual append.
+    if (briefBlock.startsWith(briefPrefix)) {
+      inject(system, structured, briefBlock, briefPrefix);
+      if (!brief.counted) { // tool continuations re-append the brief; the delivery is one
+        brief.counted = true;
+        void command("memorymaster.surfaces.hook_events", {}, ["--event", "SessionStart", "--count", "1"]);
+      }
+    }
+    if (!block.startsWith(prefix)) return;
+    inject(system, structured, block, prefix);
     // Receipt only after the actual prompt append; never include recalled content.
     void command("memorymaster.surfaces.hook_events", {}, ["--event", "injection", "--count", "1"]);
   }
@@ -82,7 +116,7 @@ export function createAdapter(cwd) {
     if (!cwd || !sessions.has(sessionID)) return;
     void command("memorymaster.surfaces.hook_capture", { session_id: sessionID, cwd }, [], 10000);
   }
-  return { remember, context, capture, has: (id) => sessions.has(id), forget: (id) => sessions.delete(id) };
+  return { remember, context, capture, has: (id) => sessions.has(id), forget: (id) => { briefs.delete(id); return sessions.delete(id); } };
 }
 
 export async function bounded(operation, timeout = 3000) {
