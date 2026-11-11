@@ -427,7 +427,9 @@ def test_transcript_fallback_block_is_counted_in_the_callers_budget(monkeypatch)
     assert context_hook._with_transcript_fallback(claims_block, [hit], 1, need) == f"{claims_block}\n\n{block}"
     assert context_hook._with_transcript_fallback(claims_block, [hit], 1, need - 10) == claims_block
     assert context_hook._with_transcript_fallback("", [hit], 0, 0) == ""
-    assert context_hook._with_transcript_fallback(claims_block, [hit], 2, 10_000) == claims_block  # cap is full
+    restating = TranscriptHit(date="2026-08-01T00:00:00Z", session_id="0123456789abcdef", scope="project:fixture",
+                              first_line=3, last_line=4, score=1.0, excerpt="router firmware was chosen")
+    assert context_hook._with_transcript_fallback(claims_block, [restating], 2, 10_000) == claims_block  # cap full, no value
 
 
 def test_evidence_fragment_key_rule_and_cost() -> None:

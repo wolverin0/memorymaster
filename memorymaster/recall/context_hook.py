@@ -1266,10 +1266,15 @@ def _evidence_fragment_key(rendered: str, top, query: str, session: str | None) 
     novel = _value_tokens(excerpt) - _value_tokens(query) - _value_tokens(_MM_ID.sub("", rendered))
     if not novel or (_value_tokens(_MM_ID.sub("", rendered)) - _value_tokens(excerpt) - _value_tokens(query)):
         return None
-    key = -1 - int(hashlib.sha1(excerpt.encode("utf-8")).hexdigest()[:12], 16)  # negative: never a claim id
+    key = _fragment_key(excerpt)
     if session and key in hook_policy.seen_ids(session):
         return None
     return key
+
+
+def _fragment_key(excerpt: str) -> int:
+    """Session-seen key of a fragment (negative, so never a claim id); only extra-slot fragments are recorded."""
+    return -1 - int(hashlib.sha1(excerpt.encode("utf-8")).hexdigest()[:12], 16)
 
 
 def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: int, query: str = "",
@@ -1285,6 +1290,9 @@ def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: i
     Fragments are not claims: they are never recorded as accesses nor as session-seen ids. Fails open.
     """
     slots = hook_policy.max_claims() - claims
+    if found and session:  # an extra-slot fragment delivered earlier in this session is not repeated by a free slot
+        delivered = hook_policy.seen_ids(session)
+        found = [hit for hit in found if _fragment_key(getattr(hit, "excerpt", "")) not in delivered]
     if not found:
         return rendered
     room = max(0, budget) * 4 - (len(rendered) + 2 if rendered else 0)
