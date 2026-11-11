@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import re
 import runpy
 import threading
@@ -13,6 +14,8 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pytest
 
 from memorymaster.core.structured_log import _FIELDS_ATTR
 from memorymaster.dreaming import worker as worker_module
@@ -414,6 +417,21 @@ def test_an_observation_call_is_skipped_when_the_budget_cannot_hold_it_and_guard
 
 # --- the beat drains a backlog even when a third of its extractions fail --------------------------------------
 
+@pytest.fixture(autouse=True)
+def _no_fsync(monkeypatch) -> None:
+    """Every test here commits to throwaway databases: an fsync per commit costs about 100 ms on the Windows
+    dev disk (a 48 h simulation took 6 min, the file 9 min). Test databases only."""
+
+    real = sqlite3.connect
+
+    def connect(*args, **kwargs):
+        conn = real(*args, **kwargs)
+        conn.execute("PRAGMA synchronous=OFF")
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+
+
 def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool = False, failure_rate: float = 0.35,
               kind: str = "transient", dream_runs: bool = False, exile_charged: bool = False) -> tuple[int, int]:
     """48 simulated hours of 15-minute beat ticks (2 arrivals, 6 slots each); returns (initial, final) unfinished."""
@@ -469,14 +487,15 @@ def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool = False, fai
     cfg = replace(DreamConfig(), idle_minutes=0, jev_triage_enabled=False, max_sessions=6, oldest_reserve=2,
                   max_consolidate_captures_per_run=6, lane=LANE_BEAT, max_extract_calls_daily=10**6,
                   max_consolidate_calls_daily=10**6, max_input_tokens_daily=10**9)
-    worker = DreamWorker(ledger, H["_service"](tmp_path), Flaky(), H["_Consolidator"](), config=cfg, now=lambda: sim["now"])
+    service = H["_service"](tmp_path)
+    worker = DreamWorker(ledger, service, Flaky(), H["_Consolidator"](), config=cfg, now=lambda: sim["now"])
 
     def unfinished() -> int:
         with ledger._connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM dream_captures WHERE state IN ('captured','retryable','extracted')").fetchone()[0]
 
     dream_cfg = replace(cfg, max_sessions=20, oldest_reserve=10, lane=LANE_DREAM, slow_slots=500, max_consolidate_captures_per_run=0)
-    dreamer = DreamWorker(ledger, H["_service"](tmp_path), Flaky(), H["_Consolidator"](), config=dream_cfg, now=lambda: sim["now"])
+    dreamer = DreamWorker(ledger, service, Flaky(), H["_Consolidator"](), config=dream_cfg, now=lambda: sim["now"])
     initial = unfinished()
     for tick in range(96 * 2):
         sim["now"] += timedelta(minutes=15)
