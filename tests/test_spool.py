@@ -330,3 +330,7 @@ def test_a_spool_file_that_cannot_be_deleted_is_not_replayed_again(svc: MemorySe
         assert conn.execute("SELECT access_count FROM claims WHERE id = ?", (claim.id,)).fetchone()[0] == 1
     assert list(spool.spool_dir_for(_db(svc)).iterdir()) == [] or all(
         p.name == "quarantine" for p in spool.spool_dir_for(_db(svc)).iterdir())
+
+
+def test_an_empty_drain_reports_unlink_failed(svc: MemoryService) -> None:
+    assert spool_drain.run(svc)["unlink_failed"] == 0

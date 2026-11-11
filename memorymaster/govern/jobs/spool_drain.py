@@ -16,7 +16,9 @@ NORMAL service paths — never raw SQL:
 
 Idempotent on replay: a crashed drain leaves ``.draining`` files which the
 next run re-claims; ingest dedupes and the other ops are additive. A file
-replayed but not deletable gets a ``.done`` marker so it is never replayed again. Unknown ``op``/``v`` or poison lines go to the
+replayed but not deletable gets a ``.done`` marker so it is never replayed again.
+Remaining window: a crash between the last replay and writing ``.done`` replays that file once more,
+so an ``access`` count can double once. Unknown ``op``/``v`` or poison lines go to the
 spool's ``quarantine/`` folder — preserved, never dropped silently, and a
 single bad line can never wedge the drain.
 
@@ -186,6 +188,7 @@ def run(
     result: dict[str, object] = {
         "drained": 0,
         "quarantined": 0,
+        "unlink_failed": 0,
         "files": len(files),
         "lag_seconds": 0.0,
         "by_op": {},
