@@ -51,8 +51,17 @@ export function latestUser(messages) {
   }
 }
 
+function inject(system, structured, block, blockPrefix) {
+  for (let i = system.length - 1; i >= 0; i--) {
+    const text = structured ? system[i]?.text : system[i];
+    if (typeof text === "string" && text.startsWith(blockPrefix)) system.splice(i, 1);
+  }
+  system.push(structured ? { type: "text", text: block } : block);
+}
+
 export function createAdapter(cwd) {
   const sessions = new Map();
+  const briefs = new Map(); // sessionID -> {id, pending}: the project brief rides only the session's first prompt
   function remember(sessionID, prompt, id = prompt) {
     if (typeof sessionID !== "string" || !sessionID || typeof prompt !== "string" || !prompt.trim()) return;
     const previous = sessions.get(sessionID);
@@ -68,13 +77,19 @@ export function createAdapter(cwd) {
     state.pending ??= command("memorymaster.surfaces.hook_recall", {
       prompt: state.prompt, cwd, session_id: sessionID,
     });
-    const block = await state.pending;
-    if (signal?.aborted || !block.startsWith(prefix)) return;
-    for (let i = system.length - 1; i >= 0; i--) {
-      const text = structured ? system[i]?.text : system[i];
-      if (typeof text === "string" && text.startsWith(prefix)) system.splice(i, 1);
+    if (!briefs.has(sessionID)) {
+      if (briefs.size >= 1000) briefs.delete(briefs.keys().next().value);
+      briefs.set(sessionID, { id: state.id, pending: command("memorymaster.surfaces.hook_recall", {
+        cwd, session_id: sessionID,
+      }, ["--session-start"]) });
     }
-    system.push(structured ? { type: "text", text: block } : block);
+    const brief = briefs.get(sessionID);
+    const [block, briefBlock] = await Promise.all([state.pending, brief.id === state.id ? brief.pending : ""]);
+    if (signal?.aborted) return;
+    // Python records the SessionStart receipt; a failed or silent call yields "" and the prompt proceeds untouched.
+    if (briefBlock.startsWith(briefPrefix)) inject(system, structured, briefBlock, briefPrefix);
+    if (!block.startsWith(prefix)) return;
+    inject(system, structured, block, prefix);
     // Receipt only after the actual prompt append; never include recalled content.
     void command("memorymaster.surfaces.hook_events", {}, ["--event", "injection", "--count", "1"]);
   }
@@ -82,7 +97,7 @@ export function createAdapter(cwd) {
     if (!cwd || !sessions.has(sessionID)) return;
     void command("memorymaster.surfaces.hook_capture", { session_id: sessionID, cwd }, [], 10000);
   }
-  return { remember, context, capture, has: (id) => sessions.has(id), forget: (id) => sessions.delete(id) };
+  return { remember, context, capture, has: (id) => sessions.has(id), forget: (id) => { briefs.delete(id); return sessions.delete(id); } };
 }
 
 export async function bounded(operation, timeout = 3000) {

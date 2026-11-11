@@ -37,7 +37,8 @@ childProcess.spawn=(python,args,options)=>{
     const argv=[args[1].replaceAll(".","/")+".py",...args.slice(2)];
     appendFileSync(process.env.TEST_HOOK_TRACE,JSON.stringify({argv,payload,options,python})+"\\n");
     timer=setTimeout(()=>{
-      if (args[1].endsWith("hook_recall")) child.stdout.emit("data",("[MemoryMaster recall]\\n- [mm-42] "+payload.prompt).replaceAll("\\n",process.env.TEST_RECALL_EOL??"\\n"));
+      if (args.includes("--session-start")) { if (process.env.TEST_BRIEF) child.stdout.emit("data",process.env.TEST_BRIEF.replaceAll("|","\\n")); }
+      else if (args[1].endsWith("hook_recall")) child.stdout.emit("data",("[MemoryMaster recall]\\n- [mm-42] "+payload.prompt).replaceAll("\\n",process.env.TEST_RECALL_EOL??"\\n"));
       child.emit("close",0);
     },args[1].endsWith("hook_recall") ? Number(process.env.TEST_RECALL_SLEEP??0)*1000 : 0);
   };
@@ -166,7 +167,7 @@ await context(foreign,"foreign");
     assert len(output["system"]) == 1
     assert text == "[MemoryMaster recall]\n- [mm-42] Why did we choose SQLite?"
     assert output["foreign"] == []
-    recalls = [row for row in rows if row["argv"][0].endswith("hook_recall.py")]
+    recalls = [row for row in rows if row["argv"][0].endswith("hook_recall.py") and "--session-start" not in row["argv"]]
     captures = [row for row in rows if row["argv"][0].endswith("hook_capture.py")]
     receipts = [row for row in rows if row["argv"][0].endswith("hook_events.py")]
     assert [row["payload"] for row in recalls] == [{
@@ -317,3 +318,40 @@ console.log(JSON.stringify({attempts}));
     assert output == {"attempts": 13}
     assert len(rows) == 3
     assert all(row["argv"][0].endswith("hook_capture.py") for row in rows)
+
+
+BRIEF = "[MemoryMaster project brief]\nBrief fixture\nRUNNING\n- T-1 running: card"
+
+
+@pytest.mark.parametrize("version", [1, 2])
+def test_plugin_delivers_the_project_brief_once_per_session(plugin, monkeypatch, version):
+    monkeypatch.setenv("TEST_BRIEF", BRIEF.replace("\n", "|"))
+    init = V1_INIT if version == 1 else V2_INIT
+    ending = "" if version == 1 else "release(); await cleanup();"
+    output, rows = plugin(version, init + """
+await prompt("msg_1", "First question about the project");
+const first = [];
+await context(first);
+await context(first);
+await prompt("msg_2", "Second question about the project");
+const second = [];
+await context(second);
+""" + ending + "console.log(JSON.stringify({first,second}));")
+    def texts(system):
+        return [x if version == 1 else x["text"] for x in system]
+
+    assert texts(output["first"]) == [BRIEF, "[MemoryMaster recall]\n- [mm-42] First question about the project"]
+    assert texts(output["second"]) == ["[MemoryMaster recall]\n- [mm-42] Second question about the project"]
+    starts = [row for row in rows if "--session-start" in row["argv"]]
+    assert len(starts) == 1 and starts[0]["argv"][0].endswith("hook_recall.py")
+    assert starts[0]["payload"] == {"cwd": "/fixture/project", "session_id": "ses_1"}
+
+
+def test_a_silent_brief_call_leaves_the_prompt_untouched(plugin):
+    output, _ = plugin(1, V1_INIT + """
+await prompt("msg_1", "Why did we choose SQLite?");
+const system = [];
+await context(system);
+console.log(JSON.stringify(system));
+""")
+    assert output == ["[MemoryMaster recall]\n- [mm-42] Why did we choose SQLite?"]
