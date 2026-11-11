@@ -93,12 +93,20 @@ def _candidate_text(candidate: Any) -> str:
     return str(getattr(candidate, "text", "") or candidate)
 
 
-def _build_rerank_input(query: str, candidates: Sequence[Any]) -> str:
-    lines = [f"Question: {query.strip()}", "", "Candidates:"]
+def _build_rerank_input(query: str, candidates: Sequence[Any]) -> str | None:
+    """The judge request, gated; ``None`` when there is nothing the egress gate lets out."""
+    from memorymaster.core.provider_egress import WITHHELD, export_stored, export_text
+
+    question = export_text(query.strip())
+    if question is None:
+        return None
+    lines = [f"Question: {question}", "", "Candidates:"]
+    sent = 0
     for idx, candidate in enumerate(candidates, start=1):
-        snippet = " ".join(_candidate_text(candidate).split())[:_MAX_SNIPPET_CHARS]
-        lines.append(f"{idx}. {snippet}")
-    return "\n".join(lines)
+        snippet = export_stored(" ".join(_candidate_text(candidate).split())[:_MAX_SNIPPET_CHARS])
+        sent += snippet is not None
+        lines.append(f"{idx}. {WITHHELD if snippet is None else snippet}")
+    return "\n".join(lines) if sent else None
 
 
 @retry(
@@ -108,9 +116,12 @@ def _build_rerank_input(query: str, candidates: Sequence[Any]) -> str:
     reraise=True,
 )
 def _call_rerank_judge(query: str, candidates: Sequence[Any], judge_model: str) -> str:
+    request = _build_rerank_input(query, candidates)
+    if request is None:  # callers check first; never retried (not an LLMRerankError)
+        raise RuntimeError("rerank request withheld by the egress gate")
     _pace_judge_call()
     with _temporary_llm_env(judge_model):
-        response = call_llm(_PROMPT, _build_rerank_input(query, candidates))
+        response = call_llm(_PROMPT, request)
     if not response.strip():
         raise LLMRerankError("empty rerank judge response")
     return response
@@ -170,6 +181,10 @@ def rerank_with_llm(
     global _CONSECUTIVE_FAILURES, _DISABLED
     if _DISABLED:
         _STATS["disabled_fallbacks"] += 1
+        return candidates[:top_k]
+
+    if _build_rerank_input(query, candidates) is None:  # withheld: input order, and no failure is charged
+        _STATS["egress_withheld"] = _STATS.get("egress_withheld", 0) + 1
         return candidates[:top_k]
 
     _STATS["attempts"] += 1

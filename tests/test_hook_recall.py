@@ -43,3 +43,21 @@ def test_recall_failure_is_silent(monkeypatch, capsys):
     monkeypatch.setattr(hook_recall, "hook_recall", lambda *a, **k: (_ for _ in ()).throw(OSError()))
     assert hook_recall.main(["--cli", "opencode"]) == 0
     assert capsys.readouterr() == ("", "")
+
+
+def test_session_start_prints_the_fitted_project_brief_instead_of_a_recall(monkeypatch, capsys):
+    from memorymaster.profile import project_runtime
+
+    seen = []
+    monkeypatch.setattr(hook_recall, "hook_recall", lambda *a, **k: pytest.fail("no recall in --session-start"))
+    brief = "# Project\n" + "\n".join(f"- decision {i:03d}" for i in range(400))
+    monkeypatch.setattr(project_runtime, "session_start_context", lambda data: seen.append(data) or brief)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"cwd": "/work/project", "session_id": "ses_1"})))
+    assert hook_recall.main(["--cli", "opencode", "--session-start"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith(hook_recall.BRIEF_PREFIX) and out.endswith("[... truncated]")
+    assert len(out[len(hook_recall.BRIEF_PREFIX):].encode("utf-8")) <= 1800
+    assert seen == [{"cwd": "/work/project", "session_id": "opencode:ses_1"}]
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"cwd": "/work/project"})))  # no session: nothing
+    assert hook_recall.main(["--cli", "opencode", "--session-start"]) == 0
+    assert capsys.readouterr().out == ""

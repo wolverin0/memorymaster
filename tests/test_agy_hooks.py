@@ -236,3 +236,24 @@ def test_multi_root_workspace_uses_the_first_root_with_a_project_scope(payload, 
                         lambda q, d, *, db_path: seen.append(d["cwd"]) or ("\n- [mm-7] x", "shared"))
     assert "injectSteps" in hooks.run_hook("PreInvocation", payload, db_path="unused")
     assert seen == [str(tmp_path / "second-root")]
+
+
+def test_session_start_delivers_the_fitted_project_brief_and_a_failing_enabled_consumer_stays_silent(
+        payload, monkeypatch):
+    from memorymaster.profile import project_runtime
+    from memorymaster.recall import remote
+
+    monkeypatch.setattr(remote, "hook_recall", lambda *a, **k: pytest.fail("the brief replaces the legacy recall"))
+    brief = "# Project\n" + "\n".join(f"- decision {i:03d}" for i in range(400))
+    seen = []
+    monkeypatch.setattr(project_runtime, "session_start_context", lambda data: seen.append(data) or brief)
+    out = json.loads(hooks.run_hook("SessionStart", payload, db_path="unused.db"))
+    message = out["injectSteps"][0]["ephemeralMessage"]
+    assert len(message.encode("utf-8")) <= 1800 and message.endswith("[... truncated]")
+    assert seen == [{"cwd": payload["workspacePaths"][0], "session_id": "fixture-session"}]
+    monkeypatch.setattr(project_runtime, "session_start_context", lambda data: "   ")
+    assert hooks.run_hook("SessionStart", payload, db_path="unused.db") == ""  # nothing published: say nothing
+    monkeypatch.setattr(project_runtime, "session_start_context",
+                        lambda data: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "1")
+    assert hooks.run_hook("SessionStart", payload, db_path="unused.db") == ""  # enabled + failing: no legacy fallback

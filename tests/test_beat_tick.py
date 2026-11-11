@@ -81,7 +81,8 @@ def test_allow_asks_the_guard_then_scans_then_runs_a_bounded_dream(beat, monkeyp
     config = dream_kwargs["config"]
     assert config.max_sessions == 6
     assert config.max_consolidate_captures_per_run == 6
-    assert config.oldest_reserve == 1
+    assert config.oldest_reserve == 2
+    assert config.lane == "beat" and 0 < config.run_budget_seconds <= scheduled_task.BEAT_RUN_BUDGET_SECONDS
     assert config.lease_ttl_seconds == 270
     assert config.max_input_tokens_daily == 2_000_000  # the shared daily ceiling is kept
     assert dream_kwargs["apply_candidates"] is False  # applying claims is a separate activation
@@ -159,3 +160,52 @@ def test_dreamconfig_per_run_capture_cap_defaults_to_unlimited() -> None:
 
     assert DreamConfig().max_consolidate_captures_per_run == 0
     assert DreamConfig.from_env().max_consolidate_captures_per_run == 0
+
+
+@pytest.mark.parametrize(("dream", "code", "outcome"), [
+    (None, 0, "none"),
+    ({"ok": True, "errors": 0, "extracted": 2}, 0, "ok"),
+    ({"ok": False, "reason": "worker_busy"}, 0, "worker_busy"),
+    ({"ok": True, "errors": 0, "budget_stop": "extract"}, 0, "budget_stop"),
+    ({"ok": True, "errors": 2, "extracted": 3}, 0, "partial"),  # per-item errors with progress
+    ({"ok": True, "errors": 2}, 1, "errors_no_progress"),
+    ({"ok": False, "reason": "lease_lost", "errors": 1}, 1, "lease_lost"),
+    ({"ok": False, "errors": 1, "fatal": "boom"}, 1, "failed"),
+])
+def test_dream_outcome_exit_code_table(dream, code, outcome) -> None:
+    assert scheduled_task.dream_outcome(dream) == (outcome, code)
+
+
+def test_a_budget_stop_and_partial_errors_exit_zero_and_are_logged(beat, monkeypatch) -> None:
+    monkeypatch.setenv("MEMORYMASTER_BEAT_ENABLED", "1")
+    monkeypatch.setattr("memorymaster.dreaming.worker.run_dream",
+                        lambda *_a, **_k: {"ok": True, "errors": 1, "extracted": 1, "budget_stop": "consolidate"})
+
+    assert scheduled_task.main(beat["argv"]) == 0
+
+    log = (beat["tmp"] / "beat.log").read_text(encoding="utf-8")
+    assert '"dream_outcome": "budget_stop"' in log
+
+
+def test_a_dream_run_with_progress_and_item_errors_exits_zero(tmp_path: Path, monkeypatch) -> None:
+    from argparse import Namespace
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("memorymaster.public.v1.improve", lambda **_k: SimpleNamespace(to_dict=dict))
+    monkeypatch.setattr("memorymaster.capture.worker.run_capture_worker",
+                        lambda *_a, **_k: {"completed": 3, "errors": 1})
+    seen = {}
+
+    def fake_dream(*_a, **kwargs):
+        seen.update(kwargs)
+        return {"ok": True, "errors": 2, "extracted": 4}
+
+    monkeypatch.setattr("memorymaster.dreaming.worker.run_dream", fake_dream)
+    workspace = tmp_path / "memorymaster"
+    workspace.mkdir()
+    args = Namespace(db=str(tmp_path / "s.db"), workspace=str(workspace), apply_candidates=True)
+
+    assert scheduled_task._run_dream(args) == 0
+    config = seen["config"]
+    assert config.lane == "dream" and config.oldest_reserve == scheduled_task.DREAM_OLDEST_RESERVE
+    assert 0 < config.run_budget_seconds <= scheduled_task.DREAM_RUN_BUDGET_SECONDS

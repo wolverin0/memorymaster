@@ -148,13 +148,32 @@ def _ledger_records(data: Any) -> tuple[list, bool]:
     return tasks, complete
 
 
-def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict, bool, list[str]]:
+VALIDATION_SECONDS = 0.1  # cooperative deadline of the SessionStart claim and ledger reads
+_CARD_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,47}")
+
+
+def _card_paths(config: Any, card_ids: Any) -> list[Path] | None:
+    """The `<id>.json` file of each published card, or None when the ledger is not laid out one card per file."""
+    root = Path(config.ledger_root)
+    paths = [root / f"{card_id}.json" for card_id in sorted(card_ids)
+             if isinstance(card_id, str) and _CARD_ID.fullmatch(card_id)]
+    return paths if len(paths) == len(card_ids) and all(path.is_file() for path in paths) else None
+
+
+def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES, only_ids: Any = None,
+                deadline: float | None = None) -> tuple[dict, bool, list[str]]:
+    """`only_ids` (validation): read just those cards' files instead of the whole directory when the ledger is
+    one card per `<id>.json` (live layout); any other layout falls back to the full read. `deadline` is a
+    time.monotonic() instant after which the read gives up as unavailable."""
     if not config.ledger_root or not config.ledger_repo or not config.ledger_filtered:
         return {}, False, ["ledger_unavailable"]
 
+    def listing() -> list[Path]:
+        return (_card_paths(config, only_ids) if only_ids is not None else None) or _ledger_paths(config)
+
     for attempt in range(2):
         try:
-            paths = _ledger_paths(config)
+            paths = listing()
             if not paths:
                 raise ValueError("no_ledger_input")
             before = []
@@ -170,6 +189,8 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
             complete = True
             malformed = parsed = consumed = 0
             for path, (mtime_ns, _) in zip(paths, before):
+                if deadline is not None and time.monotonic() > deadline:
+                    raise ValueError("ledger_deadline")
                 raw = path.read_bytes()
                 try:
                     tasks, file_complete = _ledger_records(json.loads(raw))
@@ -238,7 +259,7 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
             for path in paths:
                 stat = path.stat()
                 after.append((stat.st_mtime_ns, stat.st_size))
-            if before != after or content_hashes != after_hashes or paths != _ledger_paths(config):
+            if before != after or content_hashes != after_hashes or paths != listing():
                 if attempt == 0:
                     continue
                 raise ValueError("ledger_changed_during_read")
@@ -267,15 +288,29 @@ def _claim_instant(row: dict) -> datetime | None:
 
 # The planner prefers idx_claims_replaced_by (~35k rows on the live 8 GB DB, seconds cold); the
 # (tenant_id, scope) index narrows to the project at once (measured 2 ms-100 ms with the same rows).
-BRIEF_CLAIMS_INDEX = "idx_claims_tuple_key"
 BRIEF_QUERY_SECONDS = 1.0
+# shortcut: no (tenant, scope, status) index exists. idx_claims_status bounds a confirmed-only read by the
+# confirmed rows of the whole table (6.7k live, ~11 ms) instead of the scope (33k live, ~80 ms); upgrade to a
+# composite index migration once confirmed rows pass ~50k.
+PINNED_SCOPE_INDEXES = ("idx_claims_status", "idx_claims_tuple_key")
 
 
-def brief_claims_sql(scope_count: int, type_count: int, *, indexed: bool) -> str:
+def pinned_scope_index(conn: sqlite3.Connection) -> str:
+    """` INDEXED BY <index>` for a confirmed-only claim read, or '' when none of the known indexes exists."""
+    present = {row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name IN (?,?)", PINNED_SCOPE_INDEXES)}
+    return next((f" INDEXED BY {name}" for name in PINNED_SCOPE_INDEXES if name in present), "")
+
+
+BRIEF_READ_BYTES = 1024 * 1024  # hard bound on claim + citation bytes one brief query may materialize
+_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~:-]{0,31}")
+
+
+def brief_claims_sql(scope_count: int, type_count: int, *, index: str = "", labelled: bool = False) -> str:
     marks = ",".join("?" for _ in range(type_count))
     return (
-        "SELECT id,text,claim_type,predicate,source_agent,valid_from,valid_until,event_time,created_at "
-        f"FROM claims{' INDEXED BY ' + BRIEF_CLAIMS_INDEX if indexed else ''} "
+        f"SELECT id,{'human_id,' if labelled else ''}text,claim_type,predicate,source_agent,valid_from,valid_until,"
+        f"event_time,created_at FROM claims{index} "
         "WHERE tenant_id IS ? AND scope IN (" + ",".join("?" for _ in range(scope_count)) + ") "
         "AND status='confirmed' AND COALESCE(visibility,'public')='public' AND replaced_by_claim_id IS NULL "
         f"AND (claim_type IN ({marks}) OR predicate IN ({marks})) "
@@ -285,22 +320,35 @@ def brief_claims_sql(scope_count: int, type_count: int, *, indexed: bool) -> str
     )
 
 
+def claim_label(row: dict) -> str:
+    """The label every hook line uses for a claim (`human_id`, e.g. mm-344e); `claim:<id>` when it has none.
+
+    Never `mm-<numeric id>`: a numeric id wearing the mm- prefix is a different id space and resolves to nothing.
+    """
+    human = row.get("human_id")
+    return human if isinstance(human, str) and _LABEL.fullmatch(human) else f"claim:{int(row['id'])}"
+
+
 def load_brief_claims(config: Any, *, now: datetime | None = None, per_kind: int = 3):
-    """Newest confirmed decision / failure claims for the brief: ({'decision': [...], 'failure': [...]}, ok).
+    """Newest confirmed decision / failure claims for the brief: ({'decision': [...] | None, 'failure': [...] | None}, ok).
 
     Same trust gates as the projection (confirmed, public, unsuperseded, cited, temporally current, not
-    generated, `_safe`), but a narrow read-only query instead of the 512-claim full scan, so a large
-    project scope still yields a brief. Each row is {'id', 'when', 'text'}; failure text is `<type>: <text>`.
+    generated, `_safe`), read by two small newest-first queries (at most BRIEF_SCAN_ROWS rows each, bounded
+    bytes) instead of the legacy full scan, so a large project scope still yields a brief. Each row is
+    {'id', 'label', 'when', 'text'}; failure text is `<type>: <text>`. A kind whose read failed or timed out is
+    None (the brief renders it as unavailable) and `ok` is False; the other kind is still returned.
+    found['partial'] lists the kinds whose scan limit was hit while fewer than per_kind rows survived the gates:
+    they may have more than they show.
     """
     now = now or datetime.now(timezone.utc)
     scopes = (config.scope, *config.aliases)
-    found: dict[str, list[dict]] = {"decision": [], "failure": []}
+    found: dict[str, Any] = {"decision": None, "failure": None, "partial": []}
     try:
         with closing(sqlite3.connect(Path(config.db_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=0.025)) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA query_only=ON")
-            hint = bool(conn.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
-                                     (BRIEF_CLAIMS_INDEX,)).fetchone())
+            index = pinned_scope_index(conn)
+            labelled = any(row[1] == "human_id" for row in conn.execute("PRAGMA table_info(claims)"))
 
             def limited(sql: str, args: list) -> list:
                 # Each source query gets its own deadline: one slow scan must not starve the next.
@@ -309,31 +357,55 @@ def load_brief_claims(config: Any, *, now: datetime | None = None, per_kind: int
                 return conn.execute(sql, args).fetchall()
 
             for kind, types in (("decision", BRIEF_DECISION_TYPES), ("failure", BRIEF_FAILURE_TYPES)):
-                rows = limited(brief_claims_sql(len(scopes), len(types), indexed=hint),
-                               [config.tenant_id, *scopes, *types, *types, BRIEF_SCAN_ROWS])
-                cites: dict[int, list[dict]] = {}
-                for cite in limited(
-                    "SELECT claim_id,source,locator,excerpt FROM citations WHERE claim_id IN ("
-                    + ",".join("?" for _ in rows) + ") LIMIT 4096", [row["id"] for row in rows],
-                ) if rows else ():
-                    cites.setdefault(cite["claim_id"], []).append(dict(cite))
-                for row in map(dict, rows):
-                    label = row["claim_type"] if row["claim_type"] in types else row["predicate"]
-                    # Same citation gate as _claim_item: every citation names a source and locator and is safe.
-                    if not cites.get(row["id"]) or not all(c["source"] and c["locator"] and _safe(c) for c in cites[row["id"]]):
-                        continue
-                    if (row["source_agent"] in GENERATED_SOURCES or not str(row["text"] or "").strip()
-                            or not _safe({k: v for k, v in row.items() if k != "id"})
-                            or not claim_is_temporally_current(
-                                SimpleNamespace(valid_from=row["valid_from"], valid_until=row["valid_until"]), now=now)):
-                        continue
-                    found[kind].append({"id": int(row["id"]), "when": _claim_instant(row),
-                                        "text": (f"{label}: " if kind == "failure" else "") + _display(row["text"], 110)})
-                floor = datetime.min.replace(tzinfo=timezone.utc)
-                found[kind] = sorted(found[kind], key=lambda r: (r["when"] or floor, r["id"]), reverse=True)[:per_kind]
-        return found, True
-    except (sqlite3.Error, OSError, ValueError, TypeError):
-        return {"decision": [], "failure": []}, False
+                try:
+                    found[kind] = _brief_kind(limited, kind, types, scopes, config.tenant_id, index, labelled, now,
+                                              per_kind, found["partial"])
+                except (sqlite3.Error, ValueError, TypeError):
+                    found[kind] = None  # this section degrades to "unavailable"; the other one still reads
+    except (sqlite3.Error, OSError):
+        pass
+    return found, found["decision"] is not None and found["failure"] is not None
+
+
+def _brief_kind(limited, kind, types, scopes, tenant, index, labelled, now, per_kind, partial) -> list[dict]:
+    rows = limited(brief_claims_sql(len(scopes), len(types), index=index, labelled=labelled),
+                   [tenant, *scopes, *types, *types, BRIEF_SCAN_ROWS])
+    spent = sum(len(str(row["text"] or "")) for row in rows)
+    cites: dict[int, list[dict]] = {}
+    oversized: set[int] = set()
+    citation_size = "length(CAST(COALESCE(source,'')||COALESCE(locator,'')||COALESCE(excerpt,'') AS BLOB))"
+    for cite in limited(
+        "SELECT claim_id," + ",".join(
+            f"CASE WHEN {citation_size} <= {MAX_FIELD_BYTES} THEN {name} ELSE NULL END AS {name}"
+            for name in ("source", "locator", "excerpt")) + f",{citation_size} AS _bytes "
+        "FROM citations WHERE claim_id IN (" + ",".join("?" for _ in rows) + ") ORDER BY id LIMIT 4096",
+        [row["id"] for row in rows],
+    ) if rows else ():
+        spent += min(cite["_bytes"], MAX_FIELD_BYTES)
+        if spent > BRIEF_READ_BYTES:
+            raise ValueError("brief_read_bytes")
+        if cite["_bytes"] > MAX_FIELD_BYTES:
+            oversized.add(cite["claim_id"])
+        cites.setdefault(cite["claim_id"], []).append({k: cite[k] for k in ("source", "locator", "excerpt")})
+    out = []
+    for row in map(dict, rows):
+        label = row["claim_type"] if row["claim_type"] in types else row["predicate"]
+        # Same citation gate as _claim_item: every citation names a source and locator and is safe.
+        if (not cites.get(row["id"]) or row["id"] in oversized
+                or not all(c["source"] and c["locator"] and _safe(c) for c in cites[row["id"]])):
+            continue
+        if (row["source_agent"] in GENERATED_SOURCES or not str(row["text"] or "").strip()
+                or not _safe({k: v for k, v in row.items() if k != "id"})
+                or not claim_is_temporally_current(
+                    SimpleNamespace(valid_from=row["valid_from"], valid_until=row["valid_until"]), now=now)):
+            continue
+        out.append({"id": int(row["id"]), "label": claim_label(row), "when": _claim_instant(row),
+                    "text": (f"{label}: " if kind == "failure" else "") + _display(row["text"], 110)})
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+    out = sorted(out, key=lambda r: (r["when"] or floor, r["id"]), reverse=True)
+    if len(rows) >= BRIEF_SCAN_ROWS and len(out) < per_kind:
+        partial.append(kind)  # the scan limit hid rows that the gates might have kept
+    return out[:per_kind]
 
 
 # shortcut: due-measurements rows carry no repo field, so only these slugs may show them; drop the gate
@@ -417,20 +489,22 @@ def roadmap_next_item(project_root: Path) -> tuple[tuple[str, int] | None, datet
     return None, mtime
 
 
+SECTION_KEYS = {
+    "project_purpose": "Purpose",
+    "purpose": "Purpose",
+    "constraint": "Constraints",
+    "rule": "Constraints",
+    "invariant": "Constraints",
+    "decision": "Decisions",
+    "architecture_decision": "Decisions",
+    "gotcha": "Gotchas",
+    "pitfall": "Gotchas",
+    "workaround": "Gotchas",
+}
+
+
 def _section(row: dict) -> str | None:
-    mapping = {
-        "project_purpose": "Purpose",
-        "purpose": "Purpose",
-        "constraint": "Constraints",
-        "rule": "Constraints",
-        "invariant": "Constraints",
-        "decision": "Decisions",
-        "architecture_decision": "Decisions",
-        "gotcha": "Gotchas",
-        "pitfall": "Gotchas",
-        "workaround": "Gotchas",
-    }
-    return mapping.get(row.get("predicate")) or mapping.get(row.get("claim_type"))
+    return SECTION_KEYS.get(row.get("predicate")) or SECTION_KEYS.get(row.get("claim_type"))
 
 
 def _claim_item(row: dict, citations: list[dict], *, now: datetime | None = None) -> dict | None:
@@ -532,7 +606,10 @@ def _read_claims(
     byte_limit = 2 * 1024 * 1024 if validation else MAX_SOURCE_BYTES
     if ids is not None and len(ids) > MAX_CLAIMS:
         raise ValueError("claim_limit")
-    deadline = time.monotonic() + 0.1
+    # SessionStart reads (validation, explicit ids, incremental baseline) keep the tight deadline; the refresh-path
+    # builder scan reads the whole renderable set and measured 0.1-0.3 s on a loaded Windows host.
+    interactive = validation or ids is not None or changed_since
+    deadline = time.monotonic() + (VALIDATION_SECONDS if interactive else BRIEF_QUERY_SECONDS)
     with closing(
         sqlite3.connect(Path(config.db_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=0.025)
     ) as conn:
@@ -644,13 +721,23 @@ def _read_claims(
                 "pinned",
             }
         ]
+        claim_table = "claims NOT INDEXED" if ids is not None else "claims"
+        if (ids is None and getattr(config, "brief", False)
+                and {"status", "visibility", "replaced_by_claim_id", "predicate", "claim_type"} <= set(fields)):
+            # Builder scan with the brief on (T-2278): read only rows that can render. The change cursor reports
+            # a candidate that is later confirmed, so ineligible rows need no watching and the 512 cap bounds what
+            # a project can show instead of how big its scope is. Brief off keeps the all-status fence unchanged.
+            marks = ",".join("?" for _ in SECTION_KEYS)
+            where += (" AND status='confirmed' AND COALESCE(visibility,'public')='public'"
+                      f" AND replaced_by_claim_id IS NULL AND (predicate IN ({marks}) OR claim_type IN ({marks}))")
+            params.extend([*SECTION_KEYS, *SECTION_KEYS])
+            claim_table = "claims" + pinned_scope_index(conn)
         # Reject oversized rows before materializing their payload in Python.
         size = "+".join(f"length(CAST(COALESCE({name},'') AS BLOB))" for name in names)
         columns = ",".join(
             f"CASE WHEN ({size}) <= {MAX_FIELD_BYTES} THEN {name} ELSE NULL END AS {name}" if name != "id" else name
             for name in names
         )
-        claim_table = "claims NOT INDEXED" if ids is not None else "claims"
         cursor = conn.execute(
             f"SELECT {columns}, ({size}) AS _source_bytes FROM {claim_table} WHERE {where} ORDER BY id LIMIT ?",
             [*params, limit + 1],
@@ -758,6 +845,7 @@ def load_project_snapshot(
     changed_since: str | None = None,
     claim_ids: list[int] | None = None,
     validation: bool = False,
+    card_ids: list[str] | None = None,
 ) -> dict:
     result: dict[str, Any] = {
         "read_at": utc_now(),
@@ -798,7 +886,9 @@ def load_project_snapshot(
         result["diagnostics"].append("claims_unavailable")
     byte_budget = 2 * 1024 * 1024 if validation else MAX_SOURCE_BYTES
     cards, ledger_complete, diagnostics = load_ledger(
-        config, max_bytes=max(0, byte_budget - int(fingerprints.get("source_bytes", 0)))
+        config, max_bytes=max(0, byte_budget - int(fingerprints.get("source_bytes", 0))),
+        only_ids=card_ids if validation else None,
+        deadline=time.monotonic() + VALIDATION_SECONDS if validation and card_ids is not None else None,
     )
     items.update((card["key"], card) for card in cards.values())
     result.update(items=items, complete=complete and ledger_complete, fingerprints=fingerprints)

@@ -98,13 +98,17 @@ def review_due_skills(
 ) -> dict[str, Any]:
     bounded = max(1, min(limit, 20))
     selected_scopes = scopes or _eligible_rule_scopes(service, bounded * 20)
-    inputs = _review_inputs(service, selected_scopes, bounded)
+    # Scan up to 10x limit: an item the egress gate withholds stays pending and must not use up `limit`.
+    inputs = _review_inputs(service, selected_scopes, bounded * 10)
     stats: dict[str, Any] = {
-        "considered": len(inputs), "llm_calls": 0, "created": 0,
+        "considered": 0, "llm_calls": 0, "created": 0,
         "duplicates": 0, "classified_other": 0, "blocked": 0, "errors": [],
     }
     for item in inputs:
-        _review_one_input(service, item, stats)
+        if stats["considered"] >= bounded:
+            break
+        if _review_one_input(service, item, stats) is not False:
+            stats["considered"] += 1
     return stats
 
 
@@ -179,17 +183,23 @@ def _existing_skill_summaries(service: Any, scope: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _review_one_input(service: Any, item: dict[str, Any], stats: dict[str, Any]) -> None:
-    body = json.dumps(
-        {
-            "EVIDENCE_JSON": item,
-            "EXISTING_SKILLS_JSON": _existing_skill_summaries(service, item["scope"]),
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
+def _review_one_input(service: Any, item: dict[str, Any], stats: dict[str, Any]) -> bool | None:
+    """Review one item; ``False`` when the egress gate withheld it (it stays pending, nothing is recorded)."""
+    from memorymaster.core.provider_egress import export_stored
+
+    safe_item = export_stored(json.dumps(item, ensure_ascii=False, sort_keys=True))
+    if safe_item is None:
+        stats["egress_withheld"] = stats.get("egress_withheld", 0) + 1
+        return False
+    # The shared existing-skill summaries are gated one by one: a withheld summary is left out of the
+    # context, it does not stop the item from being reviewed.
+    safe_summaries = [
+        safe for summary in _existing_skill_summaries(service, item["scope"])
+        if (safe := export_stored(json.dumps(summary, ensure_ascii=False, sort_keys=True))) is not None
+    ]
+    safe_body = '{"EVIDENCE_JSON": ' + safe_item + ', "EXISTING_SKILLS_JSON": [' + ", ".join(safe_summaries) + "]}"
     try:
-        raw = llm_provider.call_llm(_SKILL_REVIEW_PROMPT, body)
+        raw = llm_provider.call_llm(_SKILL_REVIEW_PROMPT, safe_body)
         stats["llm_calls"] += 1
         output = _parse_reviewer_output(raw)
         result = review_skill_proposal(

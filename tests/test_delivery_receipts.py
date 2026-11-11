@@ -339,3 +339,77 @@ def test_a_tilde_suffixed_tag_still_resolves_to_its_claim(world) -> None:
                                     emitted=f"- [{human_id}~2] a claim", query=ASK, db_path=db)
     assert receipt["turn"] == "missing" and receipt["emitted"] == [made]
     assert hook_policy.seen_ids("tilde-1") == frozenset({made})
+
+
+# --- D-5: the reserved-slot transcript fragment follows the same emitted test as a claim ----------------------
+
+PELICAN = "pelican approach"
+
+
+@pytest.fixture()
+def fragment_world(world, tmp_path, monkeypatch):
+    """Cap full of two answer-less claims + a transcript fragment that names the decision (the reserved slot)."""
+    from memorymaster.recall import transcript_index as ti
+
+    monkeypatch.setenv(transcript_fallback.ENABLED_ENV, "1")
+    root = tmp_path / ".claude" / "projects" / "p"
+    root.mkdir(parents=True)
+    (root / "s.jsonl").write_text(json.dumps({
+        "type": "assistant", "timestamp": "2026-11-01T10:00:00Z", "cwd": world.hook.cwd,
+        "message": {"role": "assistant", "content": [{"type": "text", "text": (
+            f"We decided the zorblax cache invalidation strategy is the {PELICAN}, final.")}]}}) + chr(10), encoding="utf-8")
+    ti.index_transcripts()
+    world.claim("Check the zorblax cache invalidation strategy on every deploy")
+    world.claim("The zorblax cache invalidation strategy section lives in the runbook")
+
+    class Turns:
+        n = 0
+
+        def prompt(self, session: str) -> tuple[dict, str, list[int]]:
+            Turns.n += 1
+            data = {"cwd": world.hook.cwd, "session_id": session, hook_policy.DEFER_KEY: f"t{Turns.n}"}
+            text, ids = context_hook.recall(ASK, db_path=str(world.service.store.db_path), return_ids=True,
+                                            hook_data=data)
+            return data, text, ids
+
+        def receipt(self) -> str:
+            lines = [ln for ln in world.log.read_text(encoding="utf-8").splitlines() if "event=receipt" in ln]
+            return lines[-1]
+
+    return Turns()
+
+
+def test_a_failed_emission_leaves_the_fragment_retryable_and_the_receipt_says_why(fragment_world) -> None:
+    data, text, ids = fragment_world.prompt("fr-1")
+    assert len(ids) == 2 and PELICAN in text, "precondition: the reserved slot carries the fragment"
+    assert delivery.confirm_turn(data, "claude", emitted="", failure="write_failure")
+    assert " fragment=-" in fragment_world.receipt() and ":write_failure" in fragment_world.receipt()
+    _, again, again_ids = fragment_world.prompt("fr-1")
+    assert len(again_ids) == 2 and PELICAN in again, "claims and fragment are retried together"
+
+
+def test_a_truncated_tail_that_cut_the_fragment_leaves_it_retryable(fragment_world) -> None:
+    data, text, _ = fragment_world.prompt("fr-2")
+    cut = text[: text.index("# Raw past conversation")]  # the adapter kept the claims, lost the appended tail
+    delivery.confirm_turn(data, "codex", emitted=cut, drop_reason="adapter_truncation")
+    assert ":adapter_truncation" in fragment_world.receipt()
+    _, again, again_ids = fragment_world.prompt("fr-2")
+    assert again_ids == [] and PELICAN in again, "the claims were delivered; the cut fragment arrives next prompt"
+
+
+def test_an_unconfirmed_turn_leaves_the_fragment_retryable(fragment_world) -> None:
+    fragment_world.prompt("fr-3")  # never confirmed
+    _, again, again_ids = fragment_world.prompt("fr-3")
+    assert len(again_ids) == 2 and PELICAN in again
+
+
+def test_a_confirmed_fragment_is_not_repeated_in_the_session_but_a_new_session_gets_it(fragment_world) -> None:
+    data, text, _ = fragment_world.prompt("fr-4")
+    assert delivery.confirm_turn(data, "claude", emitted=text)
+    assert " fragment=-" in fragment_world.receipt() and ":emitted" in fragment_world.receipt()
+    assert PELICAN not in fragment_world.receipt()  # a key, never text
+    _, again, again_ids = fragment_world.prompt("fr-4")
+    assert again_ids == [] and PELICAN not in again
+    _, other, other_ids = fragment_world.prompt("fr-5")
+    assert len(other_ids) == 2 and PELICAN in other
+

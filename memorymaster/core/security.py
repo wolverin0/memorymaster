@@ -735,10 +735,10 @@ def validate_persisted_metadata(fields: Mapping[str, object]) -> None:
 
 
 # Persisted content (transcripts, claims) only: any-case "users" and drive letter, single/double backslash or
-# slash, MSYS /c/. Not in _SECRET_PATTERNS because the export/egress redactors treat the lowercase spellings as
+# slash, MSYS /c/ and WSL /mnt/c/. Not in _SECRET_PATTERNS because the export/egress redactors treat the lowercase spellings as
 # whole absolute paths (tests/test_home_path_egress_spellings.py).
 _PERSISTED_HOME_PATH_RE = re.compile(
-    r"(?i)(?:\b[a-z]:(?:\\\\|[\\/])|(?<![\w/])/[a-z]/)users(?:\\\\|[\\/])(?!(?:public|shared|default)\b)[a-z][a-z0-9._\-]{1,40}"
+    r"(?i)(?:\b[a-z]:(?:\\\\|[\\/])|(?<![\w/])/(?:mnt/)?[a-z]/)users(?:\\\\|[\\/])(?!(?:public|shared|default)\b)[a-z][a-z0-9._\-]{1,40}"
 )
 
 

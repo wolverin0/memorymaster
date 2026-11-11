@@ -2643,6 +2643,9 @@ class PostgresStore(SQLiteStore):
                 created_at=now,
             )
 
+    def restore_declared_correction(self, victim_id: int, predecessor_id: int, **_kwargs: object) -> None:
+        raise NotImplementedError("restore_declared_correction is SQLite-only")
+
     def latest_archive_reason(self, claim_id: int) -> str | None:
         with self.connect() as conn, conn.cursor() as cur:
             return self._latest_archive_reason(cur, claim_id)

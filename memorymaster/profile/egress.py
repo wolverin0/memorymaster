@@ -82,12 +82,12 @@ _EMITTED_NAMES = frozenset(
     {name for name, _ in _SECRET_PATTERNS}
     | {name for name, _ in _CLAIM_ONLY_PATTERNS}
     | {name for name, _ in _EGRESS_PATTERNS}
-    | {"encoded_secret", "structured_secret", "absolute_path", "home_path", "numeric"}
+    | {"encoded_secret", "structured_secret", "absolute_path", "home_path", "numeric", "private_ip"}
 )
 _INDEXED_MARKER = re.compile(r"\[REDACTED:[A-Za-z0-9_]+(?:#\d+)?\]")
 
 
-def _neutralise(text: str, *, trusted: bool) -> tuple[str, Callable[[str], str]]:
+def _neutralise(text: str, *, trusted: bool) -> tuple[str, Callable[[str], str], bool]:
     """Swap well-formed ``[REDACTED:<name>]`` markers for a per-call placeholder; return the restorer.
 
     Untrusted (default): a marker with a token character (``[A-Za-z0-9_-]``) on either side is spliced
@@ -98,21 +98,31 @@ def _neutralise(text: str, *, trusted: bool) -> tuple[str, Callable[[str], str]]
     while tag in text:
         tag = "".join(secrets.choice(string.ascii_letters) for _ in range(12))
     held: list[str] = []
+    spliced: list[bool] = []
 
     def hold(match: re.Match[str]) -> str:
         start, end = match.span()
+        glued = bool(
+            (start and _TOKEN_CHAR.match(text[start - 1])) or (end < len(text) and _TOKEN_CHAR.match(text[end]))
+        )
         if trusted and match.group(0)[len("[REDACTED:") : -1] not in _EMITTED_NAMES:
             return match.group(0)  # a name our gate never emits is text: it blocks
-        if not trusted and (
-            (start and _TOKEN_CHAR.match(text[start - 1])) or (end < len(text) and _TOKEN_CHAR.match(text[end]))
-        ):
+        if glued and not trusted:
             return match.group(0)
+        if glued:
+            # Trusted but spliced into a token: the token without the marker is what a secret looks like.
+            left = re.search(r"\S*$", text[:start]).group(0)
+            right = re.match(r"\S*", text[end:]).group(0)
+            joined = left + right
+            if scan_text_for_findings(joined):
+                spliced.append(True)
         held.append(match.group(0))
         return f"[{tag}{len(held) - 1}]"
 
     neutral = _EGRESS_MARKER.sub(hold, text)
     pattern = re.compile(r"\[" + tag + r"(\d+)\]")
-    return neutral, (lambda out: pattern.sub(lambda m: held[int(m.group(1))], out)) if held else (lambda out: out)
+    restore = (lambda out: pattern.sub(lambda m: held[int(m.group(1))], out)) if held else (lambda out: out)
+    return neutral, restore, bool(spliced)
 
 
 def prepare_transcript_egress(text: str, *, trusted: bool = False) -> ClaimEgress:
@@ -123,9 +133,10 @@ def prepare_transcript_egress(text: str, *, trusted: bool = False) -> ClaimEgres
     A spliced, malformed or foreign marker still blocks. Raw transcripts must use
     ``prepare_claim_egress`` directly.
     """
-    neutral, restore = _neutralise(text, trusted=trusted)
+    neutral, restore, spliced = _neutralise(text, trusted=trusted)
     egress = prepare_claim_egress(neutral)
-    return ClaimEgress(restore(egress.text), egress.findings, egress.blocked)
+    findings = (*egress.findings, "spliced_marker") if spliced else egress.findings
+    return ClaimEgress(restore(egress.text), findings, egress.blocked or spliced)
 
 
 def prepare_indexed_egress(texts: list[str]) -> list[ClaimEgress]:
@@ -139,7 +150,7 @@ def prepare_indexed_egress(texts: list[str]) -> list[ClaimEgress]:
     seen: dict[tuple[str, str], int] = {}
     out: list[ClaimEgress] = []
     for text in texts:
-        neutral, restore = _neutralise(text, trusted=False)
+        neutral, restore, _spliced = _neutralise(text, trusted=False)
         redacted, findings = neutral, []
         # Indexed substitution first: the literal redactor also masks home paths without an index.
         for name, pattern in _EGRESS_PATTERNS:

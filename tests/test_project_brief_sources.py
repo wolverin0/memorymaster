@@ -83,7 +83,7 @@ def test_failure_claims_are_bug_bug_cause_gotcha_newest_first(project_config):
 
 def test_unreadable_database_is_reported_not_raised(project_config, tmp_path):
     found, ok = load_brief_claims(replace(project_config, db_path=tmp_path / "missing.sqlite"), now=NOW)
-    assert not ok and found == {"decision": [], "failure": []}
+    assert not ok and found == {"decision": None, "failure": None, "partial": []}
 
 
 def test_due_failures_only_fail_rows_missing_file_is_unavailable(tmp_path):
@@ -138,7 +138,7 @@ def test_built_projection_carries_brief_and_session_start_only_reads_it(project_
     brief = built.manifest["brief"]
     assert "- T-1 running: Ship brief | next: open PR [T-1]" in brief
     assert "- T-2 failed: disk full [T-2]" in brief
-    assert "- bug: Race in cache [mm-4]" in brief and "[mm-3]" in brief
+    assert "- bug: Race in cache [claim:4]" in brief and "[claim:3]" in brief
     assert "NEXT\n- none: no roadmap [ROADMAP.md]" in brief
     assert publish_project_projection(config, built)
 

@@ -136,17 +136,24 @@ def resolve_conflict_pair(
 
     The loser is transitioned to 'superseded' with the winner as replaced_by.
     """
+    from memorymaster.core.provider_egress import export_pair, export_stored
+
+    texts = export_pair(claim_a.text[:500], claim_b.text[:500])
+    cites_a, cites_b = export_stored(_cite_summary(claim_a)), export_stored(_cite_summary(claim_b))
+    if texts is None or cites_a is None or cites_b is None:
+        # Withheld by the egress gate: nothing is sent, both claims stay as they are.
+        return {"resolved": False, "reason": "egress_withheld"}
     prompt = RESOLUTION_PROMPT.format(
         id_a=claim_a.id,
-        text_a=claim_a.text[:500],
+        text_a=texts[0],
         conf_a=f"{claim_a.confidence:.2f}",
         updated_a=claim_a.updated_at,
-        cites_a=_cite_summary(claim_a),
+        cites_a=cites_a,
         id_b=claim_b.id,
-        text_b=claim_b.text[:500],
+        text_b=texts[1],
         conf_b=f"{claim_b.confidence:.2f}",
         updated_b=claim_b.updated_at,
-        cites_b=_cite_summary(claim_b),
+        cites_b=cites_b,
     )
 
     decision = _llm_evaluate(prompt)
@@ -201,6 +208,8 @@ def _resolve_group_pairs(store, claims: list[Claim], limit: int) -> tuple[int, i
             continue
 
         result = resolve_conflict_pair(store, winner, contender)
+        if result.get("reason") == "egress_withheld":
+            continue  # never judged: not evaluated (no call), not failed, both claims stay conflicted
         evaluated += 1
         if result.get("resolved"):
             resolved += 1
@@ -227,7 +236,7 @@ def auto_resolve_conflicts(store, *, limit: int = 50) -> dict[str, int]:
     Returns immediately with empty counts if no conflicted claims found.
     """
     try:
-        conflicted = store.find_by_status("conflicted", limit=limit * 2, include_citations=True)
+        conflicted = store.find_by_status("conflicted", limit=limit * 10, include_citations=True)  # withheld pairs cost no limit
     except Exception as exc:
         logger.error("Failed to find conflicted claims: %s", exc)
         return {"pairs_evaluated": 0, "resolved": 0, "failed": 0}

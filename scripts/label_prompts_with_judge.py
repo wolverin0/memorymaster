@@ -243,11 +243,22 @@ def _label_one(
     judge: OpenCodeJudge | None,
     text: str,
 ) -> tuple[list[int], dict]:
+    from memorymaster.core.provider_egress import export_stored, export_text
+
+    safe_text = export_text(text)
+    if safe_text is None:  # the user's prompt is withheld by the egress gate: no judge call
+        return [], {"status": "skipped", "reason": "egress_withheld"}
     candidates = _get_candidates(args.db, text, args.top_k)
-    if not candidates:
-        return [], {"status": "skipped", "reason": "no_candidates"}
+    sent = []
+    for candidate in candidates:
+        snippet = export_stored(str(candidate["text"])[:300])
+        if snippet is not None:
+            sent.append({**candidate, "text": snippet})
+    if not sent:
+        return [], {"status": "skipped", "reason": "no_candidates" if not candidates else "egress_withheld"}
+    candidates = sent
     ids, provenance = _call_judge(
-        text, candidates, provider=args.judge_provider, judge=judge
+        safe_text, candidates, provider=args.judge_provider, judge=judge
     )
     candidate_ids = {candidate["id"] for candidate in candidates}
     return [claim_id for claim_id in ids if claim_id in candidate_ids][:5], provenance

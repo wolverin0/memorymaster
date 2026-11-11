@@ -277,6 +277,8 @@ class GraphObservationEngine:
                     outcome = "no_signal"
                 self.repo.complete_job(job.id, owner=owner, outcome=outcome)
                 completed += 1
+            except ObservationBudgetDeferred:
+                self.repo.release_job(job.id, owner=owner)  # not a failure: no attempt is spent
             except Exception as exc:  # noqa: BLE001 - fail closed and retry from IDs
                 self.repo.fail_job(
                     job.id, owner=owner, error_code="synthesis_failed",
@@ -289,6 +291,10 @@ class GraphObservationEngine:
             no_signal=no_signal,
             failed=failed,
         )
+
+
+class ObservationBudgetDeferred(RuntimeError):
+    """The caller's run budget cannot hold another call: the job is released without counting an attempt."""
 
 
 def review_observation_candidates(

@@ -148,3 +148,15 @@ def test_extract_patterns_returns_entity_dataclass() -> None:
     assert all(isinstance(e, Entity) for e in out)
     assert out[0].kind == "file"
     assert out[0].canonical_hint == "src/agents/auth.py"
+
+
+def test_llm_layer_gates_the_snippet_and_a_withheld_one_makes_no_call(monkeypatch):
+    """S-6: the claim text passes the egress gate before the layer-2 provider call."""
+    from memorymaster.knowledge.entity_extractor import extract_llm
+
+    seen: list[str] = []
+    monkeypatch.setenv("MEMORYMASTER_ENTITY_LLM", "1")
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", lambda p, t: seen.append(t) or "[]")
+    extract_llm("service at 10.1.2.3 is run by the platform team")
+    assert len(seen) == 1 and "10.1.2.3" not in seen[0]
+    assert extract_llm("DB_PASS=" + "hunter2hunter2") == [] and len(seen) == 1

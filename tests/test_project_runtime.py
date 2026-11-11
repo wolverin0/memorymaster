@@ -119,3 +119,16 @@ def test_skip_tick_after_complete_validation_renews_stale_read_ttl(project_confi
     assert markdown_path.read_bytes() == before
     assert datetime.fromisoformat(read_manifest(project_config)["checked_at"]) > stale
     assert read_project_projection(project_config) is not None
+
+
+def test_degraded_source_publishes_only_for_a_brief_and_never_replaces_a_young_complete_publication():
+    config = SimpleNamespace(brief=True)
+    manifest = {"brief": True, "source_complete": False}
+    now = datetime.now(timezone.utc)
+    stamp = lambda minutes: (now - timedelta(minutes=minutes)).isoformat()  # noqa: E731
+    assert runtime._publish_degraded(config, manifest, None) is True
+    assert runtime._publish_degraded(config, manifest, {"source_complete": False, "checked_at": stamp(1)}) is True
+    assert runtime._publish_degraded(config, manifest, {"source_complete": True, "checked_at": stamp(5)}) is False
+    assert runtime._publish_degraded(config, manifest, {"source_complete": True, "checked_at": stamp(45)}) is True
+    assert runtime._publish_degraded(SimpleNamespace(brief=False), manifest, None) is False  # brief off: unchanged
+    assert runtime._publish_degraded(config, {"source_complete": False}, None) is False  # no brief in the manifest

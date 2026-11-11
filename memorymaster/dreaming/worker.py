@@ -9,22 +9,26 @@ import logging
 import os
 import re
 import subprocess
+import threading
+import time
+from types import SimpleNamespace
 import unicodedata
 import uuid
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 
 from memorymaster.core.antigravity_client import AntigravityError
 from memorymaster.core.models import CitationInput
 from memorymaster.core.provider_egress import export_messages, export_stored
+from memorymaster.core.structured_log import log_event
 from memorymaster.dreaming.consolidation_egress import WITHHELD_RATIONALE, gate_consolidation, with_ignored
 from memorymaster.core.service import MemoryService
 from memorymaster.dreaming import held
 from memorymaster.dreaming.extraction_window import PIECE_CHARS, extraction_complete, next_window
-from memorymaster.dreaming.ledger import DreamLedger
+from memorymaster.dreaming.ledger import LANE_ALL, SLOW_CAPTURE_BYTES, SLOW_ERROR_COUNT, DreamLedger
 from memorymaster.dreaming.models import (
     ConsolidationResult,
     DreamCandidate,
@@ -42,6 +46,15 @@ from memorymaster.dreaming.providers import (
 )
 
 LOGGER = logging.getLogger(__name__)
+_JOB_LOG = logging.getLogger("memorymaster.jobs")  # same logger as the scheduled-task job log
+
+# D-11 run budget. A run stops STARTING provider calls once the budget left cannot hold one more call
+# (its own timeout + watchdog grace + the time to save and close the run).
+DEFAULT_CALL_TIMEOUT_SECONDS = 300.0
+WATCHDOG_GRACE_SECONDS = 5.0  # the provider's own timeout fires first; this only catches a call that ignores it
+BUDGET_MARGIN_SECONDS = 10.0
+_HEARTBEAT_FLOOR_S = 1.0
+MAX_ABANDONED_CALLS = 2  # abandoned calls after which the run stops calling that provider
 
 
 class DreamLeaseLost(RuntimeError):
@@ -82,6 +95,35 @@ class DreamProviderStopped(RuntimeError):
 # each batch under it or raises DreamPromptTooLarge, which counts (review B1).
 # shortcut: fixed per-capture extractor-call bound per run; make it config when a capture needs more.
 MAX_EXTRACT_WINDOWS_PER_RUN = 4
+
+
+def _call_timeout(provider: Any) -> float:
+    """Seconds the provider's own transport allows one call (its hard timeout), else the default."""
+    for owner in (provider, getattr(provider, "client", None)):
+        for name in ("call_timeout_seconds", "timeout"):
+            value = getattr(owner, name, None)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+                return float(value)
+    return DEFAULT_CALL_TIMEOUT_SECONDS
+
+
+def _is_timeout(error: BaseException | None) -> bool:
+    """A call timeout, however the provider wraps it (the Claude CLI raises ProviderCallError from TimeoutExpired)."""
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        if isinstance(error, subprocess.TimeoutExpired):
+            return True
+        seen.add(id(error))
+        error = error.__cause__
+    return False
+
+
+def _is_slow(row: dict[str, Any]) -> bool:
+    return int(row.get("byte_count") or 0) >= SLOW_CAPTURE_BYTES or int(row.get("error_count") or 0) >= SLOW_ERROR_COUNT
+
+
+def _json_bytes(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
 # T-2123: hung consolidation calls (primary or fallback) one run tolerates before the breaker opens.
 MAX_CONSOLIDATE_HUNG_CALLS = 2
 _PROVIDER_WIDE_HTTP = frozenset({401, 403, 408, 429})
@@ -218,6 +260,11 @@ class DreamConfig:
     # whole queue (so the old backlog drains); the rest go to beat-scanned captures first. 0 =
     # plain oldest-first, which is what the 6-hourly dream job keeps.
     oldest_reserve: int = 0
+    # D-11: wall-clock seconds this run may take (0 = unbounded) and which ledger lane it draws from.
+    run_budget_seconds: float = 0.0
+    # Extra slots for slow-lane captures whose backoff elapsed (the 6-hourly run); the run budget bounds them.
+    slow_slots: int = 0
+    lane: str = LANE_ALL
     # TOPE DE GASTO, ordenado por el operador el 2026-08-24 (ruling MM3).
     # Los dos topes de arriba cuentan LLAMADAS, y por eso nunca acotaron el gasto:
     # medido sobre el ledger de produccion, 527 llamadas a openai costaron 9,76M
@@ -278,7 +325,7 @@ class DreamConfig:
 class DreamWorker:
     observations_withheld = 0  # observation prompts the egress gate kept from the provider
 
-    def __init__(self, ledger: DreamLedger, service: MemoryService, extractor: Extractor, consolidator: Consolidator, *, config: DreamConfig | None = None, now: Callable[[], datetime] | None = None, decision_engine: Any = None) -> None:
+    def __init__(self, ledger: DreamLedger, service: MemoryService, extractor: Extractor, consolidator: Consolidator, *, config: DreamConfig | None = None, now: Callable[[], datetime] | None = None, decision_engine: Any = None, clock: Callable[[], float] | None = None) -> None:
         self.ledger = ledger
         self.service = service
         self.extractor = extractor
@@ -288,6 +335,10 @@ class DreamWorker:
         # S3 INGEST: None uses the process-wide decisions engine (off by default).
         self.decision_engine = decision_engine
         self._lease_owner: str | None = None
+        self.clock = clock or time.monotonic  # run budget only; leases and ledger rows use ``now``
+        self._deadline: float | None = None
+        self._summary: dict[str, Any] = {"abandoned_calls": 0, "graph_observation_calls_skipped": 0}
+        self._answered = 0  # provider calls answered this run: a timeout after one is the capture's, not an outage
 
     def _decisions_ledger(self) -> Any:
         """The S3 decisions ledger: the injected engine's, else the configured one (``None``)."""
@@ -337,11 +388,68 @@ class DreamWorker:
         ):
             raise DreamLeaseLost("dream-worker lease is held by another worker")
 
+    def _fits(self, provider: Any) -> bool:
+        """True while the run budget can still hold one more call to ``provider``."""
+        if self._deadline is None:
+            return True
+        return self._deadline - self.clock() >= _call_timeout(provider) + WATCHDOG_GRACE_SECONDS + BUDGET_MARGIN_SECONDS
+
+    def _guarded_call(self, fn: Callable[[], Any], *, provider: Any, stage: str, capture_ids: Iterable[int],
+                      size: int, summary: dict[str, Any]) -> Any:
+        """Run one provider call off-thread: log start/end, renew the lease while it is in flight, abandon it
+        after its timeout (+ grace) with ``subprocess.TimeoutExpired`` so the hung-call handling applies.
+
+        Ids and sizes only, never content. An abandoned call's thread is a daemon and only returns a value.
+        """
+        timeout = _call_timeout(provider)
+        ids = sorted(int(item) for item in capture_ids)
+        fields = {"surface": "job", "stage": stage, "provider": str(getattr(provider, "provider", "")),
+                  "model": str(getattr(provider, "model", "")), "capture_id": ids[0] if ids else None,
+                  "capture_ids": ids, "bytes": size}
+        log_event(_JOB_LOG, "dream_call_start", timeout_s=timeout, **fields)
+        box: dict[str, Any] = {}
+
+        def target() -> None:
+            try:
+                box["result"] = fn()
+            except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread
+                box["error"] = exc
+
+        thread = threading.Thread(target=target, name="dream-call", daemon=True)
+        started = time.monotonic()
+        outcome = "ok"
+        error_type = None
+        thread.start()
+        try:
+            while True:
+                left = timeout + WATCHDOG_GRACE_SECONDS - (time.monotonic() - started)
+                if left <= 0:
+                    raise subprocess.TimeoutExpired("provider call", timeout)
+                thread.join(min(left, max(_HEARTBEAT_FLOOR_S, self.config.lease_ttl_seconds / 3)))
+                if not thread.is_alive():
+                    break
+                self._hold_lease()  # a call longer than the TTL must not lose the lease
+            if "error" in box:
+                raise box["error"]
+            self._answered += 1
+            return box["result"]
+        except BaseException as exc:
+            error_type = type(exc).__name__
+            outcome = "timeout" if _is_timeout(exc) else "error"
+            summary["abandoned_calls"] += int(outcome == "timeout")
+            raise
+        finally:
+            log_event(_JOB_LOG, "dream_call_end", outcome=outcome, error_type=error_type,
+                      duration_ms=round((time.monotonic() - started) * 1000, 1), **fields)
+
     def run(self, *, apply_candidates: bool, scope: str | None = None, max_sessions: int | None = None) -> dict[str, Any]:
         owner = uuid.uuid4().hex
         if not self.ledger.acquire_lease("dream-worker", owner, self.config.lease_ttl_seconds, now=self.now()):
             return {"ok": False, "reason": "worker_busy"}
         self._lease_owner = owner
+        self._answered = 0
+        budget = float(self.config.run_budget_seconds or 0)
+        self._deadline = self.clock() + budget if budget > 0 else None
         run_id = self.ledger.start_run(not apply_candidates, self.extractor.model, self.consolidator.model, now=self.now())
         summary = {
             "ok": True,
@@ -367,7 +475,11 @@ class DreamWorker:
             "ingest_explored": 0,
             "errors": 0,
             "recovered_stale_runs": 0,
+            "abandoned_calls": 0,
+            "budget_stop": None,
+            "graph_observation_calls_skipped": 0,
         }
+        self._summary = summary
         try:
             from memorymaster.core.model_preflight import alert, preflight_provider
 
@@ -387,7 +499,7 @@ class DreamWorker:
             fresh = self._extract(run_id, scope, limit, summary)
             self._consolidate(run_id, fresh, summary)
             if apply_candidates:
-                pending = self.ledger.consolidated(max_sessions=limit, scope=scope)
+                pending = self.ledger.consolidated(max_sessions=limit + self.config.slow_slots, scope=scope)
                 self._apply(run_id, pending, summary)
             if self.config.enable_graph_observations:
                 self._hold_lease()
@@ -456,20 +568,26 @@ class DreamWorker:
         asi que la proxima no vuelve a dejar este call site atras.
         """
         from memorymaster.core.llm_provider import call_llm
+        from memorymaster.knowledge.graph_observation_engine import ObservationBudgetDeferred
 
+        bounded = SimpleNamespace(provider="default", model="", timeout=DEFAULT_CALL_TIMEOUT_SECONDS)
+        if not self._fits(bounded):  # the engine retries the job from its ids in a later run
+            self._summary["graph_observation_calls_skipped"] += 1
+            raise ObservationBudgetDeferred("run budget cannot hold another observation call")
         safe = export_stored(prompt)
         if safe is None:  # the existing no-verdict answer: the job completes, nothing is sent
             self.observations_withheld += 1
             return '{"decision":"no_signal"}'
         prompt = safe
-        return call_llm(system, prompt)
+        return self._guarded_call(lambda: call_llm(system, prompt), provider=bounded, stage="observe",
+                                  capture_ids=[], size=len(prompt.encode("utf-8")), summary=self._summary)
 
     def _run_graph_observations(
         self, *, owner: str, scope: str | None, synthesize: bool
     ) -> dict[str, int]:
         from memorymaster.knowledge.graph_observation_engine import (
             GraphObservationEngine,
-        )
+        )  # ObservationBudgetDeferred: see _observation_llm
         from memorymaster.knowledge.ontology import load_ontology
 
         engine = GraphObservationEngine(self.service.store, llm_call=self._observation_llm)
@@ -506,7 +624,9 @@ class DreamWorker:
             totals["discovery_no_supports"] += discovered.discovery_no_supports
             totals["discovery_no_components"] += discovered.discovery_no_components
             totals["failed"] += discovered.failed
-            if synthesize:
+            if synthesize and not self._fits(SimpleNamespace(timeout=DEFAULT_CALL_TIMEOUT_SECONDS)):
+                self._summary["graph_observation_calls_skipped"] += 1  # before leasing: no job is touched
+            elif synthesize:
                 synthesized = engine.process_synthesis(owner=owner, scope=target_scope)
                 totals["emitted"] += synthesized.emitted
                 totals["failed"] += synthesized.failed
@@ -515,15 +635,25 @@ class DreamWorker:
 
     def _extract(self, run_id: str, scope: str | None, limit: int, summary: dict[str, Any]) -> list[dict[str, Any]]:
         rows = self.ledger.eligible(idle_minutes=self.config.idle_minutes, max_sessions=limit, scope=scope, now=self.now(),
-                                    oldest_reserve=self.config.oldest_reserve)
+                                    oldest_reserve=self.config.oldest_reserve, lane=self.config.lane,
+                                    slow_slots=self.config.slow_slots)
         extracted: list[dict[str, Any]] = []
+        held_back: set[tuple] = set()  # sessions with an unfinished capture in this run: later ones wait (order)
         for row in rows:
+            session = (row["provider"], row["session_hash"], row["scope"])
+            if session in held_back:
+                continue
             if row.get("extraction") is not None and extraction_complete(row):
                 extracted.append(row)
                 continue
+            if not self._fits(self.extractor):
+                summary["budget_stop"] = summary["budget_stop"] or "extract"
+                break
             done, stop = self._extract_windows(run_id, row, summary)
             if done is not None:
                 extracted.append(done)
+            else:
+                held_back.add(session)
             if stop:
                 break
         return extracted
@@ -551,6 +681,9 @@ class DreamWorker:
             ):
                 summary["deferred_extract_budget"] += 1
                 return None, False
+            if not self._fits(self.extractor):  # a partly extracted capture resumes from extracted_through
+                summary["budget_stop"] = summary["budget_stop"] or "extract"
+                return None, True
             called = False
             messages: list[dict[str, Any]] = []
             try:
@@ -563,7 +696,10 @@ class DreamWorker:
                 if withheld < len(messages):  # a window of only withheld messages has nothing to send
                     self._hold_lease()
                     called = True
-                    result = self.extractor.extract(messages, scope=str(row["scope"]), capture_hash=capture_hash)
+                    result = self._guarded_call(
+                        lambda: self.extractor.extract(messages, scope=str(row["scope"]), capture_hash=capture_hash),
+                        provider=self.extractor, stage="extract", capture_ids=[int(row["id"])],
+                        size=_json_bytes(messages), summary=summary)
                     called = False
                     self._record_usage(run_id, result.usage, "ok")
                     candidates = [candidate.to_dict() for candidate in result.candidates]
@@ -585,9 +721,10 @@ class DreamWorker:
                         )),
                     )
                 self._hold_lease()
-                self._mark_semantic_failure(row, run_id, exc, stage="extract")
+                self._mark_semantic_failure(row, run_id, exc, stage="extract", charge=self._timeout_charged(exc, row))
                 summary["errors"] += 1
-                return None, isinstance(exc, ProviderCallError) and exc.http_status == 429
+                return None, (isinstance(exc, ProviderCallError) and exc.http_status == 429) or (
+                    _is_timeout(exc) and summary["abandoned_calls"] >= MAX_ABANDONED_CALLS)
             appended = saved["content_hash"] != row["content_hash"]
             row = saved
             if extraction_complete(row):
@@ -596,6 +733,12 @@ class DreamWorker:
             if appended:
                 break  # active again: the idle gate decides when the new tail is extracted
         return None, False
+
+    def _timeout_charged(self, error: BaseException, row: dict[str, Any]) -> bool:
+        """A timeout is charged to the capture (error_count, so backoff and quarantine apply) when the provider
+        answered another call in this run, or the capture is already slow-lane (no benefit of the doubt);
+        otherwise it may be an outage and costs nothing."""
+        return _is_timeout(error) and (self._answered > 0 or _is_slow(row))
 
     def _mark_semantic_failure(
         self, row: dict[str, Any], run_id: str, error: Exception, *, stage: str, charge: bool = False,
@@ -815,6 +958,12 @@ class DreamWorker:
             if not pairs:
                 continue
             capture_ids = {int(row["id"]) for row, _ in pairs}
+            if not self._fits(consolidator):
+                # Run budget spent: nothing is lost, the extracted captures resume next run.
+                summary["budget_stop"] = summary["budget_stop"] or "consolidate"
+                provider_deferred.update(capture_ids)
+                summary["deferred_consolidate_provider"] = len(provider_deferred)
+                continue
             if stopped is not None or summary["consolidate_breaker"] is not None:
                 # Breaker open: no more consolidation calls this run; the rest
                 # of the queue stays unchanged for a later run.
@@ -863,7 +1012,10 @@ class DreamWorker:
                 result = None
                 if sent:  # a batch of only withheld candidates has nothing to send
                     called = True
-                    result = consolidator.consolidate(sent, safe_references, scope=effective_scope)
+                    result = self._guarded_call(
+                        lambda: consolidator.consolidate(sent, safe_references, scope=effective_scope),
+                        provider=consolidator, stage="consolidate", capture_ids=capture_ids,
+                        size=_json_bytes([[c.to_dict() for c in sent], safe_references]), summary=summary)
                     called = False
                     answered += 1
                     self._record_usage(run_id, result.usage, "ok")
@@ -939,6 +1091,11 @@ class DreamWorker:
                     self.ledger.record_consolidation_trip(capture_ids, alone=len(capture_ids) == 1 and answered > 0, now=self.now())
                     provider_deferred.update(capture_ids)
                     summary["deferred_consolidate_provider"] = len(provider_deferred)
+                    # The provider answered others, or the capture is slow-lane already: the hang is its own.
+                    charged = [int(r["id"]) for r, _ in pairs if answered > 0 or _is_slow(r)]
+                    if charged:
+                        self._hold_lease()
+                        self.ledger.charge_hang(charged, run_id, max_errors=self.config.max_capture_errors)
                     continue
                 if provider_wide:
                     # Mirror of the extraction 429 break: one provider-wide
@@ -1185,6 +1342,8 @@ class DreamWorker:
 
     def _apply(self, run_id: str, rows: list[dict[str, Any]], summary: dict[str, Any]) -> None:
         for row in rows:
+            if self.ledger.has_open_predecessor(int(row["id"])):
+                continue  # an older capture of this session is unfinished: stay consolidated, apply in order
             try:
                 self._apply_capture(run_id, row, summary)
                 self._hold_lease()

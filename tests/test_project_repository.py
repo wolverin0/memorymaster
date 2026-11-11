@@ -856,3 +856,19 @@ def test_legacy_temporal_fence_fails_closed_without_source_scan(project_config, 
     current = snapshot_since(project_config, baseline["coverage"], baseline["read_at"])
     assert not current["complete"]
     assert not any("FROM claims" in statement or "FROM citations" in statement for statement in statements)
+
+
+def test_brief_claims_carry_the_human_label_and_a_failed_kind_is_unavailable_not_empty(project_config):
+    from memorymaster.profile.project_repository import claim_label, load_brief_claims
+
+    assert claim_label({"id": 7, "human_id": "mm-344e"}) == "mm-344e"
+    assert claim_label({"id": 7, "human_id": None}) == "claim:7"  # never an `mm-<numeric id>` that resolves to nothing
+    assert claim_label({"id": 7, "human_id": "bad label!"}) == "claim:7"
+    claim(project_config)
+    found, ok = load_brief_claims(project_config)
+    assert ok and found["failure"] == [] and found["partial"] == []
+    assert [(row["label"], row["text"]) for row in found["decision"]] == [("claim:1", "Use bounded reads")]
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("DROP TABLE citations")
+    found, ok = load_brief_claims(project_config)
+    assert not ok and found["decision"] is None and found["failure"] is None

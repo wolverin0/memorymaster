@@ -223,3 +223,21 @@ def test_missing_database_becomes_null_section(tmp_path):
     report = dm.collect(tmp_path / "no.db", tmp_path / "no2.db", tmp_path, tmp_path / "x.jsonl", 7, NOW)
     assert report["recall_returns_by_origin"]["value"] is None
     assert report["dreaming"]["value"] is None
+
+
+def test_transcript_fallback_outcomes_are_counted_from_the_hook_log(tmp_path):
+    def line(hours_ago: float, outcome: str, elapsed: float, budget: float = 120.0) -> str:
+        return (f"[{iso(hours_ago)}] hook=recall event=transcript_fallback outcome={outcome} "
+                f"elapsed_ms={elapsed} budget_ms={budget} returned={int(outcome == 'hits')}")
+
+    log = tmp_path / "hook.log"
+    log.write_text("\n".join([
+        line(1, "hits", 20.0), line(2, "hits", 30.0), line(3, "empty", 10.0), line(4, "deadline", 125.0),
+        line(5, "error:RuntimeError", 5.0), line(24 * 30, "deadline", 999.0),  # outside the window
+        f"[{iso(1)}] hook=recall event=latency stream=x ms=1",  # other events are ignored
+    ]) + "\n", encoding="utf-8")
+    report = dm.transcript_fallback_outcomes(log, SINCE)
+    assert (report["ran"], report["hits"], report["empty"], report["deadline"], report["error"]) == (5, 2, 1, 1, 1)
+    assert report["returned_fragments_share"] == 0.4 and report["returned_none_share"] == 0.6
+    assert report["deadline_share"] == 0.2 and report["budget_ms"] == 120.0 and report["elapsed_p95_ms"] == 125.0
+    assert "reason" in dm.transcript_fallback_outcomes(tmp_path / "missing.log", SINCE)
