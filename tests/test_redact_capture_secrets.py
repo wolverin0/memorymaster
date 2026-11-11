@@ -137,6 +137,8 @@ def test_dry_run_changes_no_byte_and_reports_counts_and_pattern_names(tmp_path, 
     assert {"password_prose_es", "url_basic_auth_password", "home_path_windows",
             "encoded:password_assignment"} <= set(summary["patterns"])
     assert out.out.count("would-redact id=") == 7
+    assert "withheld_reasons=encoded:password_assignment:2" in out.out
+    assert summary["withheld_by_reason"] == {"encoded:password_assignment": 12}
     assert not any(fragment in out.out + out.err for fragment in RAW_FRAGMENTS)
 
 
@@ -320,7 +322,7 @@ def test_a_failure_mid_row_leaves_that_row_unchanged_and_the_others_go_on(tmp_pa
     code = rcs.main(["--ledger", str(ledger.db_path), "--apply"])
 
     out = capsys.readouterr()
-    assert code == 1 and f"failed id={target} reason=RuntimeError" in out.err
+    assert code == 1 and f"failed id={target} table=dream_captures reason=RuntimeError" in out.err
     assert ledger.get_capture(target) == before[target]  # the UPDATE was rolled back whole
     assert ledger.get_capture(ids["captured"]) != before[ids["captured"]]
 
@@ -355,3 +357,116 @@ def test_missing_or_foreign_files_fail_with_a_reason_and_no_write(tmp_path, caps
 @pytest.mark.parametrize("cursor", [None])
 def test_remap_cursor_keeps_a_historical_null(cursor):
     assert rcs._remap_cursor([{"text": "a"}], [{"text": "b"}], cursor) is None
+
+
+def _big_ledger(tmp_path: Path, name: str) -> DreamLedger:
+    ledger = DreamLedger(tmp_path / name)
+    for n in range(5):  # each row: a 48 KB message with an encoded credential that becomes a short marker
+        _raw_row(ledger, f"s-big-{n}", [f"fila{n} " * 8000 + HEX, CLEAN], cursor_end=100 + n)
+    return ledger
+
+
+def test_residue_check_bites_with_secure_delete_off_and_is_clean_with_it_on(tmp_path):
+    off = _big_ledger(tmp_path, "off.db")
+    summary = rcs.run(off.db_path, apply=True, verify_residue=True, secure_delete=False)
+    assert summary["rows_redacted"] == 5 and summary["residue"] > 0  # old pages survive a TRUNCATE checkpoint
+
+    on = _big_ledger(tmp_path, "on.db")
+    summary = rcs.run(on.db_path, apply=True, verify_residue=True)
+    assert summary["residue"] == 0 and summary["checkpoint_incomplete"] is False
+    assert rcs.main(["--ledger", str(_big_ledger(tmp_path, "cli.db").db_path), "--apply", "--verify-residue"]) == 0
+
+
+def test_remap_cursor_goes_back_rather_than_mark_unsent_text_as_sent():
+    tail = " /home/alice/My Documents/Some Folder/file.txt mas texto sin enviar" + " z" * 30
+    checked = 0
+    for filler in range(15_860, 15_990):  # the old unit boundary (last space) falls inside the spaced match
+        text = ("palabra " * 3000)[:filler] + tail
+        new_text = rcs._literal(text)[0]
+        old, new = [{"text": text}], [{"text": new_text}]
+        if len(units(old)) < 2 or new_text == text:
+            continue
+        cursor = rcs._remap_cursor(old, new, 1)
+        covered = units(new)[cursor - 1][2] if cursor else 0
+        assert "sin enviar" in new_text[covered:], filler  # a piece may be sent again, never skipped
+        checked += 1
+    assert checked > 50
+
+
+def test_free_text_under_skipped_looking_keys_dict_keys_and_cut_quotes_are_scanned(tmp_path):
+    ledger = DreamLedger(tmp_path / "capture-control.db")
+    row_id = _raw_row(ledger, "s-keys", [ES, CLEAN])
+    candidate = {
+        **_candidate(), "claim_type": "nota " + ES, "valid_from": "2026-01-02T03:04:05Z",
+        "valid_until": "vence " + ES, "evidence_quote": "el valor era " + VAL[:7],
+        "meta": {ES: "valor"},
+    }
+    ledger.set_extraction(row_id, [candidate], "run-1")
+
+    assert rcs.main(["--ledger", str(ledger.db_path), "--apply"]) == 0
+
+    new = ledger.get_capture(row_id)["extraction"][0]
+    marker = "[REDACTED:password_prose_es]"
+    assert new["claim_type"] == "nota " + ES.replace(VAL, marker)
+    assert new["valid_until"] == "vence " + ES.replace(VAL, marker)
+    assert new["valid_from"] == "2026-01-02T03:04:05Z" and new["candidate_id"] == candidate["candidate_id"]
+    assert new["meta"] == {ES.replace(VAL, marker): "valor"}
+    assert new["evidence_quote"] == "el valor era [REDACTED:partial_secret]"
+    assert VAL[:7] not in json.dumps(ledger.get_capture(row_id), ensure_ascii=False)
+
+
+def test_a_producer_appending_between_plan_and_commit_is_not_lost(tmp_path, monkeypatch):
+    ledger = DreamLedger(tmp_path / "capture-control.db")
+    row_id = _raw_row(ledger, "s-race", TEXTS, cursor_end=100)
+    real, fired = rcs.plan_row, []
+    stamp = (NOW - timedelta(minutes=30)).isoformat()
+
+    def racing(snap, **kwargs):
+        plan = real(snap, **kwargs)
+        if not fired:  # the producer's append lands after the scan, before the write
+            fired.append(1)
+            late = DreamMessage("late-1", "user", "turno nuevo sin secretos", stamp)
+            ledger.enqueue(CaptureEnvelope(
+                provider="codex", session_hash="s-race", scope="project:test", captured_at=NOW.isoformat(),
+                last_activity_at=stamp, messages=(late,), cursor_start=100, cursor_end=150,
+                content_hash=_digest((late,))))
+        return plan
+
+    monkeypatch.setattr(rcs, "plan_row", racing)
+    assert rcs.main(["--ledger", str(ledger.db_path), "--apply"]) == 0
+
+    row = ledger.get_capture(row_id)
+    assert fired and row["turn_count"] == len(TEXTS) + 1 and row["messages"][-1]["message_id"] == "late-1"
+    assert row["messages"][-1]["text"] == "turno nuevo sin secretos"
+    assert not any(fragment in json.dumps(row, ensure_ascii=False) for fragment in RAW_FRAGMENTS)
+    with ledger._connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM dream_captures").fetchone()[0] == 1
+
+
+def test_auxiliary_tables_that_can_carry_captured_text_are_covered(tmp_path, capsys):
+    ledger = DreamLedger(tmp_path / "capture-control.db")
+    run_id = ledger.start_run(True, "m", "m", now=NOW)
+    ledger.finish_run(run_id, "ok", {"note": URL, "count": 3}, now=NOW)
+    meta = {"selection": {"windows": [{"identity": "abc123", "messages": [
+        {"message_id": "m1", "role": "user", "text": ES, "timestamp": "2026-01-01T00:00:00Z"}]}]}}
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO backfill_inventory(campaign_id,stream_id,cohort_id,provider,parent_session_id,"
+            "source_locator,frozen_end,source_digest,status,metadata_json) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("c", "st", "co", "codex", "p", "loc", 1, "dg", "done", json.dumps(meta)))
+    assert ledger.acquire_lease("backfill-runner", "other", 3600)
+
+    code = rcs.main(["--ledger", str(ledger.db_path), "--apply"])
+
+    out = capsys.readouterr()
+    assert code == 1 and "skipped_busy id=1 table=backfill_inventory" in out.err  # the runner rewrites it from memory
+    with ledger._connect() as conn:
+        assert URL_PW not in conn.execute("SELECT summary_json FROM dream_runs").fetchone()[0]
+        assert VAL in conn.execute("SELECT metadata_json FROM backfill_inventory").fetchone()[0]
+    ledger.release_lease("backfill-runner", "other")
+    assert rcs.main(["--ledger", str(ledger.db_path), "--apply"]) == 0
+    with ledger._connect() as conn:
+        stored = json.loads(conn.execute("SELECT metadata_json FROM backfill_inventory").fetchone()[0])
+    window = stored["selection"]["windows"][0]
+    assert window["identity"] == "abc123" and VAL not in json.dumps(stored)
+    assert window["messages"][0]["text"] == ES.replace(VAL, "[REDACTED:password_prose_es]")
