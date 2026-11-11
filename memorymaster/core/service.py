@@ -815,6 +815,10 @@ class MemoryService(IntegrationService):
         observability.bump_claim_ingested(source_agent)
         return claim
 
+    def validate_now(self, claim_id: int) -> dict[str, object]:
+        """Ingest fast path: rule on one fresh candidate now, not at the next cycle (``ingest_governance``)."""
+        return ingest_governance.validate_now(self, claim_id)
+
     def _rule_mining_phase(self) -> dict[str, object]:
         """Mine verbatim corrections into rule candidates (P3 steward phase).
 

@@ -232,7 +232,7 @@ def _pending_supersession(store: Any, claim_id: int | None = None) -> frozenset[
     from memorymaster.recall.retrieval import pending_supersession_ids
 
     source = store if claim_id is None else _ClaimEvents(store, claim_id)
-    return pending_supersession_ids(source, use_cache=False, strict=True)
+    return pending_supersession_ids(source, use_cache=False, strict=True, deliverable_only=False)
 
 
 class _Selection:
