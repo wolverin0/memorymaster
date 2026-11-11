@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from memorymaster.core.provider_egress import export_messages
 from memorymaster.dreaming.backfill_guard import PauseLatch, evaluate_backfill_guard
 from memorymaster.dreaming import backfill_consolidate_guards as consolidate_guards
 from memorymaster.dreaming.providers import ProviderCallError, ProviderOutputError
@@ -600,7 +601,7 @@ class BackfillRunner:
                 if repairs >= max(1, -(-len(planned) // 10)):
                     raise RuntimeError("extraction_repair_allowance_exhausted")
             # Actual rendered preflight is enforced by the configured provider adapter.
-            messages = window["messages"]
+            messages, _withheld = export_messages(window["messages"])  # stored text predates the egress gate
             counter = getattr(self.extractor, "rendered_input_tokens", None)
             if counter and counter(messages, scope=row["scope"]) > 10_000:
                 raise ValueError("selected window exceeds rendered transport cap")
