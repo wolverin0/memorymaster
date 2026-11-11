@@ -588,3 +588,19 @@ def test_tampered_temporal_boundary_never_reaches_public_manifest_or_cli(project
     # An unavailable pair is a non-zero read; whatever is emitted carries nothing of the tampered field.
     assert main(args) in (0, 1)
     assert injected not in capsys.readouterr().out
+
+
+def test_manifest_accepts_the_not_revalidated_and_ledger_malformed_diagnostics_and_nothing_looser(project_config):
+    claim(project_config)
+    assert publish_project_projection(project_config, build_project_projection(project_config))
+    _, path = projection_paths(project_config)
+    original = json.loads(path.read_text(encoding="utf-8"))
+
+    def read_with(diagnostics):
+        manifest = dict(original, diagnostics=diagnostics)
+        path.write_text(json.dumps(manifest), encoding="utf-8")
+        return read_manifest(project_config)
+
+    assert read_with(["not_revalidated", "ledger_malformed:3"]) is not None
+    for bad in ("ledger_malformed:", "ledger_malformed:x", "ledger_malformed:123456", "made_up"):
+        assert read_with([bad]) is None, bad
