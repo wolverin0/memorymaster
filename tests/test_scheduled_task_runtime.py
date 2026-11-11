@@ -38,7 +38,7 @@ def test_scheduled_dream_queues_due_capture_work_before_processing(
         calls.append(("capture", limit))
         return {"completed": 1}
 
-    def fake_dream(db, workspace, *, apply_candidates):
+    def fake_dream(db, workspace, *, apply_candidates, **_kwargs):
         calls.append(("dream", apply_candidates))
         return {"ok": True, "errors": 0}
 

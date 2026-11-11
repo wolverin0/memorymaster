@@ -563,6 +563,36 @@ def test_dream_cycle_enforces_one_three_call_batch_per_scope(monkeypatch) -> Non
 # that 3,132 of them had found nothing at all.
 
 
+def test_budget_skips_release_the_job_without_spending_attempts(tmp_path) -> None:
+    from memorymaster.knowledge.graph_observation_engine import ObservationBudgetDeferred
+
+    service, _capture, _sources = _graph_fixture(tmp_path)
+    raw = json.dumps({"decision": "no_signal"})
+    calls = {"skip": True}
+
+    def llm(_system, _prompt):
+        if calls["skip"]:
+            raise ObservationBudgetDeferred("budget")
+        return raw
+
+    engine = GraphObservationEngine(service.store, llm_call=llm)
+    engine.repo.queue_discovery(tenant_id=None, scope="project:test", ontology_version="personal-v1", cycle_hour="2026-08-12T20")
+    engine.process_discovery(owner="observer", scope="project:test")
+
+    def jobs():
+        with service.store.connect() as connection:
+            return connection.execute("SELECT status, attempts FROM graph_observation_jobs WHERE stage='synthesize'").fetchall()
+
+    assert jobs()
+    for _ in range(6):  # more than MAX_ATTEMPTS skips in a row
+        result = engine.process_synthesis(owner="observer", scope="project:test")
+        assert result.failed == 0
+    assert [(row[0], row[1]) for row in jobs()] == [("retryable", 0)] * len(jobs())
+
+    calls["skip"] = False
+    assert engine.process_synthesis(owner="observer", scope="project:test").synthesis_completed >= 1
+
+
 def _completed_discovery_rows(service) -> list[tuple[str, str | None, str | None]]:
     with service.store.connect() as conn:
         return [

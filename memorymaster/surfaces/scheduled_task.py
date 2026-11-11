@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import runpy
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,13 +39,22 @@ BEAT_LEASE_TTL_SECONDS = 270
 # bounded by the daily call/token caps, not by these; the clamp only bounds the ask.
 # shortcut: a tick that outlasts the 5-minute cadence holds the lease, so the next tick skips its transcript scan;
 # lower the env limits if beat.log shows worker_busy ticks, or move the scan out of the lease if that persists.
-# BEAT_OLDEST_RESERVE slots stay oldest-first so the old backlog still drains; the rest go to freshly scanned sessions.
+# BEAT_OLDEST_RESERVE slots stay oldest-first so the old backlog still drains; the rest go to the newest captures.
 BEAT_MAX_SESSIONS = 6
 BEAT_MAX_CONSOLIDATE_CAPTURES = 6
 BEAT_MAX_SESSIONS_ENV = "MEMORYMASTER_BEAT_MAX_SESSIONS"
 BEAT_MAX_CONSOLIDATE_CAPTURES_ENV = "MEMORYMASTER_BEAT_MAX_CONSOLIDATE_CAPTURES"
 BEAT_MAX_PER_TICK_CLAMP = 30
-BEAT_OLDEST_RESERVE = 1
+BEAT_OLDEST_RESERVE = 2  # D-11: 4 of 6 slots go to the newest captures, 2 drain the backlog oldest-first
+# D-11 wall-clock budgets. A run stops starting provider calls once the budget left cannot hold another call, so
+# the scheduler never kills it (an abandoned run closed nothing and re-spent its time on the same head captures).
+# Beat: manifest MemoryMaster-Beat execution_time_limit is PT20M; 14 min leaves 6 for the post-run steps.
+# Dreaming: no execution_time_limit in the manifest, 6 h cadence with IgnoreNew; 4 h leaves the next slot free.
+# tests/test_dream_budget.py reads ops/windows-tasks/manifest.json and fails if these stop fitting.
+BEAT_RUN_BUDGET_SECONDS = 14 * 60
+DREAM_RUN_BUDGET_SECONDS = 4 * 3600
+DREAM_OLDEST_RESERVE = 10  # of the 20 sessions of a Dreaming run
+DREAM_SLOW_SLOTS = 500  # slow-lane captures beyond those 20; the run budget is what bounds them
 
 
 def _beat_limit(env: str, default: int) -> int:
@@ -96,6 +106,33 @@ def _capture_error_count(capture: object) -> int:
     return int(getattr(capture, "errors", 0) or 0)
 
 
+def _capture_failed(capture: object) -> bool:
+    """The capture stage failed as a whole: it had errors and completed nothing."""
+    completed = capture.get("completed", 0) if isinstance(capture, dict) else getattr(capture, "completed", 0)
+    return bool(_capture_error_count(capture)) and not completed
+
+
+def _dream_progress(dream: dict) -> int:
+    return sum(int(dream.get(key) or 0) for key in ("extracted", "consolidated", "applied", "candidate_writes"))
+
+
+def dream_outcome(dream: dict | None) -> tuple[str, int]:
+    """(outcome, exit code) of a dream worker run. Exit 1 only when the run itself failed: it raised, lost its
+    lease, was refused by preflight/provider config, or had errors and made no progress. ``worker_busy`` (another
+    run holds the lease) and a budget stop are normal outcomes; per-item errors alongside progress exit 0."""
+    if dream is None:
+        return "none", 0
+    if dream.get("reason") == "worker_busy":
+        return "worker_busy", 0
+    if not dream.get("ok"):
+        return str(dream.get("reason") or "failed"), 1
+    if dream.get("errors") and not _dream_progress(dream):
+        return "errors_no_progress", 1
+    if dream.get("budget_stop"):
+        return "budget_stop", 0
+    return ("partial" if dream.get("errors") else "ok"), 0
+
+
 def _compiled_profile_enabled() -> bool:
     return os.environ.get("MEMORYMASTER_COMPILED_PROFILE", "").strip().lower() in {
         "1",
@@ -107,9 +144,13 @@ def _compiled_profile_enabled() -> bool:
 
 def _run_dream(args: argparse.Namespace) -> int:
     _apply_dream_provider_contract(args)
+    started = time.monotonic()
+    from dataclasses import replace
+
     from memorymaster.capture.worker import run_capture_worker
     from memorymaster.core.service import MemoryService
-    from memorymaster.dreaming.worker import run_dream
+    from memorymaster.dreaming.ledger import LANE_DREAM
+    from memorymaster.dreaming.worker import DreamConfig, run_dream
     from memorymaster.public.v1 import improve
 
     service = MemoryService(args.db, workspace_root=Path(args.workspace))
@@ -122,11 +163,15 @@ def _run_dream(args: argparse.Namespace) -> int:
         platform="scheduled",
     )
     capture = run_capture_worker(service, limit=25)
-    dream = run_dream(
-        args.db,
-        args.workspace,
-        apply_candidates=bool(args.apply_candidates),
+    config = replace(
+        DreamConfig.from_env(),
+        run_budget_seconds=max(1.0, DREAM_RUN_BUDGET_SECONDS - (time.monotonic() - started)),
+        oldest_reserve=DREAM_OLDEST_RESERVE,
+        lane=LANE_DREAM,
+        slow_slots=DREAM_SLOW_SLOTS,
     )
+    dream = run_dream(args.db, args.workspace, apply_candidates=bool(args.apply_candidates), config=config)
+    dream_result, dream_code = dream_outcome(dream)
     profile = {"ok": True, "status": "disabled"}
     if _compiled_profile_enabled():
         from memorymaster.profile.engine import run_compiled_profile
@@ -141,14 +186,10 @@ def _run_dream(args: argparse.Namespace) -> int:
         capture=capture,
         dream=dream,
         compiled_profile=profile,
+        dream_outcome=dream_result,
+        capture_errors=_capture_error_count(capture),
     )
-    passed = (
-        dream.get("ok")
-        and not dream.get("errors")
-        and not _capture_error_count(capture)
-        and profile.get("ok")
-    )
-    return 0 if passed else 1
+    return 0 if dream_code == 0 and not _capture_failed(capture) and profile.get("ok") else 1
 
 
 def _beat_enabled() -> bool:
@@ -196,7 +237,7 @@ def _run_capture_beat(args: argparse.Namespace, outcomes: list[str] | None = Non
     else is touched. Otherwise the tick holds the shared ``dream-worker`` lease while it scans, and
     releases it before ``run_dream``, which takes that same lease itself. Hourly Dreaming holding it is a normal no-op for the beat, not a failure.
     ``allow`` runs the worker with ``max_sessions`` and consolidated captures from ``BEAT_MAX_SESSIONS`` /
-    ``BEAT_MAX_CONSOLIDATE_CAPTURES`` (6 each, env-configurable; one slot oldest-first), under the existing daily caps; ``capture_only`` and ``skip`` never call a model.
+    ``BEAT_MAX_CONSOLIDATE_CAPTURES`` (6 each, env-configurable; BEAT_OLDEST_RESERVE slots oldest-first, the rest newest-first, slow captures excluded), under the existing daily caps; ``capture_only`` and ``skip`` never call a model.
     Claims are applied only if the operator passes ``--apply-candidates``.
     """
     if not _beat_enabled():
@@ -204,10 +245,11 @@ def _run_capture_beat(args: argparse.Namespace, outcomes: list[str] | None = Non
         return 0
     from dataclasses import replace
 
+    tick_started = time.monotonic()
     from memorymaster.core.capture_control import capture_state_path
     from memorymaster.dreaming import latency_guard
     from memorymaster.dreaming.capture import scan_active_transcripts
-    from memorymaster.dreaming.ledger import DreamLedger
+    from memorymaster.dreaming.ledger import LANE_BEAT, DreamLedger
     from memorymaster.dreaming.worker import DreamConfig, run_dream
 
     state_db = capture_state_path()
@@ -236,17 +278,19 @@ def _run_capture_beat(args: argparse.Namespace, outcomes: list[str] | None = Non
                 max_consolidate_captures_per_run=_beat_limit(
                     BEAT_MAX_CONSOLIDATE_CAPTURES_ENV, BEAT_MAX_CONSOLIDATE_CAPTURES),
                 oldest_reserve=BEAT_OLDEST_RESERVE,
+                run_budget_seconds=max(1.0, BEAT_RUN_BUDGET_SECONDS - (time.monotonic() - tick_started)),
+                lane=LANE_BEAT,
             )
             dream = run_dream(args.db, args.workspace, apply_candidates=bool(args.apply_candidates), config=config)
+    dream_result, code = dream_outcome(dream)
     log_event(_JOB_LOG, "beat_tick", surface="job", job="beat", outcome=decision.action,
-              reasons=decision.reasons, scan=scan, dream=dream)
+              reasons=decision.reasons, scan=scan, dream=dream, dream_outcome=dream_result)
     try:
         _write_beat_artifact(args.workspace, state_db, latency_guard.guard_log_path())
     except OSError as exc:
         log_event(_JOB_LOG, "beat_artifact_error", level=logging.WARNING, surface="job", job="beat",
                   error=type(exc).__name__)
-    busy = bool(dream) and dream.get("reason") == "worker_busy"
-    return 0 if dream is None or busy or (dream.get("ok") and not dream.get("errors")) else 1
+    return code
 
 
 def _run_verbatim_archive(args: argparse.Namespace) -> int:

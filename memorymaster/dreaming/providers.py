@@ -546,6 +546,9 @@ class GeminiExtractor:
     """
 
     provider = "google"
+    # Worst case of one call: 4 attempts of the 90 s transport timeout plus the 1+2+4 s backoff and pacing
+    # (the run budget in DreamWorker._fits reads it). shortcut: urlopen's timeout is per socket read.
+    call_timeout_seconds = 4 * 90 + 40
 
     # The extraction key has two per-minute limits and the 1+2+4 s retry backoff
     # outlasts neither. Requests: through 10-06 every 429 came after 14-18 calls
