@@ -14,18 +14,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
-from test_recall_selfcheck import db  # noqa: F401  (fixture)
+from test_recall_selfcheck import db as selfcheck_db  # noqa: F401  (fixture)
 from test_rule_miner import _create_verbatim, _seed, env  # noqa: F401  (fixture)
 
 ROOT = Path(__file__).resolve().parents[1]
 # Blocked by the egress gate, yet untouched by the literal sanitizers (a public address:port).
 GATED = "The admin console listens on 203.0.113.9:8443 for the platform team"
 BENIGN = "The compactor merges summaries older than the freshness window."
-
-
-@pytest.fixture()
-def selfcheck_db(request):
-    return request.getfixturevalue("db")
 
 
 # ---- 1. llm_steward.run_steward --------------------------------------------------------------
@@ -176,7 +171,7 @@ def test_classify_pending_does_not_stall_on_withheld_rows_and_counts_no_failure(
 # ---- 4. selfcheck ----------------------------------------------------------------------------
 
 
-def test_selfcheck_records_a_withheld_claim_as_skipped_sensitive_not_as_a_failure(selfcheck_db, tmp_path):
+def test_selfcheck_records_a_withheld_claim_as_skipped_sensitive_not_as_a_failure(selfcheck_db, tmp_path):  # noqa: F811
     from memorymaster.recall import selfcheck
 
     conn = sqlite3.connect(selfcheck_db)
