@@ -7,7 +7,12 @@ const projectRoot = __MEMORYMASTER_ROOT_JSON__;
 const prefix = "[MemoryMaster recall]\n";
 // The project-brief consumer switches, as memorymaster.profile.project_runtime.active() reads them.
 const briefFlags = ["MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "MEMORYMASTER_PROJECT_PROJECTION_SESSION_START"];
-const briefOn = () => briefFlags.every((n) => ["1", "true", "yes", "on"].includes((process.env[n] ?? "").trim().toLowerCase()));
+const truthy = (n) => ["1", "true", "yes", "on"].includes((process.env[n] ?? "").trim().toLowerCase());
+// Our own pipelines never get a brief: machine_traffic.internal_run() and filter_enabled("opencode").
+const internalRun = () => ["MEMORYMASTER_INTERNAL_RUN", "MEMORYMASTER_INTERNAL_CODEX"].some(truthy)
+  && !["0", "false", "no", "off"].includes((process.env.MEMORYMASTER_RECALL_MACHINE_FILTER_OPENCODE ?? "").trim().toLowerCase());
+const briefOn = () => briefFlags.every(truthy) && !internalRun();
+const MAX_BRIEF_TRIES = 3;
 const briefPrefix = "[MemoryMaster project brief]\n";
 
 function command(module, payload, extra = [], timeout = 2800) {
@@ -81,15 +86,19 @@ export function createAdapter(cwd) {
     state.pending ??= command("memorymaster.surfaces.hook_recall", {
       prompt: state.prompt, cwd, session_id: sessionID,
     });
-    if (briefOn() && !briefs.has(sessionID)) {
-      if (briefs.size >= 1000) briefs.delete(briefs.keys().next().value);
-      briefs.set(sessionID, { id: state.id, pending: command("memorymaster.surfaces.hook_recall", {
+    let brief = briefs.get(sessionID);
+    if (briefOn() && (!brief || (brief.retry && brief.tries < MAX_BRIEF_TRIES))) {
+      if (!brief && briefs.size >= 1000) briefs.delete(briefs.keys().next().value);
+      brief = { id: state.id, tries: (brief?.tries ?? 0) + 1, pending: command("memorymaster.surfaces.hook_recall", {
         cwd, session_id: sessionID,
-      }, ["--session-start"]) });
+      }, ["--session-start"]) };
+      briefs.set(sessionID, brief);
     }
-    const brief = briefs.get(sessionID);
     const [block, briefBlock] = await Promise.all([state.pending, brief?.id === state.id ? brief.pending : ""]);
-    if (signal?.aborted) return;
+    if (signal?.aborted) {
+      if (brief) brief.retry = true; // an aborted call delivered nothing: the next prompt asks again, up to MAX_BRIEF_TRIES
+      return;
+    }
     // A failed or silent call yields "" and the prompt proceeds untouched; the receipt follows the actual append.
     if (briefBlock.startsWith(briefPrefix)) {
       inject(system, structured, briefBlock, briefPrefix);

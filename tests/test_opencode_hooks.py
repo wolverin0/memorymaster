@@ -383,3 +383,59 @@ console.log(JSON.stringify(system));
     assert output == ["[MemoryMaster recall]\n- [mm-42] Why did we choose SQLite?"]
     assert len([row for row in rows if "--session-start" in row["argv"]]) == 1
     assert not [row for row in rows if "SessionStart" in row["argv"] and row["argv"][0].endswith("hook_events.py")]
+
+
+ADAPTER_INIT = """
+const runtime = await import("./memorymaster/runtime.mjs");
+const adapter = runtime.createAdapter("/fixture/project");
+const turn = async (id, aborted = false) => {
+  adapter.remember("ses_1", "Question " + id, id);
+  const controller = new AbortController();
+  if (aborted) controller.abort();
+  const system = [];
+  await adapter.context("ses_1", system, false, controller.signal);
+  return system;
+};
+"""
+
+
+def _brief_env(monkeypatch):
+    monkeypatch.setenv("TEST_BRIEF", BRIEF.replace(chr(10), "|"))
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "1")
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_SESSION_START", "1")
+
+
+def test_an_aborted_first_call_retries_the_brief_on_the_next_prompt_with_one_receipt(plugin, monkeypatch):
+    _brief_env(monkeypatch)
+    output, rows = plugin(1, ADAPTER_INIT + """
+const first = await turn("m1", true);
+const second = await turn("m2");
+const third = await turn("m3");
+console.log(JSON.stringify({first, second, third}));
+""")
+    assert output["first"] == []
+    assert output["second"][0] == BRIEF and len(output["second"]) == 2
+    assert all(not text.startswith("[MemoryMaster project brief]") for text in output["third"])
+    assert len([row for row in rows if "--session-start" in row["argv"]]) == 2
+    assert len([row for row in rows if "SessionStart" in row["argv"] and row["argv"][0].endswith("hook_events.py")]) == 1
+
+
+def test_a_permanently_aborted_brief_is_retried_at_most_three_times(plugin, monkeypatch):
+    _brief_env(monkeypatch)
+    _, rows = plugin(1, ADAPTER_INIT + """
+for (const id of ["a", "b", "c", "d", "e"]) await turn(id, true);
+console.log("{}");
+""")
+    assert len([row for row in rows if "--session-start" in row["argv"]]) == 3
+
+
+@pytest.mark.parametrize("env", [{"MEMORYMASTER_INTERNAL_RUN": "1"}, {"MEMORYMASTER_INTERNAL_CODEX": "true"}])
+def test_internal_runs_never_spawn_the_brief_process(plugin, monkeypatch, env):
+    _brief_env(monkeypatch)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    _, rows = plugin(1, ADAPTER_INIT + 'await turn("m1"); console.log("{}");')
+    assert not [row for row in rows if "--session-start" in row["argv"]]
+    monkeypatch.setenv("MEMORYMASTER_RECALL_MACHINE_FILTER_OPENCODE", "0")  # the rollback flag lifts the filter, as in Python
+    _, rows = plugin(1, ADAPTER_INIT + 'await turn("m1"); console.log("{}");')
+    assert len([row for row in rows if "--session-start" in row["argv"]]) == 1
