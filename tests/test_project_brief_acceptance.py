@@ -16,6 +16,7 @@ import runpy
 import shutil
 import sqlite3
 import sys
+import time
 
 import pytest
 
@@ -24,6 +25,7 @@ from memorymaster.profile import project_brief, project_runtime
 from memorymaster.profile.project_projection import (
     build_project_projection,
     read_manifest,
+    read_project_projection,
 )
 from memorymaster.profile.project_repository import claim_label, load_brief_claims, load_project_snapshot, snapshot_since
 
@@ -295,3 +297,50 @@ def test_brief_scan_watches_a_candidate_that_is_confirmed_later(world, monkeypat
                      (row[0], "session", "late", "evidence", stamp(0)))
     current = snapshot_since(config, baseline["coverage"], baseline["read_at"])
     assert f"claim:{row[0]}" in current["coverage"] and current["complete"]
+
+
+# --- SessionStart validation reads only the published cards -----------------------------------------------------
+
+def one_card_per_file_ledger(root: Path, repo: str, count: int) -> None:
+    for existing in root.glob("*.json"):
+        existing.unlink()
+    for n in range(count):
+        state = "running" if n < 3 else "done"
+        (root / f"T-{n:04d}.json").write_text(json.dumps({
+            "id": f"T-{n:04d}", "repo": repo, "state": state, "visibility": "public", "version": "1",
+            "title": f"card {n}", "updated_at": stamp(n % 3)}))
+
+
+def test_validation_reads_only_the_published_cards_of_a_big_ledger(world, monkeypatch):
+    _, _, _, tmp_path = world
+    config = {c.context_key: c for c in project_runtime.load_project_configs()}["infra"]
+    one_card_per_file_ledger(config.ledger_root, "infra", 2_500)
+    assert project_runtime._refresh_one(config)["status"] == "ok"
+    opened: list[str] = []
+    real = Path.read_bytes
+
+    def counting(self):
+        opened.append(self.name)
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counting)
+    started = time.monotonic()
+    projection = read_project_projection(config)
+    elapsed = time.monotonic() - started
+    published = {r["supports"][0]["id"] for r in read_manifest(config)["items"] if r["supports"][0]["kind"] == "card"}
+    ledger_opens = {name for name in opened if name.startswith("T-")}
+    assert projection is not None and published and ledger_opens == {f"{card}.json" for card in published}
+    assert len(opened) <= 2 * len(published) and elapsed < 1.0  # kept files are hashed twice; far below 2,500 opens
+    assert "Brief infra" in projection.payload and "not_revalidated" not in projection.payload
+
+
+def test_validation_that_cannot_finish_serves_the_brief_with_a_not_revalidated_note(world, monkeypatch):
+    _, _, _, tmp_path = world
+    config = {c.context_key: c for c in project_runtime.load_project_configs()}["infra"]
+    one_card_per_file_ledger(config.ledger_root, "infra", 50)
+    assert project_runtime._refresh_one(config)["status"] == "ok"
+    brief = read_manifest(config)["brief"]
+    monkeypatch.setattr("memorymaster.profile.project_repository.VALIDATION_SECONDS", -1.0)
+    projection = read_project_projection(config)
+    assert projection is not None and brief in projection.payload
+    assert "not_revalidated" in projection.payload

@@ -148,13 +148,32 @@ def _ledger_records(data: Any) -> tuple[list, bool]:
     return tasks, complete
 
 
-def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict, bool, list[str]]:
+VALIDATION_SECONDS = 0.1  # cooperative deadline of the claim read and, at SessionStart validation, of the ledger read
+_CARD_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,47}")
+
+
+def _card_paths(config: Any, card_ids: Any) -> list[Path] | None:
+    """The `<id>.json` file of each published card, or None when the ledger is not laid out one card per file."""
+    root = Path(config.ledger_root)
+    paths = [root / f"{card_id}.json" for card_id in sorted(card_ids)
+             if isinstance(card_id, str) and _CARD_ID.fullmatch(card_id)]
+    return paths if len(paths) == len(card_ids) and all(path.is_file() for path in paths) else None
+
+
+def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES, only_ids: Any = None,
+                deadline: float | None = None) -> tuple[dict, bool, list[str]]:
+    """`only_ids` (validation): read just those cards' files instead of the whole directory when the ledger is
+    one card per `<id>.json` (live layout); any other layout falls back to the full read. `deadline` is a
+    time.monotonic() instant after which the read gives up as unavailable."""
     if not config.ledger_root or not config.ledger_repo or not config.ledger_filtered:
         return {}, False, ["ledger_unavailable"]
 
+    def listing() -> list[Path]:
+        return (_card_paths(config, only_ids) if only_ids is not None else None) or _ledger_paths(config)
+
     for attempt in range(2):
         try:
-            paths = _ledger_paths(config)
+            paths = listing()
             if not paths:
                 raise ValueError("no_ledger_input")
             before = []
@@ -170,6 +189,8 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
             complete = True
             malformed = parsed = consumed = 0
             for path, (mtime_ns, _) in zip(paths, before):
+                if deadline is not None and time.monotonic() > deadline:
+                    raise ValueError("ledger_deadline")
                 raw = path.read_bytes()
                 try:
                     tasks, file_complete = _ledger_records(json.loads(raw))
@@ -238,7 +259,7 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES) -> tuple[dict
             for path in paths:
                 stat = path.stat()
                 after.append((stat.st_mtime_ns, stat.st_size))
-            if before != after or content_hashes != after_hashes or paths != _ledger_paths(config):
+            if before != after or content_hashes != after_hashes or paths != listing():
                 if attempt == 0:
                     continue
                 raise ValueError("ledger_changed_during_read")
@@ -585,7 +606,7 @@ def _read_claims(
     byte_limit = 2 * 1024 * 1024 if validation else MAX_SOURCE_BYTES
     if ids is not None and len(ids) > MAX_CLAIMS:
         raise ValueError("claim_limit")
-    deadline = time.monotonic() + 0.1
+    deadline = time.monotonic() + VALIDATION_SECONDS
     with closing(
         sqlite3.connect(Path(config.db_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=0.025)
     ) as conn:
@@ -821,6 +842,7 @@ def load_project_snapshot(
     changed_since: str | None = None,
     claim_ids: list[int] | None = None,
     validation: bool = False,
+    card_ids: list[str] | None = None,
 ) -> dict:
     result: dict[str, Any] = {
         "read_at": utc_now(),
@@ -861,7 +883,9 @@ def load_project_snapshot(
         result["diagnostics"].append("claims_unavailable")
     byte_budget = 2 * 1024 * 1024 if validation else MAX_SOURCE_BYTES
     cards, ledger_complete, diagnostics = load_ledger(
-        config, max_bytes=max(0, byte_budget - int(fingerprints.get("source_bytes", 0)))
+        config, max_bytes=max(0, byte_budget - int(fingerprints.get("source_bytes", 0))),
+        only_ids=card_ids if validation else None,
+        deadline=time.monotonic() + VALIDATION_SECONDS if validation and card_ids is not None else None,
     )
     items.update((card["key"], card) for card in cards.values())
     result.update(items=items, complete=complete and ledger_complete, fingerprints=fingerprints)
