@@ -193,7 +193,7 @@ def _claim_set_generated_at(articles: list[dict]) -> str:
     return max(valid_dates).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _call_llm(prompt: str, text: str) -> str:
+def _call_llm(prompt: str, text: str) -> str | None:
     from memorymaster.core import llm_budget
 
     try:
@@ -201,8 +201,8 @@ def _call_llm(prompt: str, text: str) -> str:
         from memorymaster.core.provider_egress import export_stored
 
         safe_prompt, safe_text = export_stored(prompt), export_stored(text)
-        if safe_prompt is None or safe_text is None:  # withheld by the egress gate: the existing "no answer"
-            return ""
+        if safe_prompt is None or safe_text is None:  # withheld by the egress gate: nothing is sent
+            return None
         return call_llm(safe_prompt, safe_text)
     except llm_budget.LLMBudgetExceeded:
         # Budget abort MUST propagate so absorb() emits its documented
@@ -741,6 +741,8 @@ Validated claim:
 
 Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."""
         truth = _call_llm(prompt, "")
+        if truth is None:  # withheld by the egress gate: no article is written, no claim is bound
+            return {"claim_id": claim_id, "absorbed": False, "reason": "egress_withheld"}
         if not truth or len(truth) <= 50:
             truth = body_parts[0] if body_parts else existing_content
         timeline_section = "## Timeline\n"
@@ -754,6 +756,8 @@ Return ONLY the updated compiled truth (no frontmatter, no title, no timeline)."
     else:
         context = f"Subject: {subject}\nScope: {scope}\nClaims ({len(claims)}):\n{claims_text}"
         body = _call_llm(ABSORB_PROMPT, context)
+        if body is None:  # withheld by the egress gate: no article is written, no claim is bound
+            return {"claim_id": claim_id, "absorbed": False, "reason": "egress_withheld"}
         if not body or len(body) <= 50:
             body = (
                 f"{subject.title()} captures validated MemoryMaster claims for this scope and "

@@ -208,6 +208,8 @@ def _resolve_group_pairs(store, claims: list[Claim], limit: int) -> tuple[int, i
             continue
 
         result = resolve_conflict_pair(store, winner, contender)
+        if result.get("reason") == "egress_withheld":
+            continue  # never judged: not evaluated (no call), not failed, both claims stay conflicted
         evaluated += 1
         if result.get("resolved"):
             resolved += 1

@@ -192,8 +192,12 @@ def _review_one_input(service: Any, item: dict[str, Any], stats: dict[str, Any])
 
     try:
         safe_body = export_stored(body)
-        if safe_body is None:  # withheld by the egress gate: no call, recorded as a blocked review
-            raise SkillValidationError("evidence withheld by the egress gate")
+        if safe_body is None:
+            # Withheld by the egress gate: no call. Closed with its own outcome so the item is not
+            # selected again every cycle; it is neither a failure nor a "blocked" verdict.
+            _record_review_completion(service, item["claim_id"], "egress_withheld")
+            stats["egress_withheld"] = stats.get("egress_withheld", 0) + 1
+            return
         raw = llm_provider.call_llm(_SKILL_REVIEW_PROMPT, safe_body)
         stats["llm_calls"] += 1
         output = _parse_reviewer_output(raw)

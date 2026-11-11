@@ -699,6 +699,7 @@ def run_steward(
         "errors": 0,
         "claims_extracted": 0,
         "claims_filtered_sensitive": 0,
+        "egress_withheld": 0,
         "provider": provider,
         "model": model,
         "key_count": key_rotator.key_count if key_rotator else 1,
@@ -810,6 +811,11 @@ def run_steward(
             log.warning("LLM error for claim #%d: %s", claim_id, e)
             stats["errors"] += 1
             stats["results"].append({"claim_id": claim_id, "error": str(e)})
+            continue
+
+        if result.action == "skip" and not result.extractions:
+            # Withheld by the egress gate: never judged, so it stays a candidate, untouched.
+            stats["egress_withheld"] += 1
             continue
 
         if result.action == "archive":

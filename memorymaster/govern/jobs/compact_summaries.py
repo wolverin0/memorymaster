@@ -79,9 +79,12 @@ def _inherited_source_agent(sources: list[Any]) -> str | None:
     return None
 
 
-def _build_claim_text_block(claims: list[Any]) -> str:
-    """Format and redact claims into a text block for the LLM prompt."""
+def _gated_claim_block(claims: list[Any]) -> tuple[str, list[Any]]:
+    """Prompt text for ``claims`` after the egress gate, and the claims whose line went out."""
+    from memorymaster.core.provider_egress import export_stored
+
     lines: list[str] = []
+    sent: list[Any] = []
     for i, claim in enumerate(claims, 1):
         parts = [f"[{i}]"]
         if claim.subject:
@@ -92,17 +95,18 @@ def _build_claim_text_block(claims: list[Any]) -> str:
             parts.append(f"Value: {claim.object_value}")
         if claim.text:
             parts.append(f"Text: {claim.text[:300]}")
-        lines.append(" | ".join(parts))
-    from memorymaster.core.provider_egress import export_stored
-
-    kept: list[str] = []
-    for line in lines:
-        safe = export_stored(line)  # a line the gate withholds is left out of the prompt
+        safe = export_stored(" | ".join(parts))  # a line the gate withholds is left out of the prompt
         if safe is None:
             log.info("Withheld a compact-summaries prompt line (egress gate)")
         else:
-            kept.append(safe)
-    return "\n".join(kept)
+            lines.append(safe)
+            sent.append(claim)
+    return "\n".join(lines), sent
+
+
+def _build_claim_text_block(claims: list[Any]) -> str:
+    """Format and gate claims into a text block for the LLM prompt."""
+    return _gated_claim_block(claims)[0]
 
 
 def _partition_by_identity(claims: list[Any]) -> list[list[Any]]:
@@ -352,15 +356,18 @@ def run(
             if len(sub_cluster) < min_cluster:
                 continue
 
-            claims_text = _build_claim_text_block(sub_cluster)
-            prompt = SUMMARIZE_PROMPT.replace("{claims_text}", claims_text)
-            if not claims_text.strip():  # every line withheld by the egress gate: no call
+            claims_text, sent_claims = _gated_claim_block(sub_cluster)
+            if not sent_claims:  # every line withheld by the egress gate: no call, nothing summarised
                 details.append({
                     "source_claim_ids": [c.id for c in sub_cluster],
                     "cluster_size": len(sub_cluster),
                     "action": "egress_withheld",
                 })
                 continue
+            # Only the claims whose lines went out are summarised, linked and retired by this summary;
+            # a withheld claim stays exactly as it was.
+            sub_cluster = sent_claims
+            prompt = SUMMARIZE_PROMPT.replace("{claims_text}", claims_text)
 
             detail: dict[str, Any] = {
                 "source_claim_ids": [c.id for c in sub_cluster],

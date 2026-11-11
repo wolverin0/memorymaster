@@ -118,7 +118,7 @@ def llm_question_generator(claim_text: str, n: int) -> list[str]:
 
     from memorymaster.core.provider_egress import export_stored
 
-    safe = export_stored(claim_text)
+    safe = export_stored(claim_text, trusted=True)  # callers pass our own sanitizer's output
     if safe is None:  # withheld by the egress gate: no call, no questions
         return []
     raw = call_llm(_PROMPT.format(n=n), safe)
@@ -217,12 +217,15 @@ def run_selfcheck(
         with llm_budget.cycle_scope():
             for row in candidates:
                 claim_id, text, claim_scope = int(row["id"]), str(row["text"] or ""), str(row["scope"])
+                from memorymaster.core.provider_egress import export_stored
+
                 redacted, findings = _sanitize_memory_claim_text(text)
-                if findings:  # fail-closed: nothing sensitive-looking leaves the process
+                # trusted: `redacted` is our own sanitizer's output; the gate adds what it does not cover
+                prompt_text = None if findings else export_stored(redacted[:MAX_CLAIM_CHARS], trusted=True)
+                if prompt_text is None:  # fail-closed: nothing sensitive-looking leaves the process
                     _store(sidecar, run, claim_id, claim_scope, "skipped_sensitive", k, retrieval_mode, [], [], "", stamp)
                     run.claims_skipped_sensitive += 1
                     continue
-                prompt_text = redacted[:MAX_CLAIM_CHARS]
                 cost = llm_budget.estimate_tokens(_PROMPT, prompt_text) + 60 * questions_per_claim
                 if run.llm_calls >= max_calls or run.est_tokens + cost > max_tokens:
                     run.status, run.reason = "budget_exhausted", "calls" if run.llm_calls >= max_calls else "tokens"

@@ -47,6 +47,9 @@ def _parse(raw: str) -> dict[str, Any] | None:
     return None
 
 
+WITHHELD_SENTINEL = "egress-withheld"
+
+
 def classify_pending(store: WorkflowStore, *, limit: int = 50) -> dict[str, object]:
     bounded = max(1, min(int(limit), 50))
     rows = store.connection.execute(
@@ -58,6 +61,7 @@ def classify_pending(store: WorkflowStore, *, limit: int = 50) -> dict[str, obje
     ).fetchall()
     classified = 0
     failures = 0
+    withheld = 0
     prompt_hash = hashlib.sha256(_PROMPT.encode()).hexdigest()
     provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER", "google")
     model = os.environ.get("MEMORYMASTER_LLM_MODEL", "provider-default")
@@ -66,8 +70,15 @@ def classify_pending(store: WorkflowStore, *, limit: int = 50) -> dict[str, obje
 
         # public_excerpt is our own redactor and can leave a marker touching letters: trusted names only
         request = export_stored(public_excerpt(row["initial_request_excerpt"]), trusted=True)
-        if request is None:  # withheld by the egress gate: no call, counted like any failed classification
-            failures += 1
+        if request is None:
+            # Withheld by the egress gate: no call and no failure. The sentinel hash takes the row out
+            # of the pending selection (it would otherwise hog the batch), task_category stays as it was.
+            store.connection.execute(
+                """UPDATE sessions SET classification_provider=?, classification_model=?,
+                       classification_prompt_hash=?, updated_at=? WHERE session_id=?""",
+                (WITHHELD_SENTINEL, WITHHELD_SENTINEL, WITHHELD_SENTINEL, utc_now(), row["session_id"]),
+            )
+            withheld += 1
             continue
         payload = {
             "provider": row["provider"], "scope": export_stored(row["project_scope"] or "") or "",
@@ -92,7 +103,10 @@ def classify_pending(store: WorkflowStore, *, limit: int = 50) -> dict[str, obje
         )
         classified += 1
     store.connection.commit()
-    return {"considered": len(rows), "classified": classified, "failures": failures, "limit": bounded}
+    return {
+        "considered": len(rows), "classified": classified, "failures": failures, "withheld": withheld,
+        "limit": bounded,
+    }
 
 
 __all__ = ["classify_pending"]
