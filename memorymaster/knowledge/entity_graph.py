@@ -18,6 +18,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from memorymaster.core.llm_provider import call_llm, use_call_scoped_env
+from memorymaster.core.provider_egress import export_stored
 from memorymaster.core.security import scan_text_for_findings
 from memorymaster.knowledge.entity_registry import add_alias, resolve_or_create
 from memorymaster.knowledge.ontology import Ontology, load_ontology
@@ -253,7 +254,11 @@ class EntityGraph:
     def _extract_payload(self, conn, text: str) -> dict | None:
         known = self._get_known_entity_names(limit=30, conn=conn)
         context = f"\nKnown entities: {', '.join(known)}" if known else ""
-        raw = _llm_chat(text[:2000], system=self.ontology.prompt() + context)
+        safe = export_stored(text[:2000])
+        if safe is None:  # withheld: nothing is sent and the claim yields no entities
+            self.last_diagnostics.append("egress_withheld")
+            return None
+        raw = _llm_chat(safe, system=self.ontology.prompt() + context)
         if not raw:
             raise EntityGraphProviderError(
                 "provider_empty_response", "Graph provider returned no output."

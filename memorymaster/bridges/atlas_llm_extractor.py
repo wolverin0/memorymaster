@@ -256,6 +256,11 @@ def _call_llm_safe(prompt: str, text: str, *, model: str | None) -> str | None:
     """Call the LLM, temporarily pinning ``model`` if given. ``None`` on failure."""
     import os
 
+    from memorymaster.core.provider_egress import export_lines
+
+    text, _withheld = export_lines(text)  # raw evidence bodies: strict gate, blocked lines dropped
+    if not text.strip():
+        return None
     previous = os.environ.get("MEMORYMASTER_LLM_MODEL")
     if model:
         os.environ["MEMORYMASTER_LLM_MODEL"] = model
