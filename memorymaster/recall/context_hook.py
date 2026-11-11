@@ -30,6 +30,7 @@ from pathlib import Path
 
 from memorymaster.core.hook_log import log_hook
 from memorymaster.recall import hook_lexical, hook_policy
+from memorymaster.recall.recall_tokenizer import _STOP
 
 logger = logging.getLogger(__name__)
 
@@ -1201,7 +1202,7 @@ def recall(
     else:
         scope_token = shared_token = None
 
-    correction_token = _CORRECTION_IN_PLAY.set(False)
+    correction_token = _CORRECTION_CHECK.set(None)
     try:
         # Raw past conversation is fetched BEFORE the claims pipeline: whether the older verbatim stream may
         # be bypassed depends on the fallback having produced usable fragments (T-1876 N8).
@@ -1225,7 +1226,7 @@ def recall(
             return rendered, rendered_ids
         return rendered
     finally:
-        _CORRECTION_IN_PLAY.reset(correction_token)
+        _CORRECTION_CHECK.reset(correction_token)
         if scope_token is not None:
             _REQUEST_SCOPE.reset(scope_token)
             _REQUEST_SHARED_SCOPES.reset(shared_token)
@@ -1246,60 +1247,57 @@ def _transcript_fragments(query: str, budget: int, phase_ms: dict[str, float]) -
         return []
 
 
-_NOT_A_VALUE = re.compile(
-    r"\S*[/\x5c]\S*"  # paths, urls, locale dates (01/08/2026)
-    r"|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?)?"  # ISO date / timestamp
-    r"|\b\d{1,2}:\d{2}(?::\d{2})?\b"  # clock time
-    r"|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"  # uuid
-    r"|\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b"  # commit hash / long hex
-    r"|#\d+|\b[A-Za-z]{1,6}-\d+\b"  # #123, T-1234, mm-0001
-    r"|\b(?:pr|pull|issue|ticket|msg|message|id)[\s_#:-]*\w*\d\w*"  # PR 12, msg_01H8..., ticket 4
-    r"|:\d+(?:-\d+)?\b|\bL\d+(?:-L?\d+)?\b|\blines?\s+\d+(?:\s*-\s*\d+)?"  # file:123, L10-20, lines 3-4
-    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b",
-    re.I,
-)
-_MM_ID = re.compile(r"\x5bmm-[^\x5d]*\x5d")
-_VALUE_TOKEN = re.compile(r"\b[vV]?\d+(?:[._]\d+)*(?:-?[A-Za-z][\w.]*)?\b")
+# One new word is usually a rephrasing of what the claims say; two new content tokens mean the fragment says more.
+MIN_NEW_TOKENS = 2
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n")
-_CORRECTION_IN_PLAY: contextvars.ContextVar[bool] = contextvars.ContextVar("mm_correction_in_play", default=False)
+_MM_ID = re.compile(r"\x5bmm-[^\x5d]*\x5d")
+_WORDS = re.compile(r"\w+")
+# Set by _finish_recall: answers "is a correction in play for the claims injected on this prompt?" lazily.
+_CORRECTION_CHECK: contextvars.ContextVar = contextvars.ContextVar("mm_correction_check", default=None)
 
 
-def _value_tokens(text: str) -> set[str]:
-    """Answer-like tokens (versions, ports, counts) of ``text``, lower case.
+def _content_tokens(text: str) -> set[str]:
+    """Lower-case tokens without stopwords (digits and short numbers kept)."""
+    return {t for t in _WORDS.findall(text.lower()) if (len(t) >= 3 or t.isdigit()) and t not in _STOP}
 
-    Dates, timestamps, clock times, uuids, commit hashes, ``#12``/``T-1234``/``PR 12``/message ids, line
-    references and anything inside a path or url are not values and are removed first.
+
+def _correction_check(svc, injected: list[int], flagged: bool):
+    """Closure deciding, only if a fragment is about to take the reserved slot, whether a correction is in play.
+
+    ``flagged`` is what the ranking already saw (a disputed claim withheld, an injected claim with a supersedes
+    pointer either way). On top, an injected claim that is the target of a live proposal counts even when its
+    replacement is not confirmed or not injected (one proposal scan, only on this rare path). Fails closed.
     """
-    return {t.lower() for t in _VALUE_TOKEN.findall(_NOT_A_VALUE.sub(" ", text))}
+    def check() -> bool:
+        if flagged:
+            return True
+        try:
+            from memorymaster.recall.retrieval import pending_supersession_ids
 
+            return bool(injected and set(injected) & pending_supersession_ids(svc, use_cache=False, deliverable_only=False))
+        except Exception:  # noqa: BLE001 - an unverifiable correction state admits nothing
+            return True
 
-def _tied_value_tokens(text: str, query_keys: frozenset[str]) -> set[str]:
-    """Value tokens of the sentences of ``text`` that contain at least one content term of the query."""
-    out: set[str] = set()
-    for sentence in _SENTENCE.split(text):
-        values = _value_tokens(sentence)  # cheap first: most sentences carry no value, so skip the tokenizer
-        if values and query_keys & hook_lexical.text_keys(sentence):
-            out |= values
-    return out
+    return check
 
 
 def _evidence_fragment_key(rendered: str, top, query: str, session: str | None) -> int | None:
-    """Session key when the top fragment earns one extra slot beyond the claim cap, else ``None``.
+    """Session key when the top fragment earns the reserved slot beyond the claim cap, else ``None``.
 
-    It does when a value token (:func:`_value_tokens`) that sits in a sentence with a query term is absent
-    from the question and from every injected claim, and no injected claim states a query-tied value of its
-    own that the fragment lacks (that claim answers, or corrects what the fragment quotes: it wins). A fragment
-    already delivered this session is not repeated. Pure string work on text already in hand: no I/O besides
-    the session file, and only when the rule fires.
+    The fragment already passed query coverage and ranking in ``transcript_fallback.fragments``. It earns the
+    slot when at least :data:`MIN_NEW_TOKENS` content tokens of its query-relevant sentences are absent from the
+    question and the injected claims (so it is not a restatement) and it was not delivered earlier in this
+    session. The caller adds the budget and correction checks. Known limit: a correction that is not linked to
+    what it replaces (no supersedes pointer, no proposal) and states no new token cannot be recognised; the
+    fragment (dated, labelled raw and possibly outdated) is then delivered below the new claim.
     """
     excerpt = getattr(top, "excerpt", "")
-    claims = _MM_ID.sub("", rendered)
     keys = hook_lexical.text_keys(query)
-    known = _value_tokens(query)
-    fragment = _tied_value_tokens(excerpt, keys) - known
-    if not fragment or fragment <= _value_tokens(claims):
-        return None
-    if _tied_value_tokens(claims, keys) - fragment - known:
+    new: set[str] = set()
+    for sentence in _SENTENCE.split(excerpt):
+        if keys & hook_lexical.text_keys(sentence):
+            new |= _content_tokens(sentence)
+    if len(new - _content_tokens(_MM_ID.sub("", rendered)) - _content_tokens(query)) < MIN_NEW_TOKENS:
         return None
     key = _fragment_key(excerpt)
     if session and key in hook_policy.seen_ids(session):
@@ -1333,7 +1331,9 @@ def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: i
     room = max(0, budget) * 4 - (len(rendered) + 2 if rendered else 0)
     evidence_key = None
     if slots <= 0:  # claims filled the cap: the top fragment may still earn ONE extra slot (never displaces a claim)
-        evidence_key = None if _CORRECTION_IN_PLAY.get() else _evidence_fragment_key(rendered, found[0], query, session)
+        evidence_key = _evidence_fragment_key(rendered, found[0], query, session)
+        if evidence_key is not None and (check := _CORRECTION_CHECK.get()) is not None and check():
+            evidence_key = None  # a correction is in play: the fragment may quote the value it replaced
         if evidence_key is None:
             return rendered
         slots = 1
@@ -2384,8 +2384,7 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
     # render from this order, so a claim with a pending/explicit correction never precedes the correction.
     pool_size = len(ranked)
     ranked = hook_lexical.apply_truth_eligibility(ranked, svc)
-    if hook_data is not None and len(ranked) < pool_size:
-        _CORRECTION_IN_PLAY.set(True)  # a disputed claim was withheld: a correction is in play for this prompt
+    withheld = len(ranked) < pool_size  # a disputed claim was withheld: a correction is in play
     limit = None
     if hook_data is not None:
         stage_start = time.perf_counter()
@@ -2409,10 +2408,10 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
         if stages is not None:
             stages["jev_ms"] = _stage_ms(stage_start)
     injected = [cid for row in rendered_rows if isinstance(cid := getattr(row.get("claim"), "id", None), int)]
-    if hook_data is not None and any(getattr(row.get("claim"), "supersedes_claim_id", None) is not None
-                                     or getattr(row.get("claim"), "replaced_by_claim_id", None) is not None
-                                     for row in rendered_rows):
-        _CORRECTION_IN_PLAY.set(True)  # no extra transcript slot: a fragment may quote the value it replaced
+    if hook_data is not None:
+        linked = any(getattr(row.get("claim"), "supersedes_claim_id", None) is not None
+                     or getattr(row.get("claim"), "replaced_by_claim_id", None) is not None for row in rendered_rows)
+        _CORRECTION_CHECK.set(_correction_check(svc, injected, withheld or linked))
     if rendered_ids is not None:
         rendered_ids.extend(injected)
     stage_start = time.perf_counter()
