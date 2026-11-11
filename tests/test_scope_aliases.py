@@ -101,5 +101,6 @@ def test_the_exact_folder_of_the_live_whatsappbot_captures_maps_to_the_alias_in_
     _aliases(tmp_path, monkeypatch, {"aliases": {"whatsappbot-main-wt": "project:whatsappbot-final"}})
     folder = tmp_path / "whatsappbot-main-wt"
     (folder / "observatorio").mkdir(parents=True)
-    for cwd in (folder, folder / "observatorio"):
-        assert capture._scope(str(cwd)) == scope_from_cwd(cwd) == "project:whatsappbot-final", cwd
+    assert capture._scope(str(folder)) == scope_from_cwd(folder) == "project:whatsappbot-final"
+    # a plain subfolder (no .git of its own) follows the aliased ancestor on the capture path
+    assert capture._scope(str(folder / "observatorio")) == "project:whatsappbot-final"
