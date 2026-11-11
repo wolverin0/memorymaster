@@ -7,7 +7,8 @@ Measures, over a trailing window (default 7 days):
   b. injected claims cited, via scripts/review_recall_citations.py (diagnostic only);
   c. dreaming queue by status and p95 hours from capture to applied (capture-control ledger);
   d. injected tokens per turn and hook latency, from recall-dense.jsonl (null with a reason if absent);
-  e. share of turns whose omissions are fully explained by delivery receipts (hook.log, T-2275).
+  e. share of turns whose omissions are fully explained by delivery receipts (hook.log, T-2275);
+  f. transcript-index coverage per CLI: sessions indexed / sessions present (T-2277).
 
 Every database is opened ``?mode=ro`` (``PRAGMA query_only=ON``); nothing is written except the
 optional ``--out`` report. Prefixes of user queries pass through ``redact_text`` before emission.
@@ -37,6 +38,8 @@ import review_recall_citations  # noqa: E402  (sibling script; reused for the ci
 from memorymaster.core.capture_control import capture_state_path  # noqa: E402
 from memorymaster.core.security import redact_text  # noqa: E402
 from memorymaster.recall.dense_recall import read_events  # noqa: E402
+from memorymaster.recall import transcript_index  # noqa: E402
+from memorymaster.recall import transcript_sources  # noqa: E402
 from memorymaster.recall.machine_traffic import INTERNAL_PROCESS_PATTERNS, TRANSPORT_NOTICE_PATTERNS  # noqa: E402
 
 # Matched against the left-stripped start of usage_feedback.query_text. Widening a list changes the
@@ -280,6 +283,11 @@ def receipt_explanation(hook_log: Path, since: datetime) -> dict:
     }
 
 
+def transcript_coverage(home: Path, index: Path) -> dict:
+    """Per CLI ``{present, indexed, searchable, coverage}`` of the transcript sidecar over the sessions under ``home``."""
+    return transcript_index.coverage(index, transcript_sources.roots_under(home))
+
+
 def _section(fn, *args):
     """One metric's failure must not sink the report: record it as null with the reason."""
     try:
@@ -296,7 +304,7 @@ def _with_db(path: Path, fn, *args):
 
 
 def collect(db: Path, ledger: Path, home: Path, dense_log: Path, days: int = 7, now: datetime | None = None,
-            hook_log: Path | None = None) -> dict:
+            hook_log: Path | None = None, transcript_index_path: Path | None = None) -> dict:
     started = time.perf_counter()
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(days=days)
@@ -304,6 +312,8 @@ def collect(db: Path, ledger: Path, home: Path, dense_log: Path, days: int = 7, 
     hook_log = hook_log or home / ".memorymaster" / "hook_state" / "hook.log"
     return {
         "delivery_receipts": _section(receipt_explanation, hook_log, since),
+        "transcript_index_coverage": _section(
+            transcript_coverage, home, transcript_index_path or home / ".memorymaster" / "transcripts.db"),
         "generated_at": now.isoformat(),
         "window_days": days,
         "window_start": since.isoformat(),
@@ -331,10 +341,13 @@ def main(argv=None) -> int:
                         help="recall-dense.jsonl (default: <home>/.memorymaster/metrics/recall-dense.jsonl)")
     parser.add_argument("--hook-log", type=Path, default=None,
                         help="hook.log with the delivery receipts (default: <home>/.memorymaster/hook_state/hook.log)")
+    parser.add_argument("--transcript-index", type=Path, default=None,
+                        help="transcript sidecar (default: <home>/.memorymaster/transcripts.db)")
     parser.add_argument("--out", help="write the JSON report here (default: stdout)")
     args = parser.parse_args(argv)
     dense_log = args.dense_log or args.home / ".memorymaster" / "metrics" / "recall-dense.jsonl"
-    text = json.dumps(collect(args.db, args.ledger_db, args.home, dense_log, args.days, hook_log=args.hook_log),
+    text = json.dumps(collect(args.db, args.ledger_db, args.home, dense_log, args.days, hook_log=args.hook_log,
+                              transcript_index_path=args.transcript_index),
                       indent=2, sort_keys=True)
     if args.out:
         out = Path(args.out).expanduser()

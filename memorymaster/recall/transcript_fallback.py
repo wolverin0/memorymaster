@@ -79,7 +79,8 @@ def _deadline_ms() -> float:
 
 def _label(hit: ti.TranscriptHit) -> str:
     """Date, project, opaque session id and line range: enough to tell two same-day sessions apart and cite."""
-    return f"[{hit.date[:10]} {hit.scope} session={hit.session_id} lines {hit.first_line}-{hit.last_line}]"
+    cli = "" if hit.cli == "claude" else f"{hit.cli} "  # Claude labels are unchanged (T-1876 contract)
+    return f"[{hit.date[:10]} {hit.scope} {cli}session={hit.session_id} lines {hit.first_line}-{hit.last_line}]"
 
 
 def _quote(text: str) -> str:

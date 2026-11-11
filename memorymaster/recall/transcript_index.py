@@ -10,7 +10,8 @@ claims, and nothing runs unless the operator calls ``transcript-index`` /
 
 Design
 ------
-* Source: ``~/.claude/projects/*/*.jsonl`` (read-only).  Only user/assistant
+* Sources (T-2277): Claude ``~/.claude/projects/*/*.jsonl``, Codex rollouts, agy exports and OpenCode sessions
+  (``recall/transcript_sources.py``; each with an off switch), keyed by ``cli`` + session.  Read-only.  Only user/assistant
   ``text`` blocks are indexed; tool calls/results, sidechains and harness noise
   are skipped.
 * Incremental: per-file ``(size, mtime_ns, byte offset, line count, prefix
@@ -53,6 +54,7 @@ from pathlib import Path
 
 from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.core.security import sanitize_persisted_text
+from memorymaster.recall import transcript_sources
 from memorymaster.recall.recall_tokenizer import _candidate_tokens, centered_excerpt
 from memorymaster.stores._storage_shared import connect_ro, open_conn
 
@@ -71,7 +73,8 @@ MAX_QUERY_TOKENS = 12
 # record with this entrypoint; their transcripts quote prompts and answer keys.
 AUTOMATED_ENTRYPOINT = "sdk-cli"
 
-_NOISE = re.compile(r"^(<local-command|<command-name>|<system-reminder>|\[MemoryMaster|Caveat:)", re.I)
+_NOISE = re.compile(r"^(<local-command|<command-name>|<system-reminder>|\[MemoryMaster|Caveat:|<environment_context>"
+                    r"|<user_instructions>|# AGENTS\.md instructions)", re.I)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
@@ -82,10 +85,12 @@ CREATE TABLE IF NOT EXISTS files (
     offset INTEGER NOT NULL,
     lines INTEGER NOT NULL,
     prefix_sha TEXT NOT NULL,
-    automated INTEGER NOT NULL DEFAULT 0
+    automated INTEGER NOT NULL DEFAULT 0,
+    cli TEXT NOT NULL DEFAULT 'claude'
 );
 CREATE TABLE IF NOT EXISTS fragments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    cli TEXT NOT NULL DEFAULT 'claude',
     session_id TEXT NOT NULL,
     scope TEXT NOT NULL,
     date TEXT NOT NULL,
@@ -111,6 +116,7 @@ class TranscriptHit:
     last_line: int
     score: float
     excerpt: str
+    cli: str = "claude"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -126,8 +132,12 @@ def default_root() -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".claude" / "projects"
 
 
+def _sid(rel: str) -> str:
+    return hashlib.sha256(rel.encode()).hexdigest()[:16]
+
+
 def session_id_for(root: Path, path: Path) -> str:
-    return hashlib.sha256(path.relative_to(root).as_posix().encode()).hexdigest()[:16]
+    return _sid(path.relative_to(root).as_posix())
 
 
 def _connect(index_path: Path) -> tuple[sqlite3.Connection, bool]:
@@ -147,11 +157,16 @@ def _connect(index_path: Path) -> tuple[sqlite3.Connection, bool]:
         conn.execute("VACUUM")
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         rebuilt = True
-    elif has_tables and "automated" not in {r[1] for r in conn.execute("PRAGMA table_info(files)")}:
-        # T-2077 L28: additive, so a current-format index is not made unservable. Sessions that stored no
-        # fragment are treated as skipped-automated once (a tool-only session just gets re-parsed, harmlessly).
-        conn.execute("ALTER TABLE files ADD COLUMN automated INTEGER NOT NULL DEFAULT 0")
-        conn.execute("UPDATE files SET automated = 1 WHERE session_id NOT IN (SELECT DISTINCT session_id FROM fragments)")
+    elif has_tables:
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(files)")}
+        if "automated" not in columns:
+            # T-2077 L28: additive, so a current-format index is not made unservable. Sessions that stored no
+            # fragment are treated as skipped-automated once (a tool-only session just gets re-parsed, harmlessly).
+            conn.execute("ALTER TABLE files ADD COLUMN automated INTEGER NOT NULL DEFAULT 0")
+            conn.execute("UPDATE files SET automated = 1 WHERE session_id NOT IN (SELECT DISTINCT session_id FROM fragments)")
+        if "cli" not in columns:  # T-2277: every row built before is a Claude row
+            conn.execute("ALTER TABLE files ADD COLUMN cli TEXT NOT NULL DEFAULT 'claude'")
+            conn.execute("ALTER TABLE fragments ADD COLUMN cli TEXT NOT NULL DEFAULT 'claude'")
         conn.commit()
     conn.executescript(_SCHEMA)
     conn.execute(f"PRAGMA user_version = {int(FORMAT_VERSION)}")
@@ -183,11 +198,15 @@ def _message_text(record: dict) -> tuple[str, str]:
         )
     if not isinstance(content, str):
         return "", ""
+    return role, _clean(content)
+
+
+def _clean(content: str) -> str:
+    """The message text worth indexing, sanitised whole (before segmentation and persistence, T-1876 N1); else ``""``."""
     text = content.strip()
     if len(text) < MIN_MESSAGE_CHARS or _NOISE.match(text):
-        return "", ""
-    # The COMPLETE message is sanitised here, before segmentation and persistence (T-1876 N1).
-    return role, sanitize_persisted_text(text)[0]
+        return ""
+    return sanitize_persisted_text(text)[0]
 
 
 def _iso_date(value: object, fallback: str) -> str:
@@ -252,30 +271,48 @@ def _scope_for_cwd(cwd: object, cache: dict[str, str]) -> str:
     return cache[cwd]
 
 
+class _Chunker:
+    """Cuts messages into :data:`CHUNK_CHARS` fragments ``(scope, date, first_line, last_line, text)``; a fragment
+    never spans two scopes.  Lines are JSONL line numbers (Claude/Codex) or message/step ordinals (agy/OpenCode)."""
+
+    def __init__(self) -> None:
+        self.fragments: list[tuple[str, str, int, int, str]] = []
+        self.buf: list[str] = []
+        self.size = self.first = self.last = 0
+        self.date = self.scope = ""
+
+    def flush(self) -> None:
+        if self.buf:
+            self.fragments.append((self.scope, self.date, self.first, self.last, "\n".join(self.buf)))
+        self.buf, self.size = [], 0
+
+    def add(self, scope: str, line: int, date: str, role: str, text: str) -> None:
+        if self.buf and scope != self.scope:
+            self.flush()
+        for piece in _pieces(text):
+            entry = f"{role}: {piece}"
+            if self.buf and self.size + len(entry) > CHUNK_CHARS:
+                self.flush()
+            if not self.buf:
+                self.first, self.date, self.scope = line, date, scope
+            self.buf.append(entry)
+            self.last = line
+            self.size += len(entry)
+
+
 def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, skip_automated: bool,
-                     hasher, scopes: dict[str, str]):
+                     hasher, scopes: dict[str, str], cli: str = "claude", cwd: str | None = None):
     """Parse complete lines from ``offset``; return ``(fragments, new_offset, new_lines, automated)``.
 
     ``hasher`` (the sha256 state of the bytes before ``offset``) is advanced over every consumed line.
     ``automated`` is True (and fragments empty) when ``skip_automated`` and a record
     carries the headless-session entrypoint; the caller records the file as seen.
 
-    Fragments are ``(scope, date, first_line, last_line, text)``; scope comes from each record's own ``cwd``
-    and a fragment never spans two scopes.  An unterminated trailing line is left for the next run.
+    Claude scope comes from each record's own ``cwd``; a Codex rollout states its ``cwd`` once (``session_meta``),
+    passed in as ``cwd``.  An unterminated trailing line is left for the next run.
     """
-    fragments: list[tuple[str, str, int, int, str]] = []
-    buf: list[str] = []
-    size = 0
-    first = last = 0
-    date = fallback_date
-    buf_scope = ""
-
-    def flush() -> None:
-        nonlocal buf, size
-        if buf:
-            fragments.append((buf_scope, date, first, last, "\n".join(buf)))
-        buf, size = [], 0
-
+    chunker = _Chunker()
+    state: dict = {}  # shortcut: Codex memory-tool linkage is per parse, not carried across appends; upgrade if echoes leak
     with path.open("rb") as fh:
         fh.seek(offset)
         for raw in fh:
@@ -293,25 +330,17 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, 
                 continue
             if skip_automated and record.get("entrypoint") == AUTOMATED_ENTRYPOINT:
                 return [], offset, line_no, True
-            role, text = _message_text(record)
-            scope = _scope_for_cwd(record.get("cwd"), scopes) if text else ""
-            if not text or not scope:
-                continue
-            if buf and scope != buf_scope:
-                flush()
-            for piece in _pieces(text):
-                entry = f"{role}: {piece}"
-                if buf and size + len(entry) > CHUNK_CHARS:
-                    flush()
-                if not buf:
-                    first = this_line
-                    date = _iso_date(record.get("timestamp"), fallback_date)
-                    buf_scope = scope
-                buf.append(entry)
-                last = this_line
-                size += len(entry)
-    flush()
-    return fragments, offset, line_no, False
+            if cli == "codex":
+                role, text = transcript_sources.codex_message(record, state)
+                text = _clean(text) if text else ""
+                scope = _scope_for_cwd(cwd, scopes) if text else ""
+            else:
+                role, text = _message_text(record)
+                scope = _scope_for_cwd(record.get("cwd"), scopes) if text else ""
+            if text and scope:
+                chunker.add(scope, this_line, _iso_date(record.get("timestamp"), fallback_date), role, text)
+    chunker.flush()
+    return chunker.fragments, offset, line_no, False
 
 
 def _delete_session(conn: sqlite3.Connection, session_id: str) -> None:
@@ -323,6 +352,82 @@ def _delete_session(conn: sqlite3.Connection, session_id: str) -> None:
     conn.execute("DELETE FROM fragments WHERE session_id = ?", (session_id,))
 
 
+def _store(conn: sqlite3.Connection, rel: str, sid: str, cli: str, frags: list, state: tuple, *, replace: bool) -> None:
+    """One file/session: its fragments (after dropping the old ones when ``replace``) and its ``files`` cursor row."""
+    with conn:
+        if replace:
+            _delete_session(conn, sid)
+        for scope, date, first, last, text in frags:
+            cur = conn.execute(
+                "INSERT INTO fragments(session_id, scope, date, first_line, last_line, text, cli) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)", (sid, scope, date, first, last, text, cli))
+            conn.execute("INSERT INTO fragments_fts(rowid, text) VALUES (?, ?)", (cur.lastrowid, text))
+        conn.execute(
+            "INSERT OR REPLACE INTO files(rel, session_id, size, mtime_ns, offset, lines, prefix_sha, automated, cli) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", (rel, sid, *state, cli))
+
+
+def _purge(conn: sqlite3.Connection, cli: str, keep: set[str], stats: dict[str, int]) -> None:
+    """Drop the sessions of ``cli`` that are no longer on disk (``keep`` = rels still present)."""
+    for gone in [r for r in conn.execute("SELECT rel, session_id FROM files WHERE cli = ?", (cli,)).fetchall()
+                 if r["rel"] not in keep]:
+        with conn:
+            _delete_session(conn, gone["session_id"])
+            conn.execute("DELETE FROM files WHERE rel = ?", (gone["rel"],))
+        stats["files_removed"] += 1
+
+
+def _index_whole(conn: sqlite3.Connection, cli: str, root: Path, stats: dict[str, int], scopes: dict[str, str],
+                 cutoff: float | None, max_files: int | None) -> None:
+    """agy/OpenCode: a session is re-read whole and replaced when its content digest changed."""
+    sessions = transcript_sources.whole_sessions(cli, root)
+    _purge(conn, cli, {f"{cli}/{s.key}" for s in sessions}, stats)
+    for sess in sessions:
+        if max_files is not None and stats["files_indexed"] >= max_files:
+            break
+        if cutoff is not None and sess.stamp and sess.stamp[1] / 1e9 < cutoff:
+            continue
+        stats["files_seen"] += 1
+        rel = f"{cli}/{sess.key}"
+        sid = _sid(rel)
+        row = conn.execute("SELECT * FROM files WHERE rel = ?", (rel,)).fetchone()
+        if row and sess.stamp and (row["size"], row["mtime_ns"]) == sess.stamp:
+            stats["files_skipped"] += 1
+            continue
+        try:
+            cwd, messages = sess.load()
+        except (OSError, ValueError, sqlite3.Error) as exc:  # AgySourceError is a ValueError
+            logger.warning("transcript_index: cannot read %s session %s: %s", cli, sess.key, type(exc).__name__)
+            stats["errors"] += 1
+            continue
+        digest = hashlib.sha256(json.dumps(messages).encode()).hexdigest()
+        if row and row["prefix_sha"] == digest:
+            stats["files_skipped"] += 1
+            continue
+        scope = _scope_for_cwd(cwd, scopes)
+        chunker = _Chunker()
+        for line, (stamp, role, raw_text) in enumerate(messages):
+            text = _clean(raw_text) if scope else ""
+            if text:
+                chunker.add(scope, line, _iso_date(stamp, _mtime_iso(sess.stamp[1] if sess.stamp else 0)), role, text)
+        chunker.flush()
+        _store(conn, rel, sid, cli, chunker.fragments,
+               (*(sess.stamp or (len(messages), 0)), 0, len(messages), digest, 0), replace=bool(row))
+        stats["files_indexed"] += 1
+        stats["fragments_added"] += len(chunker.fragments)
+
+
+def _line_units(roots: dict[str, Path]):
+    """``(cli, rel, path, stat)`` of every Claude/Codex transcript; ``rel`` is unprefixed for Claude (older rows)."""
+    for cli in transcript_sources.LINE_CLIS:
+        root = roots.get(cli)
+        if root is None:
+            continue
+        for path in transcript_sources.line_files(cli, root) if root.is_dir() else []:
+            rel = path.relative_to(root).as_posix()
+            yield cli, rel if cli == "claude" else f"{cli}/{rel}", path
+
+
 def index_transcripts(
     root: Path | None = None,
     index_path: Path | None = None,
@@ -330,33 +435,40 @@ def index_transcripts(
     since_days: float | None = None,
     max_files: int | None = None,
     include_automated: bool = False,
+    roots: dict[str, Path] | None = None,
 ) -> dict[str, int]:
-    """Index new/changed transcripts under ``root`` (read-only scan) into the sidecar.
+    """Index new/changed transcripts (read-only scan) into the sidecar.
 
+    ``root`` indexes that Claude root only (callers with a fixture or a custom root); ``roots`` maps CLI -> root;
+    with neither, every enabled CLI is read from its default location (T-2277).  A source switched off with
+    ``MEMORYMASTER_TRANSCRIPT_SOURCE_<CLI>=0`` is skipped and its rows are dropped.
     ``since_days`` skips files not modified inside that window (a cheap cap for
     first runs on very large histories).  Returns counters.
     """
-    root = (root or default_root()).expanduser()
+    if roots is None:
+        roots = {"claude": root} if root else {cli: (default_root() if cli == "claude" else transcript_sources.default_root(cli))
+                                              for cli in transcript_sources.CLIS}
+    roots = {cli: Path(path).expanduser() for cli, path in roots.items() if transcript_sources.enabled(cli)}
     index_path = index_path or default_index_path()
     stats = {"files_seen": 0, "files_indexed": 0, "files_skipped": 0, "fragments_added": 0, "files_automated": 0,
              "files_removed": 0, "rebuilt": 0, "errors": 0}
-    if not root.is_dir():
-        return stats
     cutoff = time.time() - since_days * 86400 if since_days else None
     scopes: dict[str, str] = {}
-    paths = sorted(root.glob("*/*.jsonl"))
-    existing = {path.relative_to(root).as_posix() for path in paths}
+    if not index_path.is_file() and not any(path.is_dir() for path in roots.values()):
+        return stats
+    units = list(_line_units(roots))
     conn, rebuilt = _connect(index_path)
     stats["rebuilt"] = int(rebuilt)
     with closing(conn):
+        for cli in transcript_sources.CLIS:  # a switched-off source stops being served AND stored
+            if not transcript_sources.enabled(cli):
+                _purge(conn, cli, set(), stats)
         # a transcript that no longer exists must stop being searchable (existence is judged over the whole
         # root, so --since-days / --max-files never read as a deletion)
-        for gone in [r for r in conn.execute("SELECT rel, session_id FROM files").fetchall() if r["rel"] not in existing]:
-            with conn:
-                _delete_session(conn, gone["session_id"])
-                conn.execute("DELETE FROM files WHERE rel = ?", (gone["rel"],))
-            stats["files_removed"] += 1
-        for path in paths:
+        for cli in transcript_sources.LINE_CLIS:
+            if cli in roots and roots[cli].is_dir():  # a root that is gone (unmounted) is not a mass deletion
+                _purge(conn, cli, {rel for c, rel, _ in units if c == cli}, stats)
+        for cli, rel, path in units:
             if max_files is not None and stats["files_indexed"] >= max_files:
                 break
             try:
@@ -367,8 +479,7 @@ def index_transcripts(
             if cutoff is not None and st.st_mtime < cutoff:
                 continue
             stats["files_seen"] += 1
-            rel = path.relative_to(root).as_posix()
-            sid = session_id_for(root, path)
+            sid = _sid(rel)
             row = conn.execute("SELECT * FROM files WHERE rel = ?", (rel,)).fetchone()
             # a session skipped as automated stored no fragments: --include-automated must re-parse it, and an
             # appended one is re-read from the start (its marker is in the head, not the tail)
@@ -385,35 +496,50 @@ def index_transcripts(
                     offset, line_no = row["offset"], row["lines"]
                 else:
                     hasher = hashlib.sha256()  # new, shrunk or rewritten file: parse from the start
-                frags, new_offset, new_lines, automated = _parse_increment(
-                    path, offset, line_no, _mtime_iso(st.st_mtime_ns), not include_automated, hasher, scopes
-                )
+                cwd = transcript_sources.codex_cwd(path) if cli == "codex" else None
+                if cli == "codex" and cwd is None:  # no cwd (or our own internal run): not attributable
+                    frags, new_offset, new_lines, automated = [], st.st_size, 0, True
+                else:
+                    frags, new_offset, new_lines, automated = _parse_increment(
+                        path, offset, line_no, _mtime_iso(st.st_mtime_ns), not include_automated, hasher, scopes,
+                        cli, cwd)
             except OSError as exc:
                 logger.warning("transcript_index: cannot read %s: %s", rel, exc)
                 stats["errors"] += 1
                 continue
-            with conn:
-                if row and offset == 0:
-                    _delete_session(conn, sid)  # file shrank/rewritten: rebuild
-                for scope, date, first, last, text in frags:
-                    cur = conn.execute(
-                        "INSERT INTO fragments(session_id, scope, date, first_line, last_line, text) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                        (sid, scope, date, first, last, text),
-                    )
-                    conn.execute("INSERT INTO fragments_fts(rowid, text) VALUES (?, ?)", (cur.lastrowid, text))
-                conn.execute(
-                    "INSERT OR REPLACE INTO files(rel, session_id, size, mtime_ns, offset, lines, prefix_sha, automated) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (rel, sid, st.st_size, st.st_mtime_ns, new_offset, new_lines, hasher.hexdigest(),
-                     int(automated)),
-                )
+            _store(conn, rel, sid, cli, frags, (st.st_size, st.st_mtime_ns, new_offset, new_lines, hasher.hexdigest(),
+                                                int(automated)), replace=bool(row and offset == 0))
             if automated:
                 stats["files_automated"] += 1
                 continue
             stats["files_indexed"] += 1
             stats["fragments_added"] += len(frags)
+        for cli in ("agy", "opencode"):
+            if cli in roots and roots[cli].is_dir():
+                _index_whole(conn, cli, roots[cli], stats, scopes, cutoff, max_files)
     return stats
+
+
+def coverage(index_path: Path | None = None, roots: dict[str, Path] | None = None) -> dict[str, dict]:
+    """Per CLI: sessions ``present`` on disk, ``indexed`` (seen by the sidecar, automated ones included) and
+    ``searchable`` (holding at least one fragment); ``roots`` defaults to the default roots."""
+    index_path = index_path or default_index_path()
+    roots = roots or {cli: (default_root() if cli == "claude" else transcript_sources.default_root(cli))
+                      for cli in transcript_sources.CLIS}
+    seen: dict[str, int] = {}
+    found: dict[str, int] = {}
+    if index_path.is_file():
+        with closing(connect_ro(index_path.resolve().as_posix())) as conn:
+            if conn.execute("PRAGMA user_version").fetchone()[0] == FORMAT_VERSION:
+                seen = dict(conn.execute("SELECT cli, COUNT(*) FROM files GROUP BY cli").fetchall())
+                found = dict(conn.execute("SELECT cli, COUNT(DISTINCT session_id) FROM fragments GROUP BY cli").fetchall())
+    out = {}
+    for cli, root in roots.items():
+        present = (len(transcript_sources.line_files(cli, root)) if cli in transcript_sources.LINE_CLIS and root.is_dir()
+                   else len(transcript_sources.whole_sessions(cli, root)) if cli not in transcript_sources.LINE_CLIS else 0)
+        out[cli] = {"present": present, "indexed": seen.get(cli, 0), "searchable": found.get(cli, 0),
+                    "coverage": round(min(seen.get(cli, 0), present) / present, 3) if present else None}
+    return out
 
 
 def _fts_query(query: str) -> str:
@@ -469,10 +595,13 @@ def search(
     if not match or not index_path.exists():
         return []
     sql = (
-        "SELECT f.date, f.session_id, f.scope, f.first_line, f.last_line, f.text, x.rank "
+        "SELECT f.date, f.session_id, f.scope, f.first_line, f.last_line, f.text, f.cli, x.rank "
         "FROM fragments_fts x JOIN fragments f ON f.id = x.rowid WHERE fragments_fts MATCH ?"
     )
     args: list[object] = [match]
+    live = [cli for cli in transcript_sources.CLIS if transcript_sources.enabled(cli)]  # a switched-off source is not served
+    sql += f" AND f.cli IN ({','.join('?' * len(live))})"
+    args.extend(live)
     if scope:
         sql += " AND f.scope = ?"
         args.append(scope)
@@ -508,7 +637,7 @@ def search(
             TranscriptHit(
                 date=row["date"], session_id=row["session_id"], scope=row["scope"],
                 first_line=row["first_line"], last_line=row["last_line"],
-                score=round(-row["rank"], 4), excerpt=excerpt,
+                score=round(-row["rank"], 4), excerpt=excerpt, cli=row["cli"],
             )
         )
     return hits
