@@ -326,6 +326,8 @@ BRIEF = "[MemoryMaster project brief]\nBrief fixture\nRUNNING\n- T-1 running: ca
 @pytest.mark.parametrize("version", [1, 2])
 def test_plugin_delivers_the_project_brief_once_per_session(plugin, monkeypatch, version):
     monkeypatch.setenv("TEST_BRIEF", BRIEF.replace("\n", "|"))
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "TRUE")
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_SESSION_START", " 1 ")
     init = V1_INIT if version == 1 else V2_INIT
     ending = "" if version == 1 else "release(); await cleanup();"
     output, rows = plugin(version, init + """
