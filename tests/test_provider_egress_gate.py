@@ -233,8 +233,14 @@ def _stored(text: str) -> str:
 
 
 def test_stored_capture_markers_do_not_block_but_foreign_spliced_and_credentials_do():
-    assert _stored("host [REDACTED:private_ipv4] answered, " + BENIGN) == "host [REDACTED:private_ipv4] answered, " + BENIGN
-    assert _stored("password=[REDACTED:secret] (see [REDACTED:email]).") == "password=[REDACTED:secret] (see [REDACTED:email])."
+    assert (
+        _stored("host [REDACTED:private_ipv4] answered, " + BENIGN)
+        == "host [REDACTED:private_ipv4] answered, " + BENIGN
+    )
+    assert (
+        _stored("password=[REDACTED:secret] (see [REDACTED:email]).")
+        == "password=[REDACTED:secret] (see [REDACTED:email])."
+    )
     assert _stored("[REDACTED:private_ipv4] and " + BLOCKED) == WITHHELD
     assert _stored("a [redacted] value and a [REDACTED: broken marker") == WITHHELD
     # a marker spliced into a token leaves its head and tail visible: it must block
@@ -261,7 +267,7 @@ def test_a_huge_unbroken_token_is_withheld_fast_and_a_long_prose_message_still_g
     blob = "A1" * 10_000
     started = time.monotonic()
     assert export_text(blob) is None
-    prose = ("The service retries three times. " * 2_000)  # ~66k chars, several chunks
+    prose = "The service retries three times. " * 2_000  # ~66k chars, several chunks
     safe, withheld = export_messages([{"message_id": "a", "text": blob}, {"message_id": "b", "text": prose}])
     assert time.monotonic() - started < 3
     assert withheld == 1 and safe[1]["text"] == prose and len(prose) > MAX_CHUNK
@@ -274,7 +280,9 @@ def test_session_end_huge_blob_message_is_withheld_quickly_and_the_rest_goes_out
     sent: list[str] = []
     monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", lambda prompt, text: sent.append(text) or "[]")
     mod = loader()
-    transcript = _transcript(tmp_path, ["Session notes: " + "Zq" * 10_000, "Session notes: " + BENIGN + " Nothing else."])
+    transcript = _transcript(
+        tmp_path, ["Session notes: " + "Zq" * 10_000, "Session notes: " + BENIGN + " Nothing else."]
+    )
     db = tmp_path / "unused.db"
     db.touch()
     started = time.monotonic()
@@ -306,8 +314,7 @@ def test_a_gate_exception_withholds_that_message_only(tmp_path, monkeypatch):
 
 def test_precompact_excerpt_with_only_withheld_lines_makes_no_provider_call():
     stats: dict = {}
-    assert _residual("USER: " + BLOCKED + "
-ASSISTANT: " + BLOCKED, stats) == []
+    assert _residual("USER: " + BLOCKED + "\nASSISTANT: " + BLOCKED, stats) == []
     assert stats["egress_withheld"] == 2
 
 
@@ -321,7 +328,8 @@ def test_a_failed_extraction_does_not_count_withheld_messages(tmp_path):
     ledger = DreamLedger(tmp_path / "capture.db")
     _queue(ledger, [BLOCKED, BENIGN])
     summary = DreamWorker(ledger, service, Broken(), _Consolidator(), config=DreamConfig(), now=lambda: NOW).run(
-        apply_candidates=False)
+        apply_candidates=False
+    )
     assert summary["errors"] == 1 and summary["egress_withheld"] == 0
 
 
@@ -334,8 +342,9 @@ def test_a_quote_spanning_a_redacted_ip_binds_to_the_text_the_provider_saw(tmp_p
     row = ledger.get_capture(cid)
 
     def candidate(quote: str) -> DreamCandidate:
-        return DreamCandidate("c1", "The primary database lives in the lab.", "fact", "db", "lives_in", "lab",
-                              "project", "m0", quote, 0.8)
+        return DreamCandidate(
+            "c1", "The primary database lives in the lab.", "fact", "db", "lives_in", "lab", "project", "m0", quote, 0.8
+        )
 
     spanning = bind_source(candidate("database lives at [REDACTED:private_ipv4] in"), row)
     assert spanning.source_context["exact_quote"] is True
