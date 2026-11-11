@@ -535,3 +535,36 @@ def test_exiling_after_one_counted_failure_does_not_drain(tmp_path: Path, monkey
     initial, first = _simulate(tmp_path / "old", monkeypatch, kind="timeout", dream_runs=True, exile_charged=True)
     print(f"counted failures, 48 h at 35%: initial={initial} exile-after-2nd={second} exile-after-1st={first}")
     assert first > second
+
+
+def test_a_slow_capture_that_always_hangs_is_charged_every_run_and_never_starves_the_ordinary_quota(tmp_path: Path) -> None:
+    from memorymaster.dreaming.ledger import SLOW_CAPTURE_BYTES
+
+    class HangsOnBig(EXTRACTOR):
+        def extract(self, messages, *, scope, capture_hash):
+            if "BIG" in str(messages[-1]["text"]):
+                raise _wrapped_timeout()
+            return super().extract(messages, scope=scope, capture_hash=capture_hash)
+
+    offset = {"d": 0}
+    ledger = DreamLedger(tmp_path / "capture.db")
+    big = [H["_capture"](ledger, session_hash=f"big{n}", extra_text=f" BIG{n}") for n in range(2)]
+    ordinary = [H["_capture"](ledger, session_hash=f"ord{n}", extra_text=f" {n}") for n in range(10)]
+    with ledger._connect() as conn:
+        conn.executemany("UPDATE dream_captures SET byte_count=? WHERE id=?", [(2 * SLOW_CAPTURE_BYTES, i) for i in big])
+    cfg = replace(DreamConfig(), idle_minutes=0, jev_triage_enabled=False, max_sessions=20, oldest_reserve=10,
+                  lane=LANE_DREAM, slow_slots=500, max_capture_errors=3, max_extract_calls_daily=10**6)
+    worker = DreamWorker(ledger, H["_service"](tmp_path), HangsOnBig(), TimedConsolidator(Clock()), config=cfg,
+                         now=lambda: datetime.now(timezone.utc) + timedelta(days=offset["d"]))
+
+    first = worker.run(apply_candidates=False)
+    assert first["extracted"] == 10  # the ordinary quota is served before the slow slots
+    assert [ledger.get_capture(i)["error_count"] for i in big] == [1, 1]  # charged although nothing answered first
+
+    offset["d"] = 2
+    worker.run(apply_candidates=False)
+    assert [ledger.get_capture(i)["error_count"] for i in big] == [2, 2]
+
+    offset["d"] = 4
+    worker.run(apply_candidates=False)
+    assert [ledger.get_capture(i)["state"] for i in big] == ["quarantined", "quarantined"]  # the existing rule
