@@ -235,7 +235,11 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
     return summary
 
 
-def drain_proposals(service: Any, *, limit: int = 100, apply: bool = False) -> dict[str, Any]:
+def drain_proposals(
+    service: Any, *, limit: int = 100, apply: bool = False, replacement_claim_id: int | None = None
+) -> dict[str, Any]:
+    """Approve the proposals automation may approve. ``replacement_claim_id`` narrows the run to the proposals
+    filed by that replacement (the ingest fast path, ``MemoryService.validate_now``)."""
     from memorymaster.govern.steward import (
         is_jev_proposal,
         is_operator_only_proposal,
@@ -253,10 +257,16 @@ def drain_proposals(service: Any, *, limit: int = 100, apply: bool = False) -> d
         "approved": 0,
         "kept_for_operator": 0,
         "kept_jev": 0,
+        "kept_replacement_unconfirmed": 0,
         "failed": 0,
+        "applied_targets": [],
         "dry_run": not apply,
     }
     for proposal in proposals:
+        payload = proposal.get("payload") if isinstance(proposal.get("payload"), dict) else {}
+        replacement_id = payload.get("replaced_by_claim_id")
+        if replacement_claim_id is not None and replacement_id != replacement_claim_id:
+            continue
         if is_operator_only_proposal(proposal.get("payload")):
             # F-21: las propuestas de Jev (y las de rapidfuzz, T-0773) esperan
             # veredicto humano; el dren nunca las aprueba (quedan en la cola).
@@ -269,6 +279,13 @@ def drain_proposals(service: Any, *, limit: int = 100, apply: bool = False) -> d
         if claim is None or _is_operator_owned(claim):
             summary["kept_for_operator"] += 1
             continue
+        if isinstance(replacement_id, int):
+            # Retiring the target before its replacement can be served leaves hooks with neither value (audit
+            # D-3 / X-1): the proposal waits until the validator has confirmed the replacement.
+            replacement = service.store.get_claim(replacement_id, include_citations=False)
+            if replacement is None or replacement.status != "confirmed":
+                summary["kept_replacement_unconfirmed"] += 1
+                continue
         if not apply:
             summary["approved"] += 1
             continue
@@ -286,6 +303,7 @@ def drain_proposals(service: Any, *, limit: int = 100, apply: bool = False) -> d
                 summary["failed"] += 1
             else:
                 summary["approved"] += 1
+                summary["applied_targets"].append(int(claim_id))
         except Exception as exc:  # noqa: BLE001 - una propuesta rota no frena el dren
             logger.warning("curation drain proposal %s failed: %s", proposal.get("proposal_event_id"), exc)
             summary["failed"] += 1

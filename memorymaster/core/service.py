@@ -815,6 +815,36 @@ class MemoryService(IntegrationService):
         observability.bump_claim_ingested(source_agent)
         return claim
 
+    def validate_now(self, claim_id: int) -> dict[str, object]:
+        """Ingest fast path (ROADMAP 1.4; audit D-2/D-3): rule on ONE fresh candidate now, not at the next cycle.
+
+        It runs the validator's own gates for that claim (source and structure policy, pending supersession,
+        tuple conflict, classifier or score) and, once the claim is confirmed, the curation drain's own rule for
+        the supersessions it declared (same-agent only; cross-identity and prose stay with the operator). No new
+        promotion rule lives here. Callers are the surfaces where an agent states a fact on purpose (MCP
+        ``ingest_claim`` / ``checkpoint``); background intake keeps the steward cadence. Never raises: a fault
+        leaves the claim a candidate for the cycle. ``MEMORYMASTER_INLINE_VALIDATION=0`` turns it off.
+        """
+        if os.environ.get("MEMORYMASTER_INLINE_VALIDATION", "1").strip().lower() in {"0", "false", "off", "no"}:
+            return {"enabled": False}
+        report: dict[str, object] = {"enabled": True, "superseded": []}
+        try:
+            validator.run(self.store, limit=1, claim_ids=[claim_id])
+            claim = self.store.get_claim(claim_id, include_citations=False)
+            if claim is not None and claim.status == "confirmed":
+                from memorymaster.govern.jobs import curation_drain
+
+                drained = curation_drain.drain_proposals(self, apply=True, replacement_claim_id=claim_id)
+                report["superseded"] = drained["applied_targets"]
+        except Exception as exc:  # noqa: BLE001 - see docstring
+            logger.warning("inline validation of claim %s failed: %s", claim_id, type(exc).__name__, exc_info=True)
+            report["error"] = type(exc).__name__
+        # the replacement's status decides whether its target is hidden (recall.retrieval.pending_supersession_ids)
+        self.__dict__.pop("_pending_supersession_cache", None)
+        claim = self.store.get_claim(claim_id, include_citations=False)
+        report["status"] = claim.status if claim is not None else None
+        return report
+
     def _rule_mining_phase(self) -> dict[str, object]:
         """Mine verbatim corrections into rule candidates (P3 steward phase).
 

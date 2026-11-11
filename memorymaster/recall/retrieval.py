@@ -212,7 +212,24 @@ class PendingSupersessionScanError(RuntimeError):
     """``pending_supersession_ids(strict=True)`` could not scan the proposal log."""
 
 
-def pending_supersession_ids(service: object, *, use_cache: bool = True, strict: bool = False) -> frozenset[int]:
+def _replacement_deliverable(service: object, replacement_id: object) -> bool:
+    """The proposed replacement can be served in the target's place (it is ``confirmed``).
+
+    A proposal that names no replacement (a retraction, a Jev/fuzzy verdict) has nothing to wait for. A fault
+    reading the replacement counts as deliverable: the pre-existing behaviour, which errs toward hiding.
+    """
+    if not isinstance(replacement_id, int):
+        return True
+    try:
+        replacement = getattr(service, "store", service).get_claim(replacement_id, include_citations=False)
+    except Exception:  # noqa: BLE001 - see docstring
+        return True
+    return replacement is not None and replacement.status == "confirmed"
+
+
+def pending_supersession_ids(
+    service: object, *, use_cache: bool = True, strict: bool = False, deliverable_only: bool = True
+) -> frozenset[int]:
     """Claim ids whose supersession is PROPOSED but not applied.
 
     Declaring ``supersedes_claim_id`` files a
@@ -234,12 +251,18 @@ def pending_supersession_ids(service: object, *, use_cache: bool = True, strict:
     "nothing pending" for the next five minutes. ``strict=True`` is for a caller
     that must fail closed instead (S1 revalidation): the fault raises
     :class:`PendingSupersessionScanError`, still uncached.
+
+    ``deliverable_only`` (the default, what recall wants): a target counts only once its proposed replacement is
+    ``confirmed``. Hooks serve confirmed claims only, so demoting a target whose replacement is still a candidate
+    (or was archived) served neither value until the next steward cycle (audit D-3: p50 3.4 h). Promotion gates
+    pass ``deliverable_only=False``: a claim declared outdated must not be promoted whatever its replacement's
+    state. Only the default answer is cached.
     """
     import json
     import time
 
     now = time.monotonic()
-    if use_cache:
+    if use_cache and deliverable_only:
         cached = getattr(service, "_pending_supersession_cache", None)
         if cached is not None and (now - cached[0]) < _PENDING_SUPERSESSION_TTL_SECONDS:
             return cached[1]
@@ -278,8 +301,18 @@ def pending_supersession_ids(service: object, *, use_cache: bool = True, strict:
             if int(event.id) in resolved:
                 continue
             claim_id = getattr(event, "claim_id", None)
-            if isinstance(claim_id, int) and claim_id > 0:
-                ids.add(claim_id)
+            if not isinstance(claim_id, int) or claim_id <= 0:
+                continue
+            if deliverable_only:
+                try:
+                    proposal = json.loads(getattr(event, "payload_json", None) or "{}")
+                except (ValueError, TypeError):
+                    proposal = {}
+                if isinstance(proposal, dict) and not _replacement_deliverable(
+                    service, proposal.get("replaced_by_claim_id")
+                ):
+                    continue
+            ids.add(claim_id)
     except Exception as exc:  # noqa: BLE001 - retrieval must survive a bookkeeping fault
         if strict:
             raise PendingSupersessionScanError("pending supersession scan failed") from exc
@@ -290,10 +323,11 @@ def pending_supersession_ids(service: object, *, use_cache: bool = True, strict:
         return frozenset()
 
     result = frozenset(ids)
-    try:
-        service._pending_supersession_cache = (now, result)  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001 - a read-only service just skips caching
-        pass
+    if deliverable_only:
+        try:
+            service._pending_supersession_cache = (now, result)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - a read-only service just skips caching
+            pass
     return result
 
 
