@@ -92,10 +92,11 @@ page: `~/artifacts/2026-11-10-remediation-plan.html`.
   (G-2, G-3, G-4, G-5, G-8). Health probe checks hook drift, dreaming runs and drain,
   steward recency (G-6, D-7).
 - Open by decision of the operator: bare DNI and third-party emails at ingest (S-7 rest),
-  the A/B below, 94 stored captures with credential-shaped text (the egress gate holds
-  them back from providers; redacting the ledger is irreversible), activation of the
-  project brief, authenticated per-client principals for MCP (local-trusted mode makes
-  the G-3 controls hygiene, not a boundary).
+  the A/B below, activation of the project brief, authenticated per-client principals
+  for MCP (local-trusted mode makes the G-3 controls hygiene, not a boundary).
+- Stored captures with credential-shaped text: the operator chose to redact the matching
+  spans. Applied 2026-11-11 with `scripts/redact_capture_secrets.py` (#386); a later
+  pass over the whole capture ledger found no row left and no recoverable residue.
 - Known gap for the next cycle: hook templates assume one folder for code and data; this
   install keeps them apart, so its hooks carry a two-line customisation listed in
   `~/.memorymaster/hook-drift-allowlist.txt`. The templates should take a database path.
