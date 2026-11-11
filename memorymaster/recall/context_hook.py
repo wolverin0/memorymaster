@@ -1275,7 +1275,8 @@ def _correction_check(svc, injected: list[int], flagged: bool):
         try:
             from memorymaster.recall.retrieval import pending_supersession_ids
 
-            return bool(injected and set(injected) & pending_supersession_ids(svc, use_cache=False, deliverable_only=False))
+            return bool(injected and set(injected) & pending_supersession_ids(
+                svc, use_cache=False, strict=True, deliverable_only=False))  # strict: a scan fault raises
         except Exception:  # noqa: BLE001 - an unverifiable correction state admits nothing
             return True
 
@@ -1289,8 +1290,9 @@ def _evidence_fragment_key(rendered: str, top, query: str, session: str | None) 
     slot when at least :data:`MIN_NEW_TOKENS` content tokens of its query-relevant sentences are absent from the
     question and the injected claims (so it is not a restatement) and it was not delivered earlier in this
     session. The caller adds the budget and correction checks. Known limit: a correction that is not linked to
-    what it replaces (no supersedes pointer, no proposal) and states no new token cannot be recognised; the
-    fragment (dated, labelled raw and possibly outdated) is then delivered below the new claim.
+    what it replaces (no supersedes pointer, no proposal) and states no new token cannot be recognised; nor can
+    a correction whose replaced claim is already retired when neither is injected. The fragment (dated, labelled
+    raw and possibly outdated) is then delivered below the claims.
     """
     excerpt = getattr(top, "excerpt", "")
     keys = hook_lexical.text_keys(query)

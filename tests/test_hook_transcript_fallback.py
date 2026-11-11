@@ -422,3 +422,34 @@ def test_d5_turn_two_recovers_the_fragment_through_the_free_slot_when_turn_one_c
     assert len(first_ids) == 2 and "7.18.2" not in first
     text, ids = world.ask(session_id="s-r")  # same session, the question the fragment answers
     assert ids == [] and "7.18.2" in text
+
+
+def test_d5_a_failing_proposal_scan_fails_closed(world, monkeypatch) -> None:
+    from memorymaster.recall import retrieval
+
+    old = _old_port_world(world)
+    _declare(world, old, "Correction: the router proxy port moved to the vault-managed setting", pointer=False,
+             confirm=False)
+    world.claim("The router proxy port field must be in the deploy checklist")
+    real = retrieval.pending_supersession_ids
+
+    def scan(svc, **kw):
+        if kw.get("deliverable_only") is False:
+            raise retrieval.PendingSupersessionScanError("boom")
+        return real(svc, **kw)
+
+    monkeypatch.setattr(retrieval, "pending_supersession_ids", scan)
+    out, ids = world.ask(PORT_ASK)
+    assert old in ids and "8080" not in out
+
+
+def test_d5_known_limit_a_retired_claim_whose_replacement_is_not_injected_leaves_the_old_quote(world) -> None:
+    """Limit: nothing on the injected claims flags this correction; the old value arrives labelled and dated."""
+    old = _old_port_world(world)
+    lifecycle.transition_claim(world.service.store, old, "superseded", reason="fixture", event_type="validator")
+    world.claim("The router proxy port field must be in the deploy checklist")
+    world.claim("The router proxy port is documented in the deploy page")
+    out, ids = world.ask(PORT_ASK)
+    assert old not in ids and len(ids) == 2
+    assert "8080" in out and "[2026-08-01 project:here" in out and "possibly outdated" in out
+    assert out.index("# Memory Context") < out.index("# Raw past conversation")
