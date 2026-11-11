@@ -31,6 +31,9 @@ def world(tmp_path: Path, monkeypatch):
     for name in ("QDRANT_URL", "MEMORYMASTER_SCOPE_DEFAULT"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(transcript_fallback.ENABLED_ENV, "1")  # the fallback is opt-in (T-1876 N3)
+    # The 120 ms budget is a latency guard, not what these tests check: on a loaded host it expires and the
+    # fragment silently goes missing (seen on Windows). The deadline tests below set their own value.
+    monkeypatch.setenv(transcript_fallback.DEADLINE_ENV, "10000")
     monkeypatch.setenv("MEMORYMASTER_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS", "2")
     idx = tmp_path / "idx" / "transcripts.db"
@@ -496,3 +499,110 @@ def test_t2277_every_fallback_run_leaves_a_counted_log_line_and_a_spent_budget_i
     assert [ln.split("outcome=")[1].split()[0] for ln in lines] == ["hits", "empty", "deadline", "error:RuntimeError"]
     assert "budget_ms=50" in lines[2] and "elapsed_ms=" in lines[2] and "returned=0" in lines[2]
     assert all("firmware" not in ln and "zeppelin" not in ln for ln in lines)  # never the prompt text
+
+
+# --- D-5: only a correction of the SAME scope, newer than the fragment, suppresses the reserved slot ---------
+
+LATER = "2099-01-01T00:00:00Z"  # a fragment written after every fixture claim was created
+
+
+def _firmware_fragment(world, when: str) -> None:
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback", when,
+                       world.cwd))
+
+
+def _other_scope_claim(world, text: str, **triple) -> int:
+    made = world.service.store.create_claim(
+        text=text, citations=[CitationInput(source="test://fb", locator="o")], scope="project:other",
+        source_agent="fixture", **triple)
+    lifecycle.transition_claim(world.service.store, made.id, "confirmed", reason="fixture", event_type="validator")
+    return made.id
+
+
+def test_d5_a_rescope_copy_is_not_a_correction(world) -> None:
+    from memorymaster.govern import rescope
+
+    _firmware_fragment(world, "2026-08-01T00:00:00Z")  # older than the copy, yet the copy must not suppress
+    copy = rescope.rescope_claim(world.service.store, _other_scope_claim(
+        world, "Check the router firmware version on each deploy"), "project:here", reason="fixture")
+    world.claim("The router firmware version field must be in the deploy checklist")
+    assert world.service.store.get_claim(copy, include_citations=False).supersedes_claim_id is not None
+    text, ids = world.ask()
+    assert copy in ids and "7.18.2" in text
+
+
+def test_d5_a_rescope_merged_into_an_existing_twin_is_not_a_correction(world) -> None:
+    from memorymaster.govern import rescope
+
+    _firmware_fragment(world, "2026-08-01T00:00:00Z")
+    triple = {"subject": "router", "predicate": "firmware_check", "object_value": "deploy"}
+    twin = world.service.store.create_claim(
+        text="Check the router firmware version on each deploy", citations=[CitationInput(
+            source="test://fb", locator="t")], scope="project:here", source_agent="fixture", **triple).id
+    lifecycle.transition_claim(world.service.store, twin, "confirmed", reason="fixture", event_type="validator")
+    moved = rescope.rescope_claim(world.service.store, _other_scope_claim(
+        world, "Check the router firmware version on each deploy", **triple), "project:here", reason="fixture")
+    assert moved == twin and world.service.store.get_claim(twin, include_citations=False).supersedes_claim_id
+    world.claim("The router firmware version field must be in the deploy checklist")
+    text, ids = world.ask()
+    assert twin in ids and "7.18.2" in text
+
+
+def _correct(world, old_text: str, new_text: str, locator: str = "c") -> int:
+    """A confirmed same-scope claim that replaced another one (both pointers set, as an approved correction does)."""
+    old = world.claim(old_text)
+    new = world.service.ingest(new_text, [CitationInput(source="test://fb", locator=locator)], scope="project:here",
+                               source_agent="fixture")
+    lifecycle.transition_claim(world.service.store, new.id, "confirmed", reason="fixture", event_type="validator")
+    world.service.store.mark_superseded(old, new.id, "fixture correction")
+    return new.id
+
+
+def _same_scope_correction(world) -> int:
+    new = _correct(world, "The gateway ticket queue is drained nightly",  # the old claim is unrelated to the question
+                   "Check the router firmware version on each deploy")
+    world.claim("The router firmware version field must be in the deploy checklist")
+    return new
+
+
+def test_d5_a_same_scope_correction_older_than_the_fragment_does_not_suppress(world) -> None:
+    _firmware_fragment(world, LATER)
+    new = _same_scope_correction(world)
+    text, ids = world.ask()
+    assert new in ids and "7.18.2" in text
+
+
+def test_d5_a_same_scope_correction_newer_than_the_fragment_suppresses(world) -> None:
+    _firmware_fragment(world, "2026-08-01T00:00:00Z")
+    new = _same_scope_correction(world)
+    text, ids = world.ask()
+    assert new in ids and "7.18.2" not in text
+
+
+@pytest.mark.parametrize("date", [None, "", "not a date"])
+def test_d5_a_missing_or_unparsable_fragment_date_suppresses(world, date) -> None:
+    new = world.service.store.get_claim(_correct(world, "The gateway ticket queue is drained nightly",
+                                                 "Check the router firmware version on each deploy"),
+                                        include_citations=False)
+    check = context_hook._correction_check(world.service, [new.id], False, [new])
+    assert check(date) is True
+    assert check(LATER) is False  # sanity: a parsable later date does not
+
+
+def test_d5_correction_check_cost_with_eight_pointer_claims_is_under_5ms(world, monkeypatch) -> None:
+    import time
+
+    from memorymaster.recall import retrieval
+
+    monkeypatch.setattr(retrieval, "pending_supersession_ids", lambda *a, **k: frozenset())  # measure the new part
+    claims = []
+    for n in range(8):
+        made = _correct(world, f"Gateway queue number {n} is drained nightly",
+                        f"Router firmware note {n} lives in the deploy page", f"c{n}")
+        claims.append(world.service.store.get_claim(made, include_citations=False))
+    check = context_hook._correction_check(world.service, [c.id for c in claims], False, claims)
+    started = time.perf_counter()
+    for _ in range(20):
+        assert check(LATER) is False
+    ms = (time.perf_counter() - started) * 1000 / 20
+    assert ms < 5.0, f"correction check with 8 pointer claims took {ms:.3f} ms (limit 5 ms)"

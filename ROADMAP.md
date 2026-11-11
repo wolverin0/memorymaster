@@ -44,23 +44,61 @@ measurement scheduled in `~/.memorymaster/checkpoints/due-measurements.json`.
   persisting and on export; its cursor neither drops nor repeats turns.
 - [ ] 1.3 T-2275: per-turn delivery receipts (selected, packed, emitted, observed);
   a claim is marked seen only after final emission.
-- [ ] 1.4 T-2276: an explicit correction becomes a structured supersession (N to 1),
-  with a fast path that does not wait for dreaming.
-- [ ] 1.5 T-2277: the transcript index reads Codex, agy and OpenCode sessions, not
-  only Claude's.
+- [x] 1.4 T-2276: an explicit correction becomes a structured supersession (N to 1),
+  with a fast path that does not wait for dreaming. Fast path shipped in #379
+  (2026-11-11): MCP `ingest_claim` / `checkpoint` validate inline; a target is hidden
+  only once its replacement is confirmed. Measurement `rem379-mcp-ingest-latency-7d`.
+- [x] 1.5 T-2277: the transcript index reads Codex, agy and OpenCode sessions, not
+  only Claude's. Shipped in #384 (2026-11-11), verified three rounds on this machine's real
+  stores. Measurement `rem384-transcript-index-24h`.
 
 Exit: the five reproducers pass and the Codex, correction, Claude handoff works by
 hand in a real project.
 
 ### Phase 2 (P1): better selection and continuity
-- [ ] 2.1 The best transcript fragment competes for the same hook slots under the same
-  budget (today it only fills an empty slot, `recall/context_hook.py:1245`).
+- [x] 2.1 The best transcript fragment has one reserved slot beyond the claim cap, once
+  per session, under the same budget, unless it restates the claims or a correction is
+  in play (#384, 2026-11-11; it used to fill only an empty slot). Measurement
+  `rem384-evidence-slot-7d`.
 - [ ] 2.2 Pending-work handoff with expiry and idempotent consumption, replacing the
   residual once it recovers at least 90% of still-applicable pending items.
-- [ ] 2.3 Dreaming recent-first with a quota for new captures; find the capture that
-  stalls the drain (8 of 10 drain runs on 2026-11-09 failed in seconds).
+- [x] 2.3 Dreaming recent-first with a quota for new captures; find the capture that
+  stalls the drain (8 of 10 drain runs on 2026-11-09 failed in seconds). Cause found
+  2026-11-11: Beat runs killed by the 20 minute task limit with multi-megabyte Codex
+  captures at the head. #384 adds a run budget, a guarded provider call with lease
+  heartbeat, newest-and-oldest selection and a slow lane. Measurement
+  `rem384-dreaming-drain-48h` decides whether the backlog falls.
 - [ ] 2.4 Steward quality gate: archive trivial claims instead of confirming them
   (905 confirmed against 13 archived from 2026-11-02 to 2026-11-08).
+
+### Self-audit remediation (2026-11-10 and 11)
+An adversarial self-audit of origin/main ecd0fc66 against the live install found 24
+defects. PRs #379 and #384 close them; every branch was attacked by an independent
+verifier until it passed, gated on the full suite on nodo02, deployed and given a row
+in `due-measurements.json`. Report: `~/artifacts/2026-11-10-self-audit.html`; status
+page: `~/artifacts/2026-11-10-remediation-plan.html`.
+- Wrong data: candidate dedupe archived declared corrections as duplicates (X-1, G-1).
+  Fixed; the five affected pairs were restored with `scripts/repair_dedupe_victims.py`.
+- Delivery: MCP ingest deliverable at once (D-2, D-3, D-9); machine traffic filter on
+  every adapter (D-6, D-14, D-15); transcripts of all four CLIs indexed (D-1); reserved
+  evidence slot (D-5); project brief content and consumers (D-8, not activated);
+  dreaming budget and slow lane (D-11); 195 claims moved from worktree or alias scopes
+  to their project (D-13).
+- Sensitivity: one egress gate for every provider call, including the twelve sites that
+  were exempt as dormant (S-2, S-3, S-4, S-6); Spanish password prose, basic-auth URLs,
+  AWS secrets with context, OTP/PIN, CUIT, more home-path spellings (S-1, S-5, S-7, S-8).
+- Governance: MCP cannot approve operator-only proposals or bulk-archive without the
+  operator switch; supersession bounds; fenced capture-job lease; idempotent spool drain
+  (G-2, G-3, G-4, G-5, G-8). Health probe checks hook drift, dreaming runs and drain,
+  steward recency (G-6, D-7).
+- Open by decision of the operator: bare DNI and third-party emails at ingest (S-7 rest),
+  the A/B below, 94 stored captures with credential-shaped text (the egress gate holds
+  them back from providers; redacting the ledger is irreversible), activation of the
+  project brief, authenticated per-client principals for MCP (local-trusted mode makes
+  the G-3 controls hygiene, not a boundary).
+- Known gap for the next cycle: hook templates assume one folder for code and data; this
+  install keeps them apart, so its hooks carry a two-line customisation listed in
+  `~/.memorymaster/hook-drift-allowlist.txt`. The templates should take a database path.
 
 ### Phase 3: the A/B that decides whether MemoryMaster helps
 60 real continuations in six classes (exact decision, correction, pending work across
@@ -103,15 +141,15 @@ next roadmap item and three recent failures with sources, at least 14 of 16.
 ### Daily metrics (T-2272)
 | Metric | 2026-11-09 | Target | Item |
 |---|---|---|---|
-| Codex to Claude handoff in the reproducer | 0/30 | 30/30 | 1.5 |
+| Codex to Claude handoff in the reproducer | 0/30 (2026-11-11, deployed code: 30/30 both ways) | 30/30 | 1.5 |
 | Recall returns triggered by machine notices | 52% | under 5% | 1.1 |
 | Sensitive probes reaching the provider intact (Stop) | 9/9 | 0/9 | 1.2 |
 | Omitted IDs explainable by receipt | not measurable | 100% | 1.3 |
 | Injected claims cited (diagnostic only) | 0.36% | rising | all |
-| Dreaming queue; p95 capture to applied | about 3,750; about 10 days | falling; under 24 h | 0.4, 2.3 |
+| Dreaming queue; p95 capture to applied | about 3,750; about 10 days (2026-11-11: 4,492 waiting, oldest 272 h, drain restarted) | falling; under 24 h | 0.4, 2.3 |
 | Injected tokens per turn p95; hook latency p95 | to measure | 600 or less; 1 s or less | 2.1 |
 | A/B correct answers, B minus A | not measured | +10 points, lower CI above 0 | 3 |
-| Track B acceptance (CLIs by projects) | not measured | 14/16 | B |
+| Track B acceptance (CLIs by projects) | not measured (2026-11-11: 16/16 in the hermetic harness, not activated) | 14/16 | B |
 
 Deliberately excluded: changing the retrieval engine (lexical, dense and hybrid did not
 differ significantly on 58 real queries) and widening automatic capture before 1.2.
