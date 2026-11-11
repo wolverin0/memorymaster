@@ -409,6 +409,58 @@ class _LifecycleMixin:
             conn.commit()
 
 
+    def restore_declared_correction(
+        self, victim_id: int, predecessor_id: int, *, reason: str, event_payload: dict[str, object],
+    ) -> None:
+        """X-1 repair, one transaction: archived victim -> candidate -> confirmed, its stale pointer cleared.
+
+        Only the exact victim shape is accepted: the victim is archived, points at the predecessor as its
+        replacement, declares ``supersedes_claim_id`` = predecessor, and the predecessor is superseded by it.
+        Both events (revival, confirmation) are written inside the transaction; any error rolls everything back.
+        Policy decisions (author, citations) belong to the caller; this writes the caller's actor in the payload.
+        """
+        from memorymaster.core.lifecycle import REVIVAL_REASON_PREFIX
+        from memorymaster.dreaming.source_review import confirmation_allowed
+
+        now = utc_now()
+        with self.connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                v = conn.execute("SELECT * FROM claims WHERE id = ?", (victim_id,)).fetchone()
+                p = conn.execute("SELECT * FROM claims WHERE id = ?", (predecessor_id,)).fetchone()
+                if (
+                    v is None or p is None or v["status"] != "archived" or p["status"] != "superseded"
+                    or v["replaced_by_claim_id"] != predecessor_id or p["replaced_by_claim_id"] != victim_id
+                    or v["supersedes_claim_id"] != predecessor_id
+                ):
+                    raise ConcurrentModificationError("Claims are not in the dedupe-victim shape.")
+                if not confirmation_allowed(conn, victim_id):
+                    raise ValueError("Dreaming confirmation requires a current source review")
+                cur = conn.execute(
+                    """UPDATE claims SET status = 'confirmed', replaced_by_claim_id = NULL, archived_at = NULL,
+                       updated_at = ?, last_validated_at = ?, last_evidence_at = ?, version = version + 1
+                       WHERE id = ? AND version = ?""",
+                    (now, now, now, victim_id, v["version"]),
+                )
+                if cur.rowcount != 1:
+                    raise ConcurrentModificationError(f"Claim {victim_id} was modified by another writer.")
+                self._insert_event_row(
+                    conn, claim_id=victim_id, event_type="transition", from_status="archived",
+                    to_status="candidate", details=f"{REVIVAL_REASON_PREFIX}{reason}",
+                    payload_json=json.dumps(event_payload), created_at=now,
+                )
+                self._insert_event_row(
+                    conn, claim_id=victim_id, event_type="transition", from_status="candidate",
+                    to_status="confirmed", details=reason,
+                    payload_json=json.dumps({**event_payload, "cleared_replaced_by_claim_id": predecessor_id}),
+                    created_at=now,
+                )
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+
+
     def delete_old_events(self, retain_days: int) -> int:
         # Events are append-only by contract; retention trim is a no-op.
         return 0
