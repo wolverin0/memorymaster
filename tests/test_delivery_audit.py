@@ -56,9 +56,6 @@ def test_firmware_fragment_survives_zero_or_one_competing_claim(fallback_world, 
     assert FIRMWARE in text and "Raw past conversation" in text
 
 
-@pytest.mark.xfail(strict=True, reason="T-2271/P1-2.1: fragments only fill leftover slots "
-                   "(recall/context_hook.py _with_transcript_fallback: slots = max_claims - claims), so two "
-                   "number-less claims on the same topic push the fragment with the chosen firmware out")
 def test_firmware_fragment_is_not_dropped_by_two_competing_claims(fallback_world) -> None:
     made = _firmware_world(fallback_world, COMPETING)
     text, ids = fallback_world.ask()
@@ -66,13 +63,13 @@ def test_firmware_fragment_is_not_dropped_by_two_competing_claims(fallback_world
     assert FIRMWARE in text, "the fragment stating the chosen firmware lost its slot to claims without the number"
 
 
-def test_firmware_fragment_is_retried_once_the_competing_claims_were_seen(fallback_world) -> None:
-    """Sixth case (T-2275 'seen'): turn 2 of the same session no longer repeats the claims, so the slot is free."""
+def test_firmware_fragment_is_not_repeated_on_the_second_prompt(fallback_world) -> None:
+    """Sixth case (T-2275 'seen'): turn 1 now carries the fragment (D-5), so turn 2 repeats neither it nor the claims."""
     _firmware_world(fallback_world, COMPETING)
-    _, first = fallback_world.ask(session_id="s-firm")
-    assert len(first) == 2
+    text, first = fallback_world.ask(session_id="s-firm")
+    assert len(first) == 2 and FIRMWARE in text
     text, again = fallback_world.ask(session_id="s-firm")
-    assert again == [] and FIRMWARE in text  # works, but only on the SECOND prompt: the first one lost it (case above)
+    assert again == [] and FIRMWARE not in text
 
 
 # --- hooks rendered from the shipped templates, one tmp project ---------------------------------------------

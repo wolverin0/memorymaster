@@ -161,10 +161,10 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # v2-refresh (home_path_windows): C:\Users\<name>\... reveals the user's
     # Windows account name. We match the first path segment (1-40 chars) and
     # redact it; downstream paths beyond the username are not re-redacted.
-    # S-8: both slash styles, and the Git Bash spelling /c/Users/<name> and the WSL one /mnt/c/Users/<name>. "Users" stays case-sensitive: the lowercase
+    # S-8: both slash styles, and the Git Bash spelling /c/Users/<name>. "Users" stays case-sensitive: the lowercase
     # spellings are the egress absolute-path rules' job (they redact the whole path, this one only the prefix).
     ("home_path_windows", re.compile(
-        r"(?:[Cc]:(?:\\\\|[\\/])|(?<![\w/])/(?:mnt/)?[Cc]/)Users(?:\\\\|[\\/])(?!(?:Public|Shared|Default)\b)([A-Za-z][A-Za-z0-9._\-]{1,40})"
+        r"(?:[Cc]:(?:\\\\|[\\/])|(?<![\w/])/[Cc]/)Users(?:\\\\|[\\/])(?!(?:Public|Shared|Default)\b)([A-Za-z][A-Za-z0-9._\-]{1,40})"
     )),
     # v2-refresh (home_path_unix): /home/<name>/ or /Users/<name>/ likewise
     # exposes usernames. Anchored to start-of-string, whitespace, or a few
@@ -735,10 +735,10 @@ def validate_persisted_metadata(fields: Mapping[str, object]) -> None:
 
 
 # Persisted content (transcripts, claims) only: any-case "users" and drive letter, single/double backslash or
-# slash, MSYS /c/. Not in _SECRET_PATTERNS because the export/egress redactors treat the lowercase spellings as
+# slash, MSYS /c/ and WSL /mnt/c/. Not in _SECRET_PATTERNS because the export/egress redactors treat the lowercase spellings as
 # whole absolute paths (tests/test_home_path_egress_spellings.py).
 _PERSISTED_HOME_PATH_RE = re.compile(
-    r"(?i)(?:\b[a-z]:(?:\\\\|[\\/])|(?<![\w/])/[a-z]/)users(?:\\\\|[\\/])(?!(?:public|shared|default)\b)[a-z][a-z0-9._\-]{1,40}"
+    r"(?i)(?:\b[a-z]:(?:\\\\|[\\/])|(?<![\w/])/(?:mnt/)?[a-z]/)users(?:\\\\|[\\/])(?!(?:public|shared|default)\b)[a-z][a-z0-9._\-]{1,40}"
 )
 
 
