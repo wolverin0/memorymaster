@@ -36,26 +36,14 @@ import review_recall_citations  # noqa: E402  (sibling script; reused for the ci
 from memorymaster.core.capture_control import capture_state_path  # noqa: E402
 from memorymaster.core.security import redact_text  # noqa: E402
 from memorymaster.recall.dense_recall import read_events  # noqa: E402
-from memorymaster.recall.machine_traffic import TRANSPORT_NOTICE_PATTERNS  # noqa: E402
+from memorymaster.recall.machine_traffic import INTERNAL_PROCESS_PATTERNS, TRANSPORT_NOTICE_PATTERNS  # noqa: E402
 
 # Matched against the left-stripped start of usage_feedback.query_text. Widening a list changes the
 # headline share: do it deliberately, the unmatched-prefix list is there to guide it.
 # transport_notice: TRANSPORT_NOTICE_PATTERNS, the one list shared with the hooks (recall/machine_traffic.py).
-# internal_process: our own LLM pipelines prompting a CLI (not human demand). Code references:
-INTERNAL_PROCESS_PATTERNS = tuple(re.compile(p) for p in (
-    r"Extract at most (five|\d+) ",        # dreaming/providers.py EXTRACTION_INSTRUCTIONS + Gemini/other _prompt;
-                                           # surfaces/session_end_ingest.py DISTILL_PROMPT ("Extract at most 3")
-    r"Compare the \d+ candidates",         # dreaming/providers.py consolidation system prompt
-    r"You are a memory (curator|quality evaluator)",  # config_templates/hooks/memorymaster-auto-ingest.py,
-                                           # scripts/agent_session_end_ingest.py, govern/llm_steward.py EXTRACT_PROMPT,
-                                           # govern/jobs/compact_summaries.py, govern/auto_resolver.py RESOLUTION_PROMPT
-    r"You are preserving working context",  # capture/precompact_residual.py PROMPT
-    r"You are a bounded reviewer of recurring",  # knowledge/skills.py _SKILL_REVIEW_PROMPT
-    r"You are a (knowledge curator|knowledge base auditor|wiki editor|technical writer creating a wiki)",
-                                           # knowledge/vault_curator.py, vault_linter.py, wiki_engine.py
-    r"You (judge whether stored memory|are a relevance judge|are auditing the long-term memory)",
-                                           # scripts/eval_index_vs_similarity.py, label_prompts_with_judge.py, judge_claim_value.py
-    # Templates seen in live usage_feedback whose source is outside this repo (workflow/fleet tooling):
+# internal_process: our own LLM pipelines prompting a CLI (not human demand): INTERNAL_PROCESS_PATTERNS (same list as
+# the hooks) plus templates seen in live usage_feedback whose source is outside this repo (workflow/fleet tooling).
+INTERNAL_PROCESS_PATTERNS = INTERNAL_PROCESS_PATTERNS + tuple(re.compile(p) for p in (
     r"You group failures from AI coding",
     r"Sos el curador FMX",
     r"You decide what to do about",

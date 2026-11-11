@@ -38,9 +38,9 @@ def test_installer_idempotent_and_preserves_peer_entries(tmp_path):
     assert result["memorymaster"]["PostToolUse"] == peer["memorymaster"]["PostToolUse"]
     assert result["memorymaster"]["Stop"][0] == {"command": "custom"}
     assert result["memorymaster"]["Stop"][1] == peer["memorymaster"]["Stop"][1]
-    assert set(result["memorymaster"]) == {"enabled", "SessionStart", "Stop", "PostToolUse"}
+    assert set(result["memorymaster"]) == {"enabled", "SessionStart", "PreInvocation", "Stop", "PostToolUse"}
     assert settings.read_text() == "untouched"
-    for event in ("SessionStart", "Stop"):
+    for event in ("SessionStart", "PreInvocation", "Stop"):
         handler = result["memorymaster"][event][-1]
         assert handler["type"] == "command"
         assert handler["timeout"] == 10  # seconds, not milliseconds
@@ -93,3 +93,31 @@ def test_installed_bootstrap_injects_via_real_adapter(tmp_path):
     assert process.returncode == 0
     assert process.stderr == ""
     assert json.loads(process.stdout) == {"injectSteps": [{"ephemeralMessage": "[MemoryMaster recall]\nfixture cited recall"}]}
+
+
+def _foreign_pre_invocation(tmp_path, command):
+    directory = tmp_path / "target gemini" / "config"
+    directory.mkdir(parents=True)
+    hooks = directory / "hooks.json"
+    hooks.write_text(json.dumps({"other-project": {"PreInvocation": [{"type": "command", "command": command}],
+                                                   "Stop": [{"type": "command", "command": "other stop"}]}}),
+                     encoding="utf-8")
+    return hooks
+
+
+def test_installer_does_not_add_a_second_per_prompt_recall(tmp_path):
+    hooks = _foreign_pre_invocation(tmp_path, 'python "tools/hooks/agy_MemoryMaster_pre_invocation.py"')
+    result = _install(tmp_path)
+    config = json.loads(hooks.read_text())
+    assert result["pre_invocation"].startswith("skipped") and "other-project" in result["pre_invocation"]
+    assert "PreInvocation" not in config["memorymaster"]  # ours is not registered
+    assert {"SessionStart", "Stop"} <= set(config["memorymaster"])  # the other lifecycle events still are
+    assert config["other-project"]["PreInvocation"][0]["command"].endswith('pre_invocation.py"')  # peer untouched
+    assert _install(tmp_path) == result  # idempotent
+
+
+def test_installer_registers_pre_invocation_when_the_peer_hook_is_unrelated(tmp_path):
+    hooks = _foreign_pre_invocation(tmp_path, "orca status pre invocation")
+    result = _install(tmp_path)
+    assert result["pre_invocation"] == "registered"
+    assert json.loads(hooks.read_text())["memorymaster"]["PreInvocation"][0]["command"].endswith("memorymaster-agy.py PreInvocation")
