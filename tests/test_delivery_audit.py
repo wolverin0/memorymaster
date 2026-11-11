@@ -56,9 +56,6 @@ def test_firmware_fragment_survives_zero_or_one_competing_claim(fallback_world, 
     assert FIRMWARE in text and "Raw past conversation" in text
 
 
-@pytest.mark.xfail(strict=True, reason="T-2271/P1-2.1: fragments only fill leftover slots "
-                   "(recall/context_hook.py _with_transcript_fallback: slots = max_claims - claims), so two "
-                   "number-less claims on the same topic push the fragment with the chosen firmware out")
 def test_firmware_fragment_is_not_dropped_by_two_competing_claims(fallback_world) -> None:
     made = _firmware_world(fallback_world, COMPETING)
     text, ids = fallback_world.ask()

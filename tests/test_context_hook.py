@@ -428,3 +428,27 @@ def test_transcript_fallback_block_is_counted_in_the_callers_budget(monkeypatch)
     assert context_hook._with_transcript_fallback(claims_block, [hit], 1, need - 10) == claims_block
     assert context_hook._with_transcript_fallback("", [hit], 0, 0) == ""
     assert context_hook._with_transcript_fallback(claims_block, [hit], 2, 10_000) == claims_block  # cap is full
+
+
+def test_evidence_fragment_key_rule_and_cost() -> None:
+    """D-5: the extra slot's decision is pure string work, far under 5 ms for 8 claims and 5 fragments."""
+    import time
+    from types import SimpleNamespace
+
+    from memorymaster.recall import context_hook
+
+    nl = chr(10)
+    claims = nl.join(f"- [mm-{i:04d}] the router firmware version setting no. {i} lives in the deploy page"
+                     for i in range(8))
+    plain = nl.join(f"- [mm-{i:04d}] the router firmware version setting lives in the deploy page" for i in range(8))
+    frag = SimpleNamespace(excerpt="we chose firmware 7.18.2 " + "filler " * 50)
+    q = "which firmware did we choose"
+    key = context_hook._evidence_fragment_key
+    assert key(claims, frag, q, None) is None  # claims carry values of their own: possible correction, withhold
+    assert key(plain, frag, q, None) is not None
+    assert key(plain, SimpleNamespace(excerpt="the firmware setting lives in the deploy page"), q, None) is None
+    started = time.perf_counter()
+    for _ in range(5 * 20):
+        key(plain, frag, q, None)
+    per_prompt_ms = (time.perf_counter() - started) * 1000 / 20  # 5 fragments' worth of calls per prompt
+    assert per_prompt_ms < 5.0, per_prompt_ms

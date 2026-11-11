@@ -126,10 +126,58 @@ def test_claims_come_first_and_fragments_take_only_the_free_slots(world) -> None
 def test_a_full_cap_gets_no_fragments(world, monkeypatch) -> None:
     monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS", "1")
     world.claim("The router firmware version is pinned until the lab is rebuilt")
-    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 here", "2026-08-01T00:00:00Z",
-                       world.cwd))
+    world.transcripts(("assistant", "The router firmware version we chose was pinned here", "2026-08-01T00:00:00Z",
+                       world.cwd))  # restates the claim, states no value: nothing earns an extra slot (D-5)
     text, ids = world.ask()
     assert len(ids) == 1 and "Raw past conversation" not in text
+
+
+def _two_claims(world) -> list[int]:
+    return [world.claim("Check the router firmware version on each deploy"),
+            world.claim("The router firmware version field must be in the deploy checklist")]
+
+
+def test_d5_a_full_cap_still_delivers_the_fragment_with_the_value_and_keeps_both_claims(world) -> None:
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    made = _two_claims(world)
+    text, ids = world.ask(session_id="s-d5")
+    assert sorted(ids) == sorted(made) and "7.18.2" in text
+    assert text.index("# Memory Context") < text.index("# Raw past conversation")  # claims first, fragment labelled
+    again, _ = world.ask(session_id="s-d5")  # its content was delivered: not repeated this session
+    assert "7.18.2" not in again
+
+
+def test_d5_a_fragment_that_restates_the_claims_takes_no_extra_slot(world) -> None:
+    world.transcripts(("assistant", "The router firmware version field belongs in the deploy checklist",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    _two_claims(world)
+    assert "Raw past conversation" not in world.ask()[0]
+
+
+def test_d5_disabled_fallback_adds_nothing(world, monkeypatch) -> None:
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2", "2026-08-01T00:00:00Z", world.cwd))
+    _two_claims(world)
+    monkeypatch.delenv(transcript_fallback.ENABLED_ENV)
+    assert "7.18.2" not in world.ask()[0]
+
+
+def test_d5_a_claim_with_the_new_value_is_never_displaced_by_a_fragment_quoting_the_old_one(world) -> None:
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    new = world.claim("Correction: the router firmware version is now 7.20.1")
+    world.claim("The router firmware version field must be in the deploy checklist")
+    text, ids = world.ask()
+    assert new in ids and "7.20.1" in text
+    assert "Raw past conversation" not in text  # claims carrying a value withhold a fragment quoting the old one
+
+
+def test_d5_extra_slot_stays_inside_the_budget(world) -> None:
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    _two_claims(world)
+    plain, _ = context_hook.recall(ASK, db_path=world.db, return_ids=True, hook_data={"cwd": world.cwd}, budget=60)
+    assert len(plain) <= 60 * 4 and "7.18.2" not in plain  # the fragment does not fit: dropped whole
 
 
 def test_fragments_are_not_claims(world, monkeypatch) -> None:

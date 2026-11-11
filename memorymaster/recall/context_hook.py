@@ -19,6 +19,7 @@ Usage (from CLAUDE.md):
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import logging
 import math
 import os
@@ -1217,7 +1218,8 @@ def recall(
             _fallback_found=fallback_found,
         )
         if hook_data is not None:
-            rendered = _with_transcript_fallback(rendered, fallback_found, len(rendered_ids), budget)
+            rendered = _with_transcript_fallback(rendered, fallback_found, len(rendered_ids), budget, query,
+                                              hook_policy.session_id_of(hook_data))
         if return_ids:
             return rendered, rendered_ids
         return rendered
@@ -1242,8 +1244,40 @@ def _transcript_fragments(query: str, budget: int, phase_ms: dict[str, float]) -
         return []
 
 
-def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: int) -> str:
+_VALUE_TOKEN = re.compile(r"\d[\w.\-]*\w|\d")
+_MM_ID = re.compile(r"\[mm-[^\]]*\]")
+
+
+def _value_tokens(text: str) -> set[str]:
+    """Digit-bearing tokens (versions, numbers, ids) of ``text``, lower case, trailing dots dropped."""
+    return {t.lower().rstrip(".-") for t in _VALUE_TOKEN.findall(text)}
+
+
+def _evidence_fragment_key(rendered: str, top, query: str, session: str | None) -> int | None:
+    """Session key when the top fragment earns one extra slot beyond the claim cap, else ``None``.
+
+    It does when it states a value (a digit-bearing token) that neither the question nor the injected claims
+    contain, while those claims state no value of their own: then it adds the answer rather than restating or
+    contradicting them (a claim carrying a value the fragment lacks may be the correction of what the fragment
+    quotes, so the fragment is withheld). A fragment already delivered this session is not repeated. Pure
+    string work on text already in hand: no I/O besides the session file, and only when the rule fires.
+    """
+    excerpt = getattr(top, "excerpt", "")
+    novel = _value_tokens(excerpt) - _value_tokens(query) - _value_tokens(_MM_ID.sub("", rendered))
+    if not novel or (_value_tokens(_MM_ID.sub("", rendered)) - _value_tokens(excerpt) - _value_tokens(query)):
+        return None
+    key = -1 - int(hashlib.sha1(excerpt.encode("utf-8")).hexdigest()[:12], 16)  # negative: never a claim id
+    if session and key in hook_policy.seen_ids(session):
+        return None
+    return key
+
+
+def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: int, query: str = "",
+                              session: str | None = None) -> str:
     """Append raw past conversation (dated, labelled, this project only) when the hook has free slots AND room.
+
+    With no free slot the top fragment may still be added (never in place of a claim) when it carries a value
+    the claims lack: :func:`_evidence_fragment_key`; it stays inside the same character budget.
 
     ``claims`` is how many claims the hook injected; the cap minus that is the number of free slots (two at
     most). The block is counted against the caller's ``budget`` (four characters per token) together with the
@@ -1251,13 +1285,21 @@ def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: i
     Fragments are not claims: they are never recorded as accesses nor as session-seen ids. Fails open.
     """
     slots = hook_policy.max_claims() - claims
-    if slots <= 0 or not found:
+    if not found:
         return rendered
     room = max(0, budget) * 4 - (len(rendered) + 2 if rendered else 0)
+    evidence_key = None
+    if slots <= 0:  # claims filled the cap: the top fragment may still earn ONE extra slot (never displaces a claim)
+        evidence_key = _evidence_fragment_key(rendered, found[0], query, session)
+        if evidence_key is None:
+            return rendered
+        slots = 1
     try:
         from memorymaster.recall import transcript_fallback
 
         block = transcript_fallback.render(found[:slots], room)
+        if evidence_key is not None and block and session:
+            hook_policy.remember(session, [evidence_key])
     except Exception as exc:  # noqa: BLE001 - optional evidence never breaks the hook
         logger.debug("transcript fallback unavailable: %s", type(exc).__name__)
         return rendered
