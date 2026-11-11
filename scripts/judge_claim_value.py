@@ -127,12 +127,14 @@ def is_flagged(claim: dict[str, Any]) -> bool:
 
     if str(claim.get("visibility") or "").strip().lower() == "sensitive":
         return True
+    from memorymaster.core.provider_egress import export_stored
+
     combined = " ".join(
         str(claim.get(k) or "") for k in ("text", "subject", "predicate", "object_value") if claim.get(k)
     )
     if "[REDACTED:" in combined:
         return True
-    return bool(scan_text_for_findings(combined))
+    return bool(scan_text_for_findings(combined)) or export_stored(combined) is None
 
 
 def filter_sensitive(claims: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
@@ -142,7 +144,10 @@ def filter_sensitive(claims: list[dict[str, Any]]) -> tuple[list[dict[str, Any]]
 
 def mask_outgoing(text: str) -> str:
     """Mask home-directory paths and private IPv4 addresses in text bound for the API."""
-    return _PRIVATE_IP_RE.sub("<private-ip>", _HOME_PATH_RE.sub("<home>", text))
+    from memorymaster.core.provider_egress import export_stored
+
+    masked = _PRIVATE_IP_RE.sub("<private-ip>", _HOME_PATH_RE.sub("<home>", text))
+    return export_stored(masked) or ""  # a text the egress gate withholds is sent as nothing
 
 
 # ----------------------------------------------------------------------- Gemini

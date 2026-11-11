@@ -358,14 +358,23 @@ determine if it's a REAL contradiction (the claims actually disagree) or a FALSE
 Return a JSON array: [{"key": "<key>", "real": true/false, "explanation": "brief reason"}]
 Return ONLY valid JSON."""
 
-    batch_text = "\n".join(
-        "KEY={}: {} vs {}".format(
-            c["key"],
-            c["claims"][0]["value"][:80],
-            c["claims"][1]["value"][:80] if len(c["claims"]) > 1 else "N/A",
-        )
-        for c in contradictions[:15]
-    )
+    from memorymaster.core.provider_egress import export_pair, export_stored
+
+    batch_lines = []
+    for c in contradictions[:15]:
+        first = c["claims"][0]["value"][:80]
+        second = c["claims"][1]["value"][:80] if len(c["claims"]) > 1 else None
+        if second is None:
+            safe_first, safe_second = export_stored(first), "N/A"
+            pair = None if safe_first is None else (safe_first, safe_second)
+        else:
+            pair = export_pair(first, second)
+        key = export_stored(str(c["key"]))
+        if pair is not None and key is not None:  # a line the egress gate withholds is left out
+            batch_lines.append("KEY={}: {} vs {}".format(key, pair[0], pair[1]))
+    if not batch_lines:
+        return contradictions
+    batch_text = "\n".join(batch_lines)
 
     response = call_llm(prompt, batch_text)
     verdicts = parse_json_response(response)

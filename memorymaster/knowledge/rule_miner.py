@@ -206,7 +206,7 @@ class TransientLLMError(RuntimeError):
     mine-rules-silent-watermark-advance)"""
 
 
-def _extract_rule(window: str) -> dict[str, str] | None:
+def _extract_rule(window: str, *, gated: bool = False) -> dict[str, str] | None:
     """Ask the LLM to distill a rule. Returns ``{trigger, action, rationale}``
     or ``None`` when the model responded but found no correction.
 
@@ -214,6 +214,12 @@ def _extract_rule(window: str) -> dict[str, str] | None:
     ``TransientLLMError`` if the provider returned nothing (so the caller can
     avoid advancing the watermark). A non-empty response that simply doesn't
     parse to a rule is a genuine "no correction" (``None``), not transient."""
+    if not gated:  # callers that already gated the window say so: re-gating redacted text would block it
+        from memorymaster.core.provider_egress import export_text
+
+        window = export_text(window)
+        if window is None:  # withheld by the egress gate: deterministic, so it is no retry either
+            return None
     raw = llm_provider.call_llm(_CORRECTION_PROMPT, window)
     if not raw or not raw.strip():
         raise TransientLLMError("empty LLM response")
@@ -554,8 +560,14 @@ def _process_candidate(
         stats["skipped"] += 1
         return "done"
 
+    from memorymaster.core.provider_egress import export_text
+
+    safe_window = export_text(window)
+    if safe_window is None:  # withheld by the egress gate: no call is made, so none is counted
+        stats["skipped"] += 1
+        return "done"
     try:
-        rule = _extract_rule(window)
+        rule = _extract_rule(safe_window, gated=True)
     except llm_budget.LLMBudgetExceeded as exc:
         stats["aborted_reason"] = exc.reason
         return "aborted"
@@ -700,8 +712,14 @@ def mine_transcript_rules(
                 if _window_is_sensitive(asst_text, user_text, scope=scope):
                     stats["skipped"] += 1
                     continue
+                from memorymaster.core.provider_egress import export_text
+
+                safe_window = export_text(_build_window(asst_text, user_text))
+                if safe_window is None:  # withheld by the egress gate: no call is made, so none is counted
+                    stats["skipped"] += 1
+                    continue
                 try:
-                    rule = _extract_rule(_build_window(asst_text, user_text))
+                    rule = _extract_rule(safe_window, gated=True)
                 except (llm_budget.LLMBudgetExceeded, TransientLLMError):
                     # Budget hit or provider returned empty — stop this best-effort
                     # Stop-hook pass. No watermark here, so nothing to skip; a

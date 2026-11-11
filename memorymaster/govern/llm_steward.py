@@ -384,7 +384,13 @@ def extract_claim(
     including the keyless ``claude_cli`` path) instead of the direct-HTTP
     ``_call_llm``. The prompt + parsing are identical either way.
     """
-    snippet = text[:2000]
+    from memorymaster.core.provider_egress import export_stored
+
+    snippet = export_stored(text[:2000])
+    if snippet is None:  # withheld by the egress gate: no call, and the claim is left untouched
+        return ExtractionResult(
+            claim_id=claim_id, original_text=text, extractions=[], action="skip", raw_response="",
+        )
     if use_llm_provider:
         from memorymaster.core.llm_provider import call_llm as _provider_call_llm
         # call_llm joins as f"{prompt}\n\n{text}"; pass instructions (placeholder
@@ -567,6 +573,9 @@ def _sanitize_extraction(
     return sanitized.subject, sanitized.predicate, sanitized.object_value, list(sanitized.findings)
 
 
+SCAN_FACTOR = 10  # rows scanned per run = limit x this, so a blocked backlog cannot make a cycle unbounded
+
+
 def run_steward(
     db_path: str,
     api_key: str,
@@ -664,7 +673,7 @@ def run_steward(
             "FROM claims WHERE status = 'candidate' "
             "AND COALESCE(claim_type, '') <> 'observation' "
             f"AND text IS NOT NULL AND scope = ? {policy_sql}ORDER BY id LIMIT ?",
-            (scope, *blocked, limit),
+            (scope, *blocked, limit * SCAN_FACTOR),
         ).fetchall()
     else:
         candidates = conn.execute(
@@ -672,7 +681,7 @@ def run_steward(
             "FROM claims WHERE status = 'candidate' "
             "AND COALESCE(claim_type, '') <> 'observation' "
             f"AND text IS NOT NULL {policy_sql}ORDER BY id LIMIT ?",
-            (*blocked, limit),
+            (*blocked, limit * SCAN_FACTOR),
         ).fetchall()
 
     confirmed_claim_ids: list[int] = []
@@ -693,6 +702,7 @@ def run_steward(
         "errors": 0,
         "claims_extracted": 0,
         "claims_filtered_sensitive": 0,
+        "egress_withheld": 0,
         "provider": provider,
         "model": model,
         "key_count": key_rotator.key_count if key_rotator else 1,
@@ -707,9 +717,13 @@ def run_steward(
         "observation_review": observation_review,
     }
 
+    judged = 0  # `limit` counts claims the steward actually handled: a withheld one does not consume it
     for row in candidates:
         from memorymaster.dreaming.source_review import is_dream_claim
 
+        if judged >= limit:
+            break
+        judged += 1
         if is_dream_claim(conn, row["id"]):
             stats["dream_source_review_pending"] = stats.get("dream_source_review_pending", 0) + 1
             continue
@@ -804,6 +818,12 @@ def run_steward(
             log.warning("LLM error for claim #%d: %s", claim_id, e)
             stats["errors"] += 1
             stats["results"].append({"claim_id": claim_id, "error": str(e)})
+            continue
+
+        if result.action == "skip" and not result.extractions:
+            # Withheld by the egress gate: never judged, so it stays a candidate, untouched.
+            stats["egress_withheld"] += 1
+            judged -= 1
             continue
 
         if result.action == "archive":

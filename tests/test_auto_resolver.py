@@ -137,3 +137,20 @@ class TestResolveConflictPair:
 
         result = resolve_conflict_pair(mock_store, claim_a, claim_b)
         assert "error" in result or "winner" not in result
+
+
+def test_resolution_prompt_never_carries_a_private_address_and_a_blocked_claim_makes_no_call():
+    """S-6: the claims and citations pass the egress gate before the judge prompt is built."""
+    from types import SimpleNamespace
+
+    cite = SimpleNamespace(source="notes", locator="/home/" + "jdoe" + "/a.md")
+
+    def claim(i, text):
+        return SimpleNamespace(id=i, text=text, confidence=0.5, updated_at="2026-01-01", citations=[cite])
+
+    prompts: list[str] = []
+    with patch("memorymaster.govern.auto_resolver.call_llm", side_effect=lambda p, t="": prompts.append(p) or "{}"):
+        resolve_conflict_pair(MagicMock(), claim(1, "db at 10.1.2.3 now"), claim(2, "db at 10.1.2.3 later"))
+        blocked = resolve_conflict_pair(MagicMock(), claim(3, "DB_PASS=" + "hunter2hunter2"), claim(4, "ok"))
+    assert len(prompts) == 1 and "10.1.2.3" not in prompts[0] and "jdoe" not in prompts[0]
+    assert blocked["reason"] == "egress_withheld"

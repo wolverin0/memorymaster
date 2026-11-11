@@ -461,3 +461,14 @@ def test_sin_ruta_sqlite_el_context_manager_cede_none(env, monkeypatch):
     monkeypatch.setattr(svc.store, "db_path", "postgresql://x/y", raising=False)
     with rule_miner._lineage_connection(svc) as conn:
         assert conn is None
+
+
+def test_extract_rule_gates_the_window_and_a_withheld_one_is_no_correction(monkeypatch):
+    """S-6: transcript windows pass the egress gate; a withheld one is not a transient failure."""
+    from memorymaster.knowledge import rule_miner
+
+    seen: list[str] = []
+    monkeypatch.setattr(rule_miner.llm_provider, "call_llm", lambda p, w: seen.append(w) or "[]")
+    assert rule_miner._extract_rule("USER: no, host 10.1.2.3 is wrong") is None
+    assert len(seen) == 1 and "10.1.2.3" not in seen[0]
+    assert rule_miner._extract_rule("USER: DB_PASS=" + "hunter2hunter2") is None and len(seen) == 1
