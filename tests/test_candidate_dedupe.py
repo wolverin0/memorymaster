@@ -479,7 +479,7 @@ _PAD = "for the zorblax billing exporter service in the staging environment as a
         (f"The feature flag is enabled {_PAD}", f"The feature flag is disabled {_PAD}", "candidate-adds-tokens"),
         (f"The legacy export is used {_PAD}", f"The legacy export is not used {_PAD}", "candidate-adds-tokens"),
         (f"The legacy export is not used {_PAD}", f"The legacy export is used {_PAD}", "negation-differs"),
-        (f"The legacy export isn't used {_PAD}", f"The legacy export is used {_PAD}", "negation-differs"),
+        (f"The legacy export isn't used {_PAD}", f"The legacy export is used {_PAD}", "candidate-adds-tokens"),
         (f"The primary host is alpha {_PAD}", f"The primary host is bravo {_PAD}", "candidate-adds-tokens"),
         (f"The offset is 5 minutes {_PAD}", f"The offset is -5 minutes {_PAD}", "value-tokens-differ"),
         (
@@ -494,6 +494,12 @@ def test_undeclared_word_or_slot_corrections_pass_through(conn: sqlite3.Connecti
     cand = _ins(conn, text=new, status="candidate")
     result = find_near_duplicate(conn, candidate_id=cand, candidate_text=new, candidate_scope="project:memorymaster")
     assert (result.action, result.reason) == ("passthrough", reason)
+
+
+def test_contraction_counts_as_negation() -> None:
+    from memorymaster.govern.candidate_dedupe import _negations
+
+    assert _negations("it isn't used") == {"not"} and _negations("it is used") == set()
 
 
 def test_true_duplicate_controls_still_archive(conn: sqlite3.Connection) -> None:
