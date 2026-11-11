@@ -7,8 +7,11 @@ import io
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path, PureWindowsPath
 
+from memorymaster.recall.delivery import confirm_turn
+from memorymaster.recall.hook_policy import DEFER_KEY
 from memorymaster.surfaces.hook_events import append_hook_event
 
 INTERNAL_ENV = "MEMORYMASTER_AGY_HOOK_INTERNAL"
@@ -53,8 +56,12 @@ def normalize_payload(payload: dict) -> dict | None:
             "model": payload.get("modelName"), "transcript_path": payload.get("transcriptPath")}
 
 
-def run_hook(event: str, payload: dict, *, db_path: str) -> str:
-    """Return strict agy JSON or silence; errors never veto the agent's turn."""
+def run_hook(event: str, payload: dict, *, db_path: str, emit: Callable[[str], object] | None = None) -> str:
+    """Return strict agy JSON or silence; errors never veto the agent's turn.
+
+    With ``emit`` the output is written through it and the recalled claims are marked seen and counted
+    only if that write succeeded (T-2275); without it the turn stays unconfirmed and its claims retryable.
+    """
     if event not in {"SessionStart", "PreInvocation", "Stop"} or _internal():
         return ""
     data = normalize_payload(payload)
@@ -70,6 +77,7 @@ def run_hook(event: str, payload: dict, *, db_path: str) -> str:
         return ""  # recall only: Stop capture is not recall (T-2273)
     previous = os.environ.get(INTERNAL_ENV)
     os.environ[INTERNAL_ENV] = "1"
+    turn_query = None  # set once recall staged a turn that the write below must confirm
     try:
         # Dependencies can print diagnostics. Nothing except our strict envelope
         # may reach agy's protojson parser, including on a failing dependency.
@@ -81,8 +89,11 @@ def run_hook(event: str, payload: dict, *, db_path: str) -> str:
                 if event == "PreInvocation" and not data["prompt"].strip():
                     return ""  # per-prompt recall needs a prompt; only SessionStart falls back to the scope
                 query = data["prompt"].strip() or f"Project context for {scope_from_cwd(data['cwd'])}"
-                context, _via = hook_recall(query, data, db_path=db_path)
+                context, _via = hook_recall(query, {**data, DEFER_KEY: True}, db_path=db_path)
+                turn_query = query
                 if not context or not context.strip():
+                    if emit is not None:
+                        confirm_turn(data, "agy", emitted="", query=query, failure="not_emitted")
                     return ""
                 output = json.dumps({"injectSteps": [{"ephemeralMessage": recall_block(context)}]})
                 count = 1
@@ -102,6 +113,14 @@ def run_hook(event: str, payload: dict, *, db_path: str) -> str:
                     return ""
                 output = ""
             append_hook_event("agy", event, count)
+        if emit is not None and output:
+            failure = None
+            try:
+                emit(output)
+            except Exception:  # the pipe to agy is gone: the claims stay retryable
+                failure = "write_failure"
+            if turn_query is not None:
+                confirm_turn(data, "agy", emitted="" if failure else output, query=turn_query, failure=failure)
         return output
     except Exception:
         return ""
@@ -116,10 +135,11 @@ def main(event: str, *, db_path: str) -> int:
     try:
         payload = json.loads(sys.stdin.read() or "{}")
         if isinstance(payload, dict):
-            output = run_hook(event, payload, db_path=db_path)
-            if output:
+            def write(output: str) -> None:
                 sys.stdout.write(output)
                 sys.stdout.flush()
+
+            run_hook(event, payload, db_path=db_path, emit=write)
     except Exception:
         pass
     return 0

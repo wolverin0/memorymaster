@@ -49,7 +49,8 @@ def test_session_start_uses_shared_core_and_emits_only_inject_steps(payload, tmp
     query, data, db = calls[0]
     assert query == payload["lastUserInput"]
     assert data == {"cwd": payload["workspacePaths"][0], "session_id": "fixture-session",
-                    "prompt": query, "model": "fixture-model", "transcript_path": payload["transcriptPath"]}
+                    "prompt": query, "model": "fixture-model", "transcript_path": payload["transcriptPath"],
+                    "defer_delivery": True}  # T-2275: recall stages the turn, agy_hooks.main confirms after its write
     assert db == "fixture-only.db"
     receipt = json.loads((tmp_path / "events.jsonl").read_text())
     assert {key: receipt[key] for key in ("cli", "event", "count")} == {"cli": "agy", "event": "SessionStart", "count": 1}

@@ -68,6 +68,11 @@ except ImportError:  # a package older than this template: no machine-traffic ga
 # The Codex adapter runs this file through runpy and passes its own name; a direct Claude run is "claude".
 ADAPTER = globals().get("MEMORYMASTER_RECALL_ADAPTER", "claude")
 
+try:  # T-2275: a claim is seen/counted only after the final write; absent on a package older than this template
+    from memorymaster.recall.delivery import confirm_turn  # noqa: E402
+except ImportError:
+    confirm_turn = None
+
 try:  # T-1648: OS process age = interpreter start-up + imports; absent on an older package or off Windows
     from memorymaster.core.stall_probe import enabled as probe_enabled, process_age_ms  # noqa: E402
 except ImportError:
@@ -86,6 +91,8 @@ try:
     query = data.get("prompt", "")
     query = sanitize_text(query) if isinstance(query, str) else ""
     data["prompt"] = query
+    if confirm_turn is not None:
+        data["defer_delivery"] = True  # recall stages the ids; this hook confirms them after emission
     session_id = str(data.get("session_id", ""))[:16]
     full_session = data.get("session_id")
     machine = machine_skip(query, ADAPTER, session=session_id)  # logs its own skip line, no prompt text
@@ -130,16 +137,30 @@ try:
             log_hook("recall", "error", message=str(e)[:200])  # a recall failure must not drop the residual
     _t = time.perf_counter()
     parts = ([residual] if residual else []) + ([recall_block(ctx)] if ctx else [])
+    emitted_text, delivery_failure = "", None  # delivery_failure is read back by the Codex adapter (runpy globals)
     if parts:
         def emit(output):
             sys.stdout.write(output)
             sys.stdout.flush()
-        sent = deliver(data, "\n\n".join(parts), emit)
+        block = "\n\n".join(parts)
+        try:
+            sent = deliver(data, block, emit)
+        except Exception as e:  # the pipe to the agent is gone: the claims stay retryable (T-2275)
+            sent, delivery_failure = False, "write_failure"
+            log_hook("recall", "error", message=str(e)[:200])
+        if sent:
+            emitted_text = block
+        elif delivery_failure is None:
+            delivery_failure = "repeat_suppressed"
         if sent and not globals().get("MEMORYMASTER_DEFER_HOOK_EVENT", False):
             append_hook_event("claude-code", "recall_injected", 1)
         if sent and residual:
             residual_state.consume(full_session)  # one block, once
         log_hook("recall", "done", session=session_id, hit=bool(ctx), residual=bool(residual), delivered=sent, via=via, adapter=ADAPTER)
+    # T-2275: the claims are "seen" and their accesses recorded only now, after the write; the Codex adapter
+    # confirms itself once it has cut the block to its byte budget.
+    if confirm_turn is not None and via in ("shared", "local") and not globals().get("MEMORYMASTER_DEFER_HOOK_EVENT", False):
+        confirm_turn(data, ADAPTER, emitted=emitted_text, query=query, failure=delivery_failure)
     # T-1648: logged for every recall outcome, including skipped_busy (the timeouts), which logged nothing before.
     if _PROBE and timing:
         log_hook("recall", "timing", session=session_id, via=via, import_ms=_IMPORT_MS, boot_ms=_BOOT_MS,

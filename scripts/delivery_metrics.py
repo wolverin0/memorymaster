@@ -6,7 +6,8 @@ Measures, over a trailing window (default 7 days):
      and task_brief (legitimate demand);
   b. injected claims cited, via scripts/review_recall_citations.py (diagnostic only);
   c. dreaming queue by status and p95 hours from capture to applied (capture-control ledger);
-  d. injected tokens per turn and hook latency, from recall-dense.jsonl (null with a reason if absent).
+  d. injected tokens per turn and hook latency, from recall-dense.jsonl (null with a reason if absent);
+  e. share of turns whose omissions are fully explained by delivery receipts (hook.log, T-2275).
 
 Every database is opened ``?mode=ro`` (``PRAGMA query_only=ON``); nothing is written except the
 optional ``--out`` report. Prefixes of user queries pass through ``redact_text`` before emission.
@@ -220,6 +221,61 @@ def hook_telemetry(log: Path, since: datetime) -> dict:
     }
 
 
+_RECEIPT = re.compile(r"^\[(?P<ts>[^\]]+)\] hook=recall event=receipt (?P<fields>.*)$")
+
+
+def _receipt_ids(value: str) -> list[str]:
+    return [] if value in ("", "-") else value.split(",")
+
+
+def parse_receipt(line: str):
+    """``(ts, selected, emitted, omitted)`` of a recall receipt line of hook.log, None for any other line."""
+    match = _RECEIPT.match(line.rstrip("\n"))
+    if not match:
+        return None
+    fields = dict(part.split("=", 1) for part in match["fields"].split(" ") if "=" in part)
+    try:
+        ts = parse_ts(match["ts"])
+    except ValueError:
+        return None
+    omitted = dict(pair.split(":", 1) for pair in _receipt_ids(fields.get("omitted", "-")) if ":" in pair)
+    return ts, _receipt_ids(fields.get("selected", "-")), _receipt_ids(fields.get("emitted", "-")), omitted
+
+
+def receipt_explanation(hook_log: Path, since: datetime) -> dict:
+    """Share of recall turns whose omissions (selected but not emitted) each carry a reason in the receipt (T-2275)."""
+    if not hook_log.exists():
+        return _unavailable("hook.log not found; delivery receipts are written there by the recall adapters")
+    turns = with_omissions = explained = 0
+    reasons: Counter = Counter()
+    with hook_log.open(encoding="utf-8", errors="replace") as stream:  # streamed: the log is never rotated
+        for line in stream:
+            if "event=receipt" not in line:
+                continue
+            parsed = parse_receipt(line)
+            if parsed is None or parsed[0] < since:
+                continue
+            _, selected, emitted, omitted = parsed
+            turns += 1
+            missing = [cid for cid in selected if cid not in emitted]
+            if not missing:
+                continue
+            with_omissions += 1
+            reasons.update(omitted[cid] for cid in missing if cid in omitted)
+            explained += all(cid in omitted for cid in missing)
+    if not turns:
+        return _unavailable("no delivery receipts in the window")
+    return {
+        "source": "hook.log recall receipts (selected -> packed -> emitted; ids and reasons only)",
+        "turns_with_receipt": turns,
+        "turns_with_omissions": with_omissions,
+        "turns_omissions_fully_explained": explained,
+        "share_omissions_explained": round(explained / with_omissions, 4) if with_omissions else None,
+        "omission_reasons": dict(reasons),
+        "scope": "adapters that stage and confirm a turn; a hook older than T-2275 writes no receipt",
+    }
+
+
 def _section(fn, *args):
     """One metric's failure must not sink the report: record it as null with the reason."""
     try:
@@ -235,12 +291,15 @@ def _with_db(path: Path, fn, *args):
     return _section(run)
 
 
-def collect(db: Path, ledger: Path, home: Path, dense_log: Path, days: int = 7, now: datetime | None = None) -> dict:
+def collect(db: Path, ledger: Path, home: Path, dense_log: Path, days: int = 7, now: datetime | None = None,
+            hook_log: Path | None = None) -> dict:
     started = time.perf_counter()
     now = now or datetime.now(timezone.utc)
     since = now - timedelta(days=days)
     telemetry = _section(hook_telemetry, dense_log, since)
+    hook_log = hook_log or home / ".memorymaster" / "hook_state" / "hook.log"
     return {
+        "delivery_receipts": _section(receipt_explanation, hook_log, since),
         "generated_at": now.isoformat(),
         "window_days": days,
         "window_start": since.isoformat(),
@@ -266,10 +325,13 @@ def main(argv=None) -> int:
     parser.add_argument("--home", type=Path, default=Path.home(), help="home holding .claude/projects transcripts")
     parser.add_argument("--dense-log", type=Path, default=None,
                         help="recall-dense.jsonl (default: <home>/.memorymaster/metrics/recall-dense.jsonl)")
+    parser.add_argument("--hook-log", type=Path, default=None,
+                        help="hook.log with the delivery receipts (default: <home>/.memorymaster/hook_state/hook.log)")
     parser.add_argument("--out", help="write the JSON report here (default: stdout)")
     args = parser.parse_args(argv)
     dense_log = args.dense_log or args.home / ".memorymaster" / "metrics" / "recall-dense.jsonl"
-    text = json.dumps(collect(args.db, args.ledger_db, args.home, dense_log, args.days), indent=2, sort_keys=True)
+    text = json.dumps(collect(args.db, args.ledger_db, args.home, dense_log, args.days, hook_log=args.hook_log),
+                      indent=2, sort_keys=True)
     if args.out:
         out = Path(args.out).expanduser()
         out.parent.mkdir(parents=True, exist_ok=True)

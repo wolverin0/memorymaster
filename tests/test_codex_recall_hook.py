@@ -59,7 +59,8 @@ def test_prompt_reuses_claude_core_payload_and_telemetry(installed, tmp_path, mo
         "hookEventName": "UserPromptSubmit",
         "additionalContext": "[MemoryMaster recall]\n\n- [mm-2bff] governed cited memory\n- [mm-29c2~2] another cited memory",
     }}
-    assert [(query, payload) for query, payload, _ in seen] == [(data["prompt"], data)]
+    # the shared hook asks recall to stage the turn; the adapter confirms it after its own write (T-2275)
+    assert [(query, payload) for query, payload, _ in seen] == [(data["prompt"], {**data, "defer_delivery": True})]
     assert Path(seen[0][2]) == tmp_path / "memorymaster.db"
     record = json.loads((tmp_path / "events.jsonl").read_text())
     assert (record["cli"], record["event"], record["count"]) == ("codex", "UserPromptSubmit", 1)

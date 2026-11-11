@@ -24,6 +24,7 @@ def test_opencode_delegates_query_workspace_and_budget_to_shared_core(monkeypatc
     assert capsys.readouterr().out == "[MemoryMaster recall]\n# Memory Context\n- [mm-42] use SQLite"
     assert seen == {"query": "Why did we choose SQLite?", "data": {
         "prompt": "Why did we choose SQLite?", "cwd": "/work/project", "session_id": "opencode:ses_1",
+        "defer_delivery": True,  # T-2275: recall stages the turn, the adapter confirms it after its write
     }, "db_path": "fixture.db", "timeout": 2.5}
 
 

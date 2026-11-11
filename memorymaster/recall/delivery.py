@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 import time
+import uuid
 from typing import Callable
 
 from memorymaster.core.text_safety import sanitize_text
@@ -115,3 +116,65 @@ def deliver(data: dict, context: str, write: Callable[[str], object], *,
     if path is not None:
         _remember(path, fingerprint, now)
     return True
+
+
+# --- delivery receipts (T-2275): selected -> packed -> emitted ------------------------------------------
+# A claim counts as delivered (session-seen, access recorded) only once the adapter's FINAL emission
+# succeeded and the claim survived it. Recall stages the ids (hook_policy.stage_turn); the adapter calls
+# confirm_turn after its write. A receipt is one hook.log line of ids and omission reasons: no claim or prompt text.
+
+OMISSION_REASONS = ("session_seen", "slot_cap", "byte_budget", "jev_surface", "repeat_suppressed",
+                    "adapter_truncation", "format_dropped", "write_failure", "not_emitted")
+RECEIPT_EVENT = "receipt"
+
+
+def new_turn_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _ids(values) -> str:
+    return ",".join(str(v) for v in values) or "-"
+
+
+def confirm_turn(data: dict, adapter: str, *, emitted: str, query: str = "", failure: str | None = None,
+                 drop_reason: str = "format_dropped") -> dict | None:
+    """Close the turn recall staged for this session; returns the receipt, None when nothing was staged.
+
+    ``emitted`` is the text the adapter really wrote ("" when it wrote nothing, with ``failure`` naming why:
+    ``write_failure`` or ``repeat_suppressed``). A packed claim whose ``[mm-id]`` tag is missing from a
+    non-empty ``emitted`` was cut by the adapter (``drop_reason``, ``adapter_truncation`` for Codex) and stays
+    retryable. Never raises: delivery state and telemetry must not break a hook.
+    """
+    try:
+        session = data.get("session_id") if isinstance(data, dict) else None
+        if not isinstance(session, str) or not session:
+            return None
+        turn = hook_policy.take_turn(session)
+        if turn is None:
+            return None
+        packed = [(cid, tag) for cid, tag in turn["packed"]]
+        # shortcut: a claim without a human id cannot be located in the text, so it counts as emitted
+        # whenever anything was; every claim ingested through the service has one.
+        kept = [cid for cid, tag in packed if emitted and (not tag or f"[{tag}]" in emitted)]
+        omitted = dict(turn["omitted"])
+        for cid, _ in packed:
+            if cid not in kept:
+                omitted[str(cid)] = (failure or "not_emitted") if not emitted else drop_reason
+        if kept:
+            if hook_policy.session_id_of(data):
+                hook_policy.remember(session, kept)
+            from memorymaster.core import access_recording
+
+            access_recording.spool_accesses(turn.get("db_path", ""), kept, query)
+        receipt = {"turn": turn["turn"], "adapter": adapter, "ranked": turn.get("ranked_n", 0),
+                   "selected": turn["selected"], "packed": [cid for cid, _ in packed], "emitted": kept,
+                   "omitted": omitted}
+        from memorymaster.core.hook_log import log_hook
+
+        log_hook("recall", RECEIPT_EVENT, turn=receipt["turn"], adapter=adapter,
+                 session=hashlib.sha256(session.encode("utf-8")).hexdigest()[:12], ranked=receipt["ranked"],
+                 selected=_ids(receipt["selected"]), packed=_ids(receipt["packed"]), emitted=_ids(kept),
+                 omitted=",".join(f"{cid}:{reason}" for cid, reason in omitted.items()) or "-")
+        return receipt
+    except Exception:  # noqa: BLE001 — observation and bookkeeping only
+        return None

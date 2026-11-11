@@ -45,12 +45,14 @@ MAX_CLAIMS_ENV = "MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS"
 LEXICAL_MIN_ENV = "MEMORYMASTER_RECALL_LEXICAL_MIN_RELEVANCE"
 SESSION_DEDUP_ENV = "MEMORYMASTER_RECALL_SESSION_DEDUP"
 SEEN_DIR_ENV = "MEMORYMASTER_RECALL_SEEN_DIR"
+DEFER_KEY = "defer_delivery"  # hook_data flag: the adapter confirms the turn after emission (T-2275)
 
 DEFAULT_MAX_CLAIMS = 2
 DEFAULT_LEXICAL_MIN_RELEVANCE = 0.5  # measured: 0.5 costs ~3% nDCG; 1 costs 18%, 2 costs 53% (no precision gain)
 SEEN_TTL_SECONDS = 12 * 3600
 SEEN_MAX_IDS = 200  # per session; the oldest are forgotten first
 SEEN_MAX_FILES = 400  # sessions kept on disk
+TURN_TTL_SECONDS = 120  # a staged turn nobody confirmed is dropped: its claims stay retryable
 _FALSE = {"0", "false", "no", "off"}
 
 
@@ -222,6 +224,59 @@ def remember(session_id: str, ids: list[int], *, now: float | None = None) -> No
                 pass
 
 
+# --- the turn staged between recall and emission (T-2275) -------------------------------------
+
+
+def defers_delivery(hook_data: object) -> bool:
+    """Whether the adapter that called recall confirms delivery itself (an older hook never sets it)."""
+    return isinstance(hook_data, dict) and hook_data.get(DEFER_KEY) is True and bool(hook_data.get("session_id"))
+
+
+def _turn_path(session_id: str) -> Path:
+    return _seen_path(session_id).with_suffix(".turn.json")
+
+
+def stage_turn(session_id: str, turn: dict, *, now: float | None = None) -> None:
+    """Park the ids recall packed (ids and reasons only, never text) until the adapter confirms emission.
+
+    One turn per session: a newer prompt replaces an unconfirmed one. The server and the hook process
+    meet here, so this works for the shared-server and the local recall alike. Never raises.
+    """
+    now = time.time() if now is None else now
+    path = _turn_path(session_id)
+    temporary = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False,
+                                         suffix=".tmp") as handle:
+            temporary = Path(handle.name)
+            json.dump({**turn, "ts": now}, handle)
+        os.replace(temporary, path)
+        temporary = None
+    except OSError:
+        pass
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def take_turn(session_id: str, *, now: float | None = None) -> dict | None:
+    """The staged turn of this session, removed; None when absent, expired or unreadable."""
+    now = time.time() if now is None else now
+    path = _turn_path(session_id)
+    try:
+        turn = json.loads(path.read_text(encoding="utf-8"))
+        path.unlink(missing_ok=True)
+        if isinstance(turn, dict) and 0 <= now - float(turn["ts"]) < TURN_TTL_SECONDS:
+            return turn
+    except (OSError, ValueError, TypeError, KeyError):
+        pass
+    return None
+
+
 def _prune(directory: Path, now: float) -> None:
     """Drop expired sessions, then the oldest beyond the cap. Cheap while the dir is small."""
     try:
@@ -239,7 +294,8 @@ def _prune(directory: Path, now: float) -> None:
 
 def forget(session_id: str) -> None:
     """A new/compacted session lost the injected context: its claims may be injected again."""
-    try:
-        _seen_path(session_id).unlink(missing_ok=True)
-    except OSError:
-        pass
+    for path in (_seen_path(session_id), _turn_path(session_id)):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass

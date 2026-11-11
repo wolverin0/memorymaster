@@ -2288,6 +2288,30 @@ def _stage_ms(started: float) -> float:
     return round((time.perf_counter() - started) * 1000.0, 1)
 
 
+RECEIPT_SELECTED_MAX = 12  # ids a delivery receipt lists as "selected"; a receipt stays one compact line
+
+
+def _claim_ids(rows: list[dict]) -> list[int]:
+    return [cid for row in rows if isinstance(cid := getattr(row.get("claim"), "id", None), int)]
+
+
+def _stage_turn(hook_data: dict, svc, offered: list[int], seen: frozenset[int], omitted: dict[int, str],
+                rendered_rows: list[dict]) -> None:
+    """Park the turn's ids and omission reasons for ``recall.delivery.confirm_turn`` (ids only, never text)."""
+    from memorymaster.recall import delivery
+
+    packed = [[row["claim"].id, getattr(row["claim"], "human_id", None)] for row in rendered_rows]
+    packed_ids = {cid for cid, _ in packed}
+    selected = offered[:RECEIPT_SELECTED_MAX]
+    selected += [cid for cid in packed_ids if cid not in selected]  # a packed id is always a selected one
+    reasons = {str(cid): "session_seen" if cid in seen else omitted.get(cid, "jev_surface")
+               for cid in selected if cid not in packed_ids}
+    hook_policy.stage_turn(hook_data["session_id"], {
+        "turn": delivery.new_turn_id(), "db_path": str(getattr(svc.store, "db_path", "") or ""),
+        "ranked_n": len(offered), "selected": selected, "packed": packed, "omitted": reasons,
+    })
+
+
 def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_data, rendered_ids, stages=None):
     """Render the ranked rows within budget, apply S2, record ids and accesses.
 
@@ -2299,6 +2323,8 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
     # render from this order, so a claim with a pending/explicit correction never precedes the correction.
     ranked = hook_lexical.apply_truth_eligibility(ranked, svc)
     limit = None
+    offered = _claim_ids(ranked)  # the receipt's first stage: what ranking selected
+    seen: frozenset[int] = frozenset()
     if hook_data is not None:
         stage_start = time.perf_counter()
         seen = _session_seen(hook_data)
@@ -2308,7 +2334,8 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
         limit = hook_policy.max_claims()
     # Build output — top claims within budget
     stage_start = time.perf_counter()
-    lines, rendered_rows = _render_recall_lines(ranked, budget, limit=limit)
+    omitted: dict[int, str] = {}
+    lines, rendered_rows = _render_recall_lines(ranked, budget, limit=limit, omitted=omitted)
     if stages is not None:
         stages["render_ms"] = _stage_ms(stage_start)
     # S2 RECALL (Jev, 4.9.0): only the prompt hook opts in by passing its
@@ -2324,16 +2351,25 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
     if rendered_ids is not None:
         rendered_ids.extend(injected)
     stage_start = time.perf_counter()
-    if hook_data is not None and (session := hook_policy.session_id_of(hook_data)):
-        hook_policy.remember(session, injected)
-    if stages is not None:
-        stages["remember_ms"] = _stage_ms(stage_start)
+    if hook_policy.defers_delivery(hook_data):
+        # T-2275: the adapter marks the ids seen and records their accesses once the block is really
+        # emitted (recall.delivery.confirm_turn); a failed write or a truncation leaves the claim retryable.
+        if rendered_rows:
+            svc._emit_recall_telemetry()  # a query was served; the per-claim access waits for the emission
+        _stage_turn(hook_data, svc, offered, seen, omitted, rendered_rows)
+        if stages is not None:
+            stages["remember_ms"] = _stage_ms(stage_start)
+    else:
+        if hook_data is not None and (session := hook_policy.session_id_of(hook_data)):
+            hook_policy.remember(session, injected)
+        if stages is not None:
+            stages["remember_ms"] = _stage_ms(stage_start)
 
-    stage_start = time.perf_counter()
-    if rendered_rows:
-        svc._record_accesses(rendered_rows, query_text=query)
-    if stages is not None:
-        stages["access_ms"] = _stage_ms(stage_start)
+        stage_start = time.perf_counter()
+        if rendered_rows:
+            svc._record_accesses(rendered_rows, query_text=query)
+        if stages is not None:
+            stages["access_ms"] = _stage_ms(stage_start)
 
     # Close the rank_and_build timer right before we emit output so the
     # measurement covers _relevance/RRF + the budget-trimming loop.
@@ -2446,28 +2482,35 @@ def _recall_chunk(claim, labels: tuple[str, ...] = ()) -> str:
     return f"- {text}"
 
 
-def _render_recall_lines(rows, budget: int, labels=None, limit: int | None = None) -> tuple[list[str], list[dict]]:
+def _render_recall_lines(rows, budget: int, labels=None, limit: int | None = None,
+                         omitted: dict[int, str] | None = None) -> tuple[list[str], list[dict]]:
     """Pack complete bullets, counting framing in the four-character estimate.
 
     A claim that cannot fit must not hide later, smaller claims. Returning an
     ID for a silently truncated claim makes recall evaluation and exposure
     receipts misleading, so each included claim retains its full text. ``limit``
-    caps the number of claims (the prompt hook injects very few).
+    caps the number of claims (the prompt hook injects very few). When ``omitted`` is a dict it receives
+    ``{claim id: "slot_cap" | "byte_budget"}`` for each row left out (delivery receipts, T-2275).
     """
     lines = list(RECALL_HEADER)
     rendered_rows: list[dict] = []
     chars_used = len("\n".join(lines))
     char_budget = max(0, budget) * 4
     for row in rows:
-        if limit is not None and len(rendered_rows) >= limit:
-            break
         claim = row.get("claim")
         if not hasattr(claim, "text"):
+            continue
+        if limit is not None and len(rendered_rows) >= limit:
+            if omitted is None:
+                break
+            omitted.setdefault(getattr(claim, "id", None), "slot_cap")
             continue
         flags = labels.get(getattr(claim, "id", None), ()) if labels else ()
         chunk = _recall_chunk(claim, flags)
         chunk_chars = len(chunk) + 1  # join separator, including the first bullet
         if chars_used + chunk_chars > char_budget:
+            if omitted is not None:
+                omitted.setdefault(getattr(claim, "id", None), "byte_budget")
             continue
         lines.append(chunk)
         rendered_rows.append(row)
