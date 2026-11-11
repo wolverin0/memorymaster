@@ -216,7 +216,7 @@ def test_dedupe_synthetic_corpus_30_dupes(
     service = MemoryService(tmp_db)
     service.init_db()
 
-    base = "user prefers tool {} for activity {}"
+    base = "user prefers tool {} for activity {} regularly"
     confirmed_ids: list[int] = []
     for i in range(30):
         cid = _seed(
@@ -228,7 +228,7 @@ def test_dedupe_synthetic_corpus_30_dupes(
         _force_confirmed(tmp_db, cid)
         confirmed_ids.append(cid)
 
-    paraphrase_template = "user prefers tool {} for activity {} regularly"
+    paraphrase_template = "user prefers tool {} for activity {}"  # adds no word (subset rule)
     for i in range(30):
         _seed(
             service,
