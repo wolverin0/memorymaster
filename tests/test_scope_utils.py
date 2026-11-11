@@ -411,17 +411,26 @@ def test_a_collection_root_with_the_second_checkout_far_down_is_still_global(tmp
     assert len(consumed) == 3501  # lazy: it stopped at the second checkout
 
 
-def test_a_huge_directory_without_checkouts_is_scanned_lazily_and_fast(tmp_path, monkeypatch):
-    import time
-
+def test_a_huge_directory_without_checkouts_is_scanned_lazily_and_probed_a_bounded_number_of_times(tmp_path, monkeypatch):
+    """No wall-clock bound (it depends on the box): the work is bounded by counting what the scan does."""
     base = tmp_path / "huge"
     base.mkdir()
     for i in range(20000):
         (base / f"d{i:05d}").mkdir()
+    probes = []
+    real_exists = os.path.exists
+    monkeypatch.setattr(scope_utils.os.path, "exists",
+                        lambda p: probes.append(p) or real_exists(p) if str(p).endswith(".git") else real_exists(p))
     monkeypatch.setattr(Path, "iterdir", lambda self: (_ for _ in ()).throw(AssertionError("materialised listing")))
-    started = time.perf_counter()
     assert scope_from_cwd(base) == "project:huge"
-    assert time.perf_counter() - started < 2.0
+    assert 0 < len(probes) <= scope_utils._COLLECTION_PROBE_LIMIT + 8  # (+ the few ancestor probes)
+
+
+def test_dot_folders_and_dependency_folders_are_not_probed_for_a_checkout(tmp_path):
+    for name in (".hidden", "node_modules", "venv"):
+        (tmp_path / "coll" / name / ".git").mkdir(parents=True)
+    (tmp_path / "coll" / "real" / ".git").mkdir(parents=True)
+    assert scope_from_cwd(tmp_path / "coll") == "project:coll"  # one real checkout: not a collection root
 
 
 def test_a_collection_root_of_checkouts_is_still_global(tmp_path):

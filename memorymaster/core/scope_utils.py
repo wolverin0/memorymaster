@@ -247,7 +247,11 @@ def _git_project_root(
     return None
 
 
-_COLLECTION_SCAN_LIMIT = 32768
+_COLLECTION_SCAN_LIMIT = 32768  # entries listed
+_COLLECTION_PROBE_LIMIT = 6144  # folders whose .git is probed (one stat each: ~0.7 ms on a loaded NTFS)
+# Folders that are never a project of their own: not probed (dot-folders are skipped by name as well).
+_NOT_A_PROJECT = frozenset({"node_modules", "__pycache__", "venv", "env", "dist", "build", "target", "site-packages",
+                            "$recycle.bin", "system volume information"})
 
 
 def _holds_several_repositories(directory: Path) -> bool:
@@ -255,16 +259,22 @@ def _holds_several_repositories(directory: Path) -> bool:
 
     The old version listed the whole directory and made two stat calls per entry (``is_dir`` and ``.git``): ~20k
     subfolders stalled an indexing run for minutes (T-2277).  Now the listing is lazy (``os.scandir`` answers
-    "is a directory" from the listing itself), so a folder costs one stat (its ``.git``), and the scan stops at the
-    second checkout.  Deterministic: no time budget, the entry cap only guards pathological directories.
-    shortcut: a checkout listed after :data:`_COLLECTION_SCAN_LIMIT` entries is not counted.
+    "is a directory" from the listing itself), dot-folders and well-known non-project folders are not probed, a
+    folder costs one stat (its ``.git``) and the scan stops at the second checkout.  Deterministic: no time budget;
+    the caps only guard pathological directories.
+    shortcut: a checkout beyond the :data:`_COLLECTION_SCAN_LIMIT`-th entry or the :data:`_COLLECTION_PROBE_LIMIT`-th
+    probed folder is not counted; raise them if collection roots grow past that.
     """
-    repositories = 0
+    repositories = probed = 0
     with os.scandir(directory) as entries:
         for index, entry in enumerate(entries):
-            if index >= _COLLECTION_SCAN_LIMIT:
+            if index >= _COLLECTION_SCAN_LIMIT or probed >= _COLLECTION_PROBE_LIMIT:
                 return False
-            if entry.is_dir() and os.path.exists(os.path.join(entry.path, ".git")):
+            name = entry.name
+            if name.startswith(".") or name.lower() in _NOT_A_PROJECT or not entry.is_dir():
+                continue
+            probed += 1
+            if os.path.exists(os.path.join(entry.path, ".git")):
                 repositories += 1
                 if repositories > 1:
                     return True
