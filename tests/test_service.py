@@ -141,3 +141,19 @@ def test_retrieve_dense_plan_reports_lexical_fallback_reason(tmp_path, monkeypat
     assert result.plan.effective_mode == "legacy"
     assert "unavailable" in result.plan.containment_reason
     assert [row["claim"].id for row in result.rows] == [claim.id]
+
+
+def test_validate_now_confirms_a_fresh_candidate_and_the_switch_turns_it_off(service, monkeypatch):
+    """Contract: MemoryService.validate_now delegates to the ingest fast path (ingest_governance.validate_now)."""
+    monkeypatch.delenv("MEMORYMASTER_INLINE_VALIDATION", raising=False)
+    text = "The audit log retention window is 90 days since the 2026 policy"
+    citations = [CitationInput(source="test://witness", locator="x")]
+    fresh = service.ingest(text, citations, scope="project:witness", source_agent="fixture")
+    assert fresh.status == "candidate"
+    assert service.validate_now(fresh.id)["status"] == "confirmed"
+    assert service.store.get_claim(fresh.id, include_citations=False).status == "confirmed"
+    monkeypatch.setenv("MEMORYMASTER_INLINE_VALIDATION", "0")
+    other = service.ingest("The release train departs every second Tuesday of the month", citations,
+                           scope="project:witness", source_agent="fixture")
+    assert service.validate_now(other.id) == {"enabled": False}
+    assert service.store.get_claim(other.id, include_citations=False).status == "candidate"

@@ -190,3 +190,16 @@ class TestTransitionClaim:
         claim.subject, claim.predicate, claim.object_value = "ledger", "refuses old cards", None
         transition_claim(store, claim_id=1, to_status="confirmed", reason="auto")
         store.apply_status_transition.assert_called_once()
+
+
+def test_reingest_revival_is_the_only_sanctioned_exit_from_archived():
+    from memorymaster.core.lifecycle import REVIVAL_REASON_PREFIX, is_reingest_revival
+
+    assert not can_transition("archived", "candidate")  # the generic table still has no way out of archived
+    reason = f"{REVIVAL_REASON_PREFIX}claude-session"
+    assert is_reingest_revival("transition", "archived", "candidate", reason)
+    assert not is_reingest_revival("transition", "archived", "candidate", "steward_cleanup")
+    assert not is_reingest_revival("transition", "archived", "confirmed", reason)
+    assert not is_reingest_revival("transition", "stale", "candidate", reason)
+    assert not is_reingest_revival("validator", "archived", "candidate", reason)
+    assert not is_reingest_revival("transition", "archived", "candidate", None)

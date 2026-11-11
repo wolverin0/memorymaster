@@ -41,3 +41,18 @@ def test_cli_records_explicit_end_before_distillation_failure(tmp_path, monkeypa
     monkeypatch.setattr(ingest, "run", lambda *args, **kwargs: 0)
     assert ingest.main(["--db", str(tmp_path / "fixture.db"), "--transcript", "unused"]) == 0
     assert not seen
+
+
+def test_each_assistant_message_is_egress_gated_and_a_blocked_one_is_skipped(tmp_path):
+    """Contract: every message is gated (before the 500-char cut); a blocked one is skipped, the rest go out."""
+    benign = "A durable authored finding: the service retries three times before it gives up."
+    rows = [
+        {"role": "assistant", "content": benign},
+        {"role": "assistant", "content": "Session notes: DB_PASS=" + "hunter2hunter2" + " must never leave this machine"},
+        {"role": "assistant", "content": "Session notes: the primary lives at 10.1.2.3 in the lab, per the runbook."},
+    ]
+    path = tmp_path / "transcript.jsonl"
+    path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
+    result = _assistant_text(str(path))
+    assert "hunter2" not in result and "10.1.2.3" not in result
+    assert benign in result and "[REDACTED:private_ipv4]" in result

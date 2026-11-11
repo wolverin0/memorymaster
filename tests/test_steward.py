@@ -400,3 +400,28 @@ def test_steward_queue_settles_a_stale_proposal_once_the_claim_is_superseded() -
         if item["claim_id"] == old_claim.id
     ]
     assert [item["status"] for item in settled] == ["settled"]
+
+
+def test_agent_actor_cannot_approve_an_operator_only_proposal_and_the_refusal_is_audited(tmp_path) -> None:
+    """Contract: third actor ``agent``; approving an operator-only proposal raises, audits, and leaves it pending."""
+    import pytest
+
+    from memorymaster.core import lifecycle
+    from memorymaster.govern.steward import OperatorOnlyProposalRefused
+
+    service = MemoryService(tmp_path / "agent-actor.db", workspace_root=tmp_path)
+    service.init_db()
+    cit = [CitationInput(source="test://witness")]
+    target = service.ingest("The zorblax cache invalidation strategy is the pelican strategy", cit,
+                            scope="project:w", source_agent="claude-session")
+    lifecycle.transition_claim(service.store, target.id, "confirmed", reason="fixture", event_type="validator")
+    service.ingest("Unrelated note: lunch is at noon on fridays in the main hall", cit, scope="project:w",
+                   source_agent="evil-x", supersedes=[target.id])  # cross-identity: operator-only
+    with pytest.raises(OperatorOnlyProposalRefused):
+        resolve_steward_proposal(service, action="approve", claim_id=target.id, actor="agent")
+    refused = [e for e in service.store.list_events(claim_id=target.id, event_type="audit")
+               if e.details == "steward_proposal_refused"]
+    assert len(refused) == 1 and json.loads(refused[0].payload_json)["actor"] == "agent"
+    pending = [p for p in list_steward_proposals(service, limit=100) if p["claim_id"] == target.id]
+    assert pending and pending[0]["status"] == "pending"
+    assert service.store.get_claim(target.id, include_citations=False).status == "confirmed"

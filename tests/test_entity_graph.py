@@ -379,3 +379,22 @@ class TestSchemaEnsuredOnce:
             graph.extract_and_link(claim_id=1, text="one")
         assert calls["n"] == 0
 
+
+
+def test_extraction_gates_claim_text_and_a_withheld_claim_yields_no_entities(monkeypatch):
+    """Contract: text is egress-gated before the LLM; a withheld claim sends nothing and records egress_withheld."""
+    from memorymaster.knowledge import entity_graph as graph_module
+
+    seen: list[str] = []
+    monkeypatch.setattr(
+        graph_module, "_llm_chat", lambda prompt, system="": seen.append(prompt) or '{"entities": [], "relations": []}'
+    )
+    graph = EntityGraph.__new__(EntityGraph)
+    graph.last_diagnostics = []
+    graph.ontology = type("O", (), {"prompt": staticmethod(lambda: "ontology")})()
+    graph._get_known_entity_names = lambda limit, conn: []
+    graph._payload_values_valid = lambda data: True
+    graph._extract_payload(None, "The primary lives at 10.1.2.3 in the lab")
+    assert len(seen) == 1 and "10.1.2.3" not in seen[0]
+    assert graph._extract_payload(None, "deploy DB_PASS=" + "hunter2hunter2") is None
+    assert len(seen) == 1 and "egress_withheld" in graph.last_diagnostics
