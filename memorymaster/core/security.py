@@ -160,9 +160,10 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # v2-refresh (home_path_windows): C:\Users\<name>\... reveals the user's
     # Windows account name. We match the first path segment (1-40 chars) and
     # redact it; downstream paths beyond the username are not re-redacted.
-    # S-8: both slash styles, and the Git Bash spelling /c/Users/<name>.
+    # S-8: both slash styles, and the Git Bash spelling /c/Users/<name>. "Users" stays case-sensitive: the lowercase
+    # spellings are the egress absolute-path rules' job (they redact the whole path, this one only the prefix).
     ("home_path_windows", re.compile(
-        r"(?:[Cc]:[\\/]|(?<![\w/])/[Cc]/)(?i:users)[\\/]([A-Za-z][A-Za-z0-9._\-]{1,40})"
+        r"(?:[Cc]:[\\/]|(?<![\w/])/[Cc]/)Users[\\/]([A-Za-z][A-Za-z0-9._\-]{1,40})"
     )),
     # v2-refresh (home_path_unix): /home/<name>/ or /Users/<name>/ likewise
     # exposes usernames. Anchored to start-of-string, whitespace, or a few
@@ -176,10 +177,10 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("card_number_pan", re.compile(
         r"\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2})[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"
     )),
-    # S-7: CUIT/CUIL, dashed (NN-NNNNNNNN-N) or an 11-digit run, prefix 20/23/24/27/30/33/34, and only when the
+    # S-7: CUIT/CUIL, dashed (NN-NNNNNNNN-N) or an 11-digit run (not glued to letters: hex digests carry digit runs), prefix 20/23/24/27/30/33/34, and only when the
     # mod-11 check digit validates (_cuit_check_digit_ok), so phones, timestamps and ids stay readable.
     ("argentine_cuit_cuil", re.compile(
-        r"(?<![\d\-.])(?:(?:20|23|24|27|30|33|34)-\d{8}-\d|(?:20|23|24|27|30|33|34)\d{9})(?!\d|-\d|\.\d)"
+        r"(?<![A-Za-z0-9\-.])(?:(?:20|23|24|27|30|33|34)-\d{8}-\d|(?:20|23|24|27|30|33|34)\d{9})(?![A-Za-z0-9]|-\d|\.\d)"
     )),
     # T-2274 argentine_dni: Argentine national id, only with a document keyword in front
     # (DNI / D.N.I. / Documento [Nacional de Identidad] [N° / nro]) and 7-8 digits, dotted or not.

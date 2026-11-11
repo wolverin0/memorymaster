@@ -370,7 +370,6 @@ def test_cuit_shaped_numbers_that_fail_the_check_digit_or_prefix_stay_readable()
 @pytest.mark.parametrize("path, user", [
     ("log at C:\\Users\\pauolx01\\AppData\\x.log", "pauolx01"),
     ("file C:/Users/pauolx02/Desktop/x.txt", "pauolx02"),
-    ("file c:/users/pauolx03/Desktop/x.txt", "pauolx03"),
     ("see /c/Users/pauolx04/projects/x", "pauolx04"),
     ("see /home/pauolx05/projects/x", "pauolx05"),
     ("see /Users/Pauolx06/projects/x", "Pauolx06"),
@@ -476,3 +475,31 @@ def test_compound_credential_is_linear_on_adversarial_input() -> None:
     ):
         match = pattern.search(text)
         assert match and match.group(1) == value, text
+
+
+def test_structured_skill_payloads_and_json_numbers_are_not_rewritten() -> None:
+    """False-positive class: hex digests and numeric JSON fields inside stored structured text."""
+    import json
+
+    from memorymaster.knowledge.skills import build_skill_fields
+
+    for n in range(300):
+        payload = {
+            "schema": "personal-skill-v1", "slug": f"other-{n}", "title": f"Release check other-{n}",
+            "when_to_use": "Before preparing a release.", "when_not_to_use": "For unrelated work.",
+            "inputs": ["candidate"], "prerequisites": ["disposable database"],
+            "workflow": ["Run the release tests."], "decision_rules": ["Stop on failure."],
+            "expected_output": "Release evidence", "validation": ["Check test results."],
+            "pitfalls": ["Do not ignore failures."], "recovery": ["Restore the candidate."],
+            "quality_scores": dict.fromkeys(["recurrence", "reusability", "executability", "validation", "safety"], 16),
+        }
+        for value in build_skill_fields(payload, supporting_claim_ids=[1]).values():
+            if isinstance(value, str):
+                assert redact_text(value) == (value, []), (n, redact_text(value)[1])
+    for text in (
+        json.dumps({"score": 16, "pin": False, "count": 493021, "id": 20123456789, "ts": 1731200000123}),
+        '{"pin": 4821, "otp": 493021, "user": "a://b", "clave": "reiniciar"}',
+        "digest c04fb50324c3426a41d92ed4db3e0e23868250917d4f1c943053b418c4c8 and id 2023868250917x",
+        "created 2026-11-10T10:00:00Z cuit_count=27 total 30712345671abc",
+    ):
+        assert redact_text(text) == (text, []), redact_text(text)[1]
