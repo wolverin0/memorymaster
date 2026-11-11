@@ -21,11 +21,11 @@ from memorymaster.profile.project_repository import (
 
 BRIEF_MAX_BYTES = 1600
 STALE_DAYS = 14
-RUNNING_CARDS = DECISIONS = FAILURES = 3
+RUNNING_CARDS = DECISIONS = FAILURES = CONSTRAINTS = 3
 _RANK = {"running": 0, "review": 0, "ready": 1, "queued": 1}
 _FAIL_STATES = ("failed", "blocked")
 NL = chr(10)
-TITLES = ("RUNNING", "NEXT", "DECISIONS", "FAILURES")
+TITLES = ("RUNNING", "NEXT", "CONSTRAINTS", "DECISIONS", "FAILURES")
 EMPTY = "empty"  # readable source with nothing in it, distinct from unavailable (None)
 
 
@@ -47,6 +47,7 @@ class BriefInputs:
     roadmap_missing: bool = True
     decisions: tuple[Entry, ...] = ()
     failures: tuple[Entry, ...] = ()
+    constraints: tuple[Entry, ...] = ()  # pinned Constraints claims: safety prose the brief must keep carrying
     # name -> last-update instant | None (unavailable) | EMPTY. Order is the header order.
     sources: Mapping[str, datetime | None | str] | None = None
 
@@ -143,6 +144,8 @@ def render_brief_cut(inputs: BriefInputs) -> tuple[str, bool]:
     blocks = [
         ("RUNNING", _running(inputs.cards) or ["- none [ledger]"]),
         ("NEXT", nxt),
+        *([("CONSTRAINTS", [_entry_line(e, dated=False) for e in inputs.constraints[:CONSTRAINTS]])]
+          if inputs.constraints else []),
         ("DECISIONS", [_entry_line(e, dated=True) for e in _newest(list(inputs.decisions))[:DECISIONS]] or ["- none [claims]"]),
         ("FAILURES", [_entry_line(e, dated=False) for e in failures] or ["- none [claims]"]),
     ]
@@ -162,6 +165,9 @@ def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], di
         for key, item in items.items() if key.startswith("card:")
     )
     stamps = [t for t in (when(c["updated_at"]) for c in cards) if t]
+    pinned = sorted((i for i in items.values() if i.get("section") == "Constraints" and i.get("pinned")),
+                    key=lambda item: item["sort"])
+    constraints = tuple(Entry(None, _cell(i["text"], 100), f"mm-{i['support']['id']}") for i in pinned)
     claims, claims_ok = load_brief_claims(config, now=now)
     decisions = tuple(Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["decision"])
     failures = [Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["failure"]]
@@ -179,4 +185,4 @@ def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], di
         sources["due"] = mtime
     return BriefInputs(project=config.slug, as_of=now, cards=cards, next_item=next_item,
                        roadmap_missing=roadmap_mtime is None, decisions=decisions,
-                       failures=tuple(failures), sources=sources)
+                       failures=tuple(failures), constraints=constraints, sources=sources)

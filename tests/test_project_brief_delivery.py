@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import sys
+from datetime import datetime, timezone
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from test_project_repository import claim
 from test_project_repository import project_config as _project_config
 
 from memorymaster.profile import project_runtime
+from memorymaster.profile.project_brief import BriefInputs, Entry, render_brief_cut
+from memorymaster.profile.project_brief import BRIEF_MAX_BYTES
 from memorymaster.profile.project_projection import build_project_projection, publish_project_projection
 from memorymaster.recall import delivery
 from memorymaster.surfaces import agy_hooks, hook_recall
@@ -119,3 +122,59 @@ def test_a_maximum_size_brief_fits_the_codex_cap_with_its_envelope() -> None:
     brief = chr(10).join(f"- {chr(120) * 78} [mm-{n}]" for n in range(20))[:1600]
     context = project_runtime.compose_session_context(brief)
     assert len(brief.encode()) == 1600 and len(context.encode()) <= 1800
+
+
+# --- review fixes: constraints in the brief, OpenCode brief isolation -------------------------------------
+
+
+@pytest.mark.parametrize("cli", accept.CLIS)
+def test_pinned_constraints_ride_in_the_brief_before_decisions(cli, published) -> None:
+    claim(published, 5, "Never write to the live database", claim_type="constraint", pinned=1)
+    assert publish_project_projection(published, build_project_projection(published))
+    text = _emitted(cli, published)
+    assert text.index("CONSTRAINTS") < text.index("DECISIONS")
+    assert "- Never write to the live database [mm-5]" in text
+    if cli == "codex":
+        assert len(text.encode()) <= 1800 and "[... truncated]" not in text
+
+
+def test_a_pinned_constraint_survives_the_byte_cap_that_cuts_decisions_and_failures() -> None:
+    entries = [Entry(datetime(2026, 11, n, tzinfo=timezone.utc), f"item {n} " + "y" * 105, f"mm-{n}") for n in range(1, 4)]
+    cards = tuple({"id": f"T-{n}", "state": "running", "title": "t" * 60, "next_action": "n" * 60, "blocker": "b" * 50,
+                   "updated_at": "2026-11-08T00:00:00Z"} for n in range(1, 4))
+    inputs = BriefInputs(project="demo", as_of=datetime(2026, 11, 9, tzinfo=timezone.utc), cards=cards,
+                         next_item=("z" * 110, 7), roadmap_missing=False, decisions=tuple(entries),
+                         failures=tuple(entries), constraints=(Entry(None, "Never write the live database", "mm-9"),))
+    text, cut = render_brief_cut(inputs)
+    assert cut and len(text.encode()) <= BRIEF_MAX_BYTES
+    assert "- Never write the live database [mm-9]" in text and text.index("CONSTRAINTS") < text.index("DECISIONS")
+    assert text.count("[mm-") < 7  # decisions/failures lost lines, the constraint did not
+
+
+def _opencode_out(published, monkeypatch, capsys, **payload) -> str:
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
+        "prompt": "what did we decide about the cache layer design", "cwd": str(published.project_root), **payload})))
+    monkeypatch.setattr(hook_recall, "hook_recall", lambda *args, **kwargs: ("- [mm-9] recalled fact", "local"))
+    assert hook_recall.main(["--cli", "opencode"]) == 0
+    return capsys.readouterr().out
+
+
+def test_a_failing_brief_never_removes_the_prompts_recall(published, monkeypatch, capsys) -> None:
+    def boom(data):
+        raise RuntimeError("brief broke")
+
+    monkeypatch.setattr(project_runtime, "session_start_context", boom)
+    out = _opencode_out(published, monkeypatch, capsys, session_id="oc-1")
+    assert "mm-9" in out and "Brief" not in out
+
+
+def test_a_lane_with_the_hook_disabled_gets_no_brief(published, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(hook_recall.hook_policy, "disabled_for", lambda cwd: True)
+    assert "Brief demo" not in _opencode_out(published, monkeypatch, capsys, session_id="oc-1")
+    assert delivery.brief_pending("opencode:oc-1")  # nothing was delivered, so nothing is marked
+
+
+def test_an_opencode_session_without_an_id_gets_no_brief_and_no_shared_marker(published, monkeypatch, capsys, tmp_path) -> None:
+    out = _opencode_out(published, monkeypatch, capsys)  # no session_id at all
+    assert "mm-9" in out and "Brief demo" not in out
+    assert not list((tmp_path / "recall-state").glob("*.brief"))

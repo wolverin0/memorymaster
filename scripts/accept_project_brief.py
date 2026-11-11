@@ -30,7 +30,7 @@ if str(REPO_ROOT) not in sys.path:
 
 CLIS = ("claude", "codex", "agy", "opencode")
 CODEX_TEMPLATE = REPO_ROOT / "memorymaster" / "config_templates" / "hooks" / "memorymaster-codex-recall.py"
-_TITLES = ("RUNNING", "NEXT", "DECISIONS", "FAILURES")
+_TITLES = ("RUNNING", "NEXT", "CONSTRAINTS", "DECISIONS", "FAILURES")
 _CARD = re.compile(r"^- [A-Za-z]+-\d+ \w+:")
 _ROADMAP = re.compile(r"^- .*\[ROADMAP\.md(#L\d+)?\]$")
 _SOURCED = re.compile(r"\[[^\]\s]+\]$")

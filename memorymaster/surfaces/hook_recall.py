@@ -15,6 +15,7 @@ from memorymaster.core.text_safety import sanitize_text
 from memorymaster.recall.delivery import (
     brief_pending, confirm_turn, defer_payload, is_automated, mark_brief_delivered, recall_block,
 )
+from memorymaster.recall import hook_policy
 from memorymaster.recall.hook_policy import is_trivial_prompt
 from memorymaster.recall.machine_traffic import machine_skip
 from memorymaster.recall.recall_format import active_task_text, apply_format, format_mode
@@ -23,12 +24,17 @@ from memorymaster.recall.remote import hook_recall
 
 def session_brief(cwd: str, session_id: str) -> str:
     """The project brief, once per session id: OpenCode has no SessionStart event, so its first prompt carries it.
-    ``""`` while projections are off, when nothing is published, or after the first delivery."""
-    if not brief_pending(session_id):
-        return ""
-    from memorymaster.profile.project_runtime import session_start_context
+    ``""`` while projections are off, when nothing is published, after the first delivery, for a session with no
+    id (no marker to key on), where the hook is switched off, and on any failure: the brief never costs the
+    prompt its recall."""
+    try:
+        if not brief_pending(session_id) or hook_policy.disabled_for(cwd):
+            return ""
+        from memorymaster.profile.project_runtime import session_start_context
 
-    return session_start_context({"cwd": cwd, "session_id": session_id}) or ""
+        return session_start_context({"cwd": cwd, "session_id": session_id}) or ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -49,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         data = {"prompt": prompt, "cwd": cwd,
                 "session_id": f"{args.cli}:{data.get('session_id') or ''}"}
         db = os.environ.get("MEMORYMASTER_DEFAULT_DB") or str(Path(__file__).resolve().parents[2] / "memorymaster.db")
-        brief = session_brief(cwd, data["session_id"])
+        brief = session_brief(cwd, data["session_id"] if data.get("session_id") != f"{args.cli}:" else "")
         trivial = is_trivial_prompt(prompt)
         if trivial and not brief:
             return 0
