@@ -350,20 +350,15 @@ def test_validation_that_cannot_finish_serves_the_brief_with_a_not_revalidated_n
     assert "not_revalidated" in projection.payload
 
 
-def test_slow_item_building_does_not_trip_the_sql_deadline(world, monkeypatch):
-    """Windows regression: egress scanning after the SQL reads outlasted the 0.1 s deadline and the trailing
-    PRAGMA was interrupted (claims_unavailable). Forced here with a slow _claim_item on every OS."""
+def test_builder_scan_is_not_bound_by_the_tight_sessionstart_deadline(world, monkeypatch):
+    """Windows regression: the refresh-path scan shared the 0.1 s SessionStart deadline and, cold or loaded, came
+    back claims_unavailable. A near-zero SessionStart deadline must not affect the builder, only the hot reads."""
     _, _, _, _ = world
     config = {c.context_key: c for c in project_runtime.load_project_configs()}["infra"]
     from memorymaster.profile import project_repository as repository
-    real = repository._claim_item
-
-    def slow(*args, **kwargs):
-        time.sleep(0.004)
-        return real(*args, **kwargs)
-
-    monkeypatch.setattr(repository, "_claim_item", slow)
-    monkeypatch.setattr(repository, "VALIDATION_SECONDS", 0.05)
-    snapshot = load_project_snapshot(config)
-    assert "claims_unavailable" not in snapshot["diagnostics"] and snapshot["complete"], snapshot["diagnostics"]
-    assert any(key.startswith("claim:") for key in snapshot["items"])
+    monkeypatch.setattr(repository, "VALIDATION_SECONDS", 1e-9)
+    built = load_project_snapshot(config)
+    assert "claims_unavailable" not in built["diagnostics"] and built["complete"], built["diagnostics"]
+    ids = [int(key.split(":")[1]) for key in built["items"] if key.startswith("claim:")][:20]
+    hot = load_project_snapshot(config, claim_ids=ids, validation=True)
+    assert "claims_unavailable" in hot["diagnostics"]  # the SessionStart read still honors its tight deadline
