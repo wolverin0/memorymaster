@@ -260,7 +260,7 @@ def test_applied_and_complete_rows_are_not_reextracted_or_reapplied(tmp_path):
     tail = " " + ES
     long_text = "palabra " * ((15_995 - len(tail)) // 8) + "x" * ((15_995 - len(tail)) % 8) + tail
     assert len(long_text) == 15_995
-    row_id = _raw_row(ledger, "s-long", [long_text, "listo"])
+    row_id = _raw_row(ledger, "s-long", [long_text, "Blue interfaces will be treated as your preference."])
     applied_id = _raw_row(ledger, "s-applied", TEXTS, cursor_end=300)
     ledger.set_extraction(applied_id, [], "run-1")
     ledger.mark_applied(applied_id, "run-1")
