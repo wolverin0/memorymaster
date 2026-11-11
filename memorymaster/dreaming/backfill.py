@@ -673,7 +673,7 @@ class BackfillRunner:
         if not getattr(service.store, "read_only", False):
             raise ValueError("reference service must be read-only")
         worker = self._worker(service)
-        from memorymaster.dreaming.source_review import bind_source
+        from memorymaster.dreaming.source_review import bind_source, sanitized_messages
 
         captures = self._captures(rows)
         groups: dict[str, list] = {}
@@ -685,10 +685,12 @@ class BackfillRunner:
         else:
             guards_changed = rows[0]["metadata"].pop("consolidate_guards", None) is not None
             for capture in captures:
+                safe_messages = sanitized_messages(capture) if capture.get("extraction") else None  # T-2123
                 for raw in capture.get("extraction") or []:
                     candidate = DreamCandidate(**raw)
                     scope = "personal" if candidate.scope_class == "personal" else capture["scope"]
-                    groups.setdefault(scope, []).append((capture, bind_source(candidate, capture)))
+                    groups.setdefault(scope, []).append(
+                        (capture, bind_source(candidate, capture, safe_messages=safe_messages)))
                 decisions[capture["id"]] = []
         snapshots = {scope: [item for item in worker._current_claims(scope, [c for _, c in pairs]) if item["id"] not in own_ids]
                      for scope, pairs in groups.items()}
