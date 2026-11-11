@@ -345,13 +345,39 @@ await context(second);
     starts = [row for row in rows if "--session-start" in row["argv"]]
     assert len(starts) == 1 and starts[0]["argv"][0].endswith("hook_recall.py")
     assert starts[0]["payload"] == {"cwd": "/fixture/project", "session_id": "ses_1"}
+    receipts = [row["argv"][1:] for row in rows if row["argv"][0].endswith("hook_events.py") and "SessionStart" in row["argv"]]
+    assert receipts == [["--cli", "opencode", "--event", "SessionStart", "--count", "1"]]  # after the append, once
 
 
-def test_a_silent_brief_call_leaves_the_prompt_untouched(plugin):
-    output, _ = plugin(1, V1_INIT + """
+@pytest.mark.parametrize("flags", [{}, {"MEMORYMASTER_PROJECT_PROJECTION_ENABLED": "1"},
+                                   {"MEMORYMASTER_PROJECT_PROJECTION_SESSION_START": "1"},
+                                   {"MEMORYMASTER_PROJECT_PROJECTION_ENABLED": "0",
+                                    "MEMORYMASTER_PROJECT_PROJECTION_SESSION_START": "1"}])
+def test_flags_off_never_spawn_the_brief_process(plugin, monkeypatch, flags):
+    monkeypatch.setenv("TEST_BRIEF", BRIEF.replace("\n", "|"))
+    for name in ("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "MEMORYMASTER_PROJECT_PROJECTION_SESSION_START"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in flags.items():
+        monkeypatch.setenv(name, value)
+    output, rows = plugin(1, V1_INIT + """
 await prompt("msg_1", "Why did we choose SQLite?");
 const system = [];
 await context(system);
 console.log(JSON.stringify(system));
 """)
     assert output == ["[MemoryMaster recall]\n- [mm-42] Why did we choose SQLite?"]
+    assert not [row for row in rows if "--session-start" in row["argv"]]
+
+
+def test_a_silent_brief_call_leaves_the_prompt_untouched(plugin, monkeypatch):
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "1")
+    monkeypatch.setenv("MEMORYMASTER_PROJECT_PROJECTION_SESSION_START", "1")
+    output, rows = plugin(1, V1_INIT + """
+await prompt("msg_1", "Why did we choose SQLite?");
+const system = [];
+await context(system);
+console.log(JSON.stringify(system));
+""")
+    assert output == ["[MemoryMaster recall]\n- [mm-42] Why did we choose SQLite?"]
+    assert len([row for row in rows if "--session-start" in row["argv"]]) == 1
+    assert not [row for row in rows if "SessionStart" in row["argv"] and row["argv"][0].endswith("hook_events.py")]

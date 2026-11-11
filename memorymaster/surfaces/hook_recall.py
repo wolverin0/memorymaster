@@ -25,8 +25,6 @@ BRIEF_PREFIX = "[MemoryMaster project brief]\n"
 def session_brief(data: dict, cli: str) -> str:
     """The project brief for a session's first prompt ("" when the flags are off or nothing is published)."""
     from memorymaster.recall.machine_traffic import filter_enabled, internal_run
-    from memorymaster.surfaces.hook_events import append_hook_event
-
     cwd, session = data.get("cwd"), data.get("session_id")
     if not isinstance(cwd, str) or not cwd or not isinstance(session, str) or not session:
         return ""
@@ -37,7 +35,6 @@ def session_brief(data: dict, cli: str) -> str:
     context = session_start_context({"cwd": cwd, "session_id": f"{cli}:{session}"})
     if not context or not context.strip():
         return ""
-    append_hook_event(cli, "SessionStart", 1)
     return BRIEF_PREFIX + fit_brief(sanitize_text(context))
 
 

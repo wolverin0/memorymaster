@@ -5,6 +5,9 @@ import { spawn } from "node:child_process";
 const python = __MEMORYMASTER_PYTHON_JSON__;
 const projectRoot = __MEMORYMASTER_ROOT_JSON__;
 const prefix = "[MemoryMaster recall]\n";
+// The project-brief consumer switches, as memorymaster.profile.project_runtime.active() reads them.
+const briefFlags = ["MEMORYMASTER_PROJECT_PROJECTION_ENABLED", "MEMORYMASTER_PROJECT_PROJECTION_SESSION_START"];
+const briefOn = () => briefFlags.every((n) => ["1", "true", "yes", "on"].includes((process.env[n] ?? "").trim().toLowerCase()));
 const briefPrefix = "[MemoryMaster project brief]\n";
 
 function command(module, payload, extra = [], timeout = 2800) {
@@ -78,17 +81,20 @@ export function createAdapter(cwd) {
     state.pending ??= command("memorymaster.surfaces.hook_recall", {
       prompt: state.prompt, cwd, session_id: sessionID,
     });
-    if (!briefs.has(sessionID)) {
+    if (briefOn() && !briefs.has(sessionID)) {
       if (briefs.size >= 1000) briefs.delete(briefs.keys().next().value);
       briefs.set(sessionID, { id: state.id, pending: command("memorymaster.surfaces.hook_recall", {
         cwd, session_id: sessionID,
       }, ["--session-start"]) });
     }
     const brief = briefs.get(sessionID);
-    const [block, briefBlock] = await Promise.all([state.pending, brief.id === state.id ? brief.pending : ""]);
+    const [block, briefBlock] = await Promise.all([state.pending, brief?.id === state.id ? brief.pending : ""]);
     if (signal?.aborted) return;
-    // Python records the SessionStart receipt; a failed or silent call yields "" and the prompt proceeds untouched.
-    if (briefBlock.startsWith(briefPrefix)) inject(system, structured, briefBlock, briefPrefix);
+    // A failed or silent call yields "" and the prompt proceeds untouched; the receipt follows the actual append.
+    if (briefBlock.startsWith(briefPrefix)) {
+      inject(system, structured, briefBlock, briefPrefix);
+      void command("memorymaster.surfaces.hook_events", {}, ["--event", "SessionStart", "--count", "1"]);
+    }
     if (!block.startsWith(prefix)) return;
     inject(system, structured, block, prefix);
     // Receipt only after the actual prompt append; never include recalled content.
