@@ -294,9 +294,13 @@ def test_a_broken_scan_is_not_reported_as_nothing_pending(tmp_path: Path) -> Non
                 raise RuntimeError("events table unavailable")
             return self._real.list_events(**kwargs)
 
+        def __getattr__(self, name):  # the replacement's state is read from the same store
+            return getattr(self._real, name)
+
     svc = _svc(tmp_path)
     outdated = _ingest(svc, "a claim with a genuinely pending supersession")
-    _ingest(svc, "its correction", supersedes_claim_id=outdated.id)
+    correction = _ingest(svc, "its correction", supersedes_claim_id=outdated.id)
+    svc.store.apply_status_transition(correction, to_status="confirmed", reason="fixture", event_type="validator")
 
     flaky = _Flaky(svc.store)
     assert pending_supersession_ids(flaky) == frozenset()

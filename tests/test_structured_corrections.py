@@ -329,14 +329,14 @@ def test_mcp_ingest_claim_accepts_supersedes(mcp_db) -> None:
 
     db, workspace = mcp_db
     base = {"db": db, "workspace": workspace, "scope": SCOPE, "source_agent": "pytest-t2276"}
-    first = ingest_claim(text="The build runs on runner-a", **base)
+    first = ingest_claim(text="The nightly build of the web frontend runs on the alpha runner pool", **base)
     assert first["ok"], first
     hid = first["claim"]["human_id"]
     # another agent's correction is cross-identity: it stays queued for the operator (a same-agent one is applied at
     # once by the fast path, see test_mcp_ingest_claim_is_deliverable_at_once)
-    second = ingest_claim(text="The build runs on runner-b", supersedes=[hid, first["claim"]["id"]],
-                          **{**base, "source_agent": "pytest-t2276-other"})
-    assert second["ok"], second
+    second = ingest_claim(text="Correction about continuous integration: the web frontend nightly was moved to the bravo pool",
+                          supersedes=[hid, first["claim"]["id"]], **{**base, "source_agent": "pytest-t2276-other"})
+    assert second["ok"] and second["claim"]["status"] == "confirmed", second  # deliverable, so it holds the slot
     assert "supersession queued for steward review" in second["warnings"]
 
     again = ingest_claim(text="The build runs on runner-d", supersedes=[hid], **base)
@@ -490,9 +490,9 @@ def test_a_correction_that_never_confirms_does_not_block_the_next_one(svc) -> No
     assert report["filed"] == [old.id], "an undeliverable replacement must not hold the target's only proposal slot"
     assert svc.validate_now(good.id)["superseded"] == [old.id]
     assert _get(svc, old.id).status == "superseded" and _get(svc, old.id).replaced_by_claim_id == good.id
-    summary = drain_proposals(svc, apply=True)  # the first proposal is now moot: its target is retired
-    assert summary["rejected_moot"] == 1 and summary["failed"] == 0, summary
-    assert drain_proposals(svc, apply=True)["scanned"] == 0
+    summary = drain_proposals(svc, apply=True)  # the first proposal is moot: a retired target leaves the queue
+    assert summary["approved"] == 0 and summary["failed"] == 0, summary
+    assert _get(svc, good.id).status == "confirmed" and _get(svc, stuck.id).status == "candidate"
 
 
 def test_the_drain_rejects_a_proposal_whose_replacement_is_retired(svc) -> None:

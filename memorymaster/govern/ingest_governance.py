@@ -237,13 +237,14 @@ def _is_proposal(event: Any) -> bool:
     return str(getattr(event, "details", "") or "") == PROPOSAL_DETAILS
 
 
-def has_live_proposal(store: Any, target_id: int) -> bool:
+def has_live_proposal(store: Any, target_id: int, replacement_id: int | None = None) -> bool:
     """An unresolved supersession proposal exists for the target (resolved or rejected ones do not count).
 
     Mirrors ``recall.retrieval.pending_supersession_ids``: an approval that failed to apply does not resolve, and
-    a proposal whose replacement is not ``confirmed`` does not hold the slot. Such a replacement may never become
-    deliverable (too short for the validator, archived), and it used to block the next, honest correction of the
-    same target for good, leaving old and new both served. The drain rejects the loser as moot.
+    a proposal whose replacement is not ``confirmed`` does not hold the slot against ANOTHER replacement. Such a
+    replacement may never become deliverable (too short for the validator, archived), and it used to block the
+    next, honest correction of the same target for good, leaving old and new both served. A proposal already filed
+    by ``replacement_id`` itself always counts (declared + named in prose is one proposal).
     """
     resolved: set[int] = set()
     for event in store.list_events(claim_id=target_id, event_type="audit", limit=200):
@@ -265,10 +266,10 @@ def has_live_proposal(store: Any, target_id: int) -> bool:
             payload = json.loads(getattr(event, "payload_json", None) or "{}")
         except (ValueError, TypeError):
             payload = {}
-        replacement_id = payload.get("replaced_by_claim_id") if isinstance(payload, dict) else None
-        if not isinstance(replacement_id, int):
+        filed_by = payload.get("replaced_by_claim_id") if isinstance(payload, dict) else None
+        if not isinstance(filed_by, int) or filed_by == replacement_id:
             return True
-        replacement = store.get_claim(replacement_id, include_citations=False)
+        replacement = store.get_claim(filed_by, include_citations=False)
         if replacement is not None and replacement.status == "confirmed":
             return True
     return False
@@ -442,7 +443,7 @@ def queue_supersession_proposal(
     # filed one second apart against claim 123737 latched into an unrecoverable state). A RESOLVED or rejected
     # proposal must not block a new one: a junk proposal that was rejected would otherwise stop the real
     # correction forever.
-    if has_live_proposal(store, target.id):
+    if has_live_proposal(store, target.id, replacement.id):
         return 0
     store.record_event(
         claim_id=target.id,
