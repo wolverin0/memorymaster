@@ -372,26 +372,59 @@ def test_strict_resolver_honours_a_canonical_slug_alias_like_the_relaxed_one(tmp
         assert resolve_workspace_scope(cwd, strict=strict) == "project:logical", strict
 
 
-def test_a_directory_of_thousands_of_subfolders_is_not_walked_whole(tmp_path, monkeypatch):
-    """T-2277: the collection-root check read every entry of a ~20k-folder cwd and stalled an indexing run."""
-    for i in range(3000):
-        (tmp_path / "bigdir" / f"d{i:04d}").mkdir(parents=True)
-    seen = []
-    real = Path.iterdir
+class _SortedScan:
+    """``os.scandir`` stand-in: name order (the real order is arbitrary) and a count of the entries consumed."""
 
-    def counting(self):
-        for child in real(self):
-            seen.append(child)
-            yield child
+    def __init__(self, real, counter):
+        self._real, self._counter = real, counter
 
-    monkeypatch.setattr(Path, "iterdir", counting)
-    assert scope_from_cwd(tmp_path / "bigdir") == "project:bigdir"
-    assert len(seen) <= 1025
+    def __call__(self, path):
+        entries = sorted(self._real(path), key=lambda e: e.name)
+        counter = self._counter
+
+        class Scan:
+            def __enter__(self):
+                return self.items()
+
+            def __exit__(self, *exc):
+                return False
+
+            def items(self):
+                for entry in entries:
+                    counter.append(entry.name)
+                    yield entry
+
+        return Scan()
 
 
-def test_a_collection_root_of_checkouts_is_still_global_and_stops_at_the_second(tmp_path, monkeypatch):
+def _many_folders(base: Path, count: int, checkouts: tuple[int, ...]) -> None:
+    for i in range(count):
+        (base / f"d{i:05d}" / (".git" if i in checkouts else "x")).mkdir(parents=True)
+
+
+def test_a_collection_root_with_the_second_checkout_far_down_is_still_global(tmp_path, monkeypatch):
+    """T-2277: a 1,024-entry bound flipped such a directory to project:<folder>; the bound must not change a real answer."""
+    _many_folders(tmp_path / "coll", 5000, checkouts=(10, 3500))
+    consumed: list[str] = []
+    monkeypatch.setattr(scope_utils.os, "scandir", _SortedScan(os.scandir, consumed))
+    assert scope_from_cwd(tmp_path / "coll") == "global"
+    assert len(consumed) == 3501  # lazy: it stopped at the second checkout
+
+
+def test_a_huge_directory_without_checkouts_is_scanned_lazily_and_fast(tmp_path, monkeypatch):
+    import time
+
+    base = tmp_path / "huge"
+    base.mkdir()
+    for i in range(20000):
+        (base / f"d{i:05d}").mkdir()
+    monkeypatch.setattr(Path, "iterdir", lambda self: (_ for _ in ()).throw(AssertionError("materialised listing")))
+    started = time.perf_counter()
+    assert scope_from_cwd(base) == "project:huge"
+    assert time.perf_counter() - started < 2.0
+
+
+def test_a_collection_root_of_checkouts_is_still_global(tmp_path):
     for name in ("a", "b", "c"):
         (tmp_path / "coll" / name / ".git").mkdir(parents=True)
-    for i in range(500):
-        (tmp_path / "coll" / f"z{i}").mkdir()
     assert scope_from_cwd(tmp_path / "coll") == "global"
