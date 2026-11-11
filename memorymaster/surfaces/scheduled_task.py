@@ -54,6 +54,7 @@ BEAT_OLDEST_RESERVE = 2  # D-11: 4 of 6 slots go to the newest captures, 2 drain
 BEAT_RUN_BUDGET_SECONDS = 14 * 60
 DREAM_RUN_BUDGET_SECONDS = 4 * 3600
 DREAM_OLDEST_RESERVE = 10  # of the 20 sessions of a Dreaming run
+DREAM_SLOW_SLOTS = 500  # slow-lane captures beyond those 20; the run budget is what bounds them
 
 
 def _beat_limit(env: str, default: int) -> int:
@@ -167,6 +168,7 @@ def _run_dream(args: argparse.Namespace) -> int:
         run_budget_seconds=max(1.0, DREAM_RUN_BUDGET_SECONDS - (time.monotonic() - started)),
         oldest_reserve=DREAM_OLDEST_RESERVE,
         lane=LANE_DREAM,
+        slow_slots=DREAM_SLOW_SLOTS,
     )
     dream = run_dream(args.db, args.workspace, apply_candidates=bool(args.apply_candidates), config=config)
     dream_result, dream_code = dream_outcome(dream)

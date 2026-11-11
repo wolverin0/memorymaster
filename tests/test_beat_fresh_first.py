@@ -13,7 +13,9 @@ from memorymaster.dreaming.ledger import (
     LANE_DREAM,
     SLOW_BACKOFF_BASE_HOURS,
     SLOW_CAPTURE_BYTES,
+    FIRST_FAILURE_WAIT_MINUTES,
     SESSION_PREFIX,
+    SLOW_ERROR_COUNT,
     UNCHARGED_RETRY_WAIT_MINUTES,
     DreamLedger,
 )
@@ -122,7 +124,7 @@ def test_large_and_charged_captures_never_take_a_beat_slot(tmp_path: Path) -> No
     ledger = DreamLedger(tmp_path / "capture.db")
     small, large, charged = (H["_capture"](ledger, session_hash=f"s{n}") for n in range(3))
     _set(ledger, large, byte_count=SLOW_CAPTURE_BYTES)
-    _set(ledger, charged, error_count=1)
+    _set(ledger, charged, error_count=SLOW_ERROR_COUNT)
 
     assert _picked(ledger, 10, 2, lane=LANE_BEAT) == [small]
     assert sorted(_picked(ledger, 10, 2)) == sorted([small, large, charged])  # no lane rule: unchanged
@@ -164,10 +166,44 @@ def test_the_dream_run_serves_due_slow_captures_before_the_ordinary_quota(tmp_pa
     ledger = DreamLedger(tmp_path / "capture.db")
     old, new = _queue(ledger, backlog=0, fresh=5)
     slow = new[0]  # the OLDEST activity of the five, but slow: nothing else will serve it
-    _set(ledger, slow, error_count=1, updated_at=(NOW - timedelta(days=3)).isoformat())
+    _set(ledger, slow, error_count=SLOW_ERROR_COUNT, updated_at=(NOW - timedelta(days=3)).isoformat())
 
     assert _picked(ledger, 2, 1, lane=LANE_DREAM)[0] == slow
     assert slow not in _picked(ledger, 2, 1, lane=LANE_BEAT)
+
+
+def test_the_first_counted_failure_is_retried_by_the_beat_after_the_wait_the_second_goes_slow(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture = H["_capture"](ledger, session_hash="s")
+    failed_at = datetime(2026, 7, 21, 13, tzinfo=timezone.utc)
+
+    def lanes(at: datetime) -> tuple[bool, bool]:
+        pick = lambda lane: capture in [  # noqa: E731
+            int(r["id"]) for r in ledger.eligible(idle_minutes=0, max_sessions=5, now=at, oldest_reserve=2, lane=lane)]
+        return pick(LANE_BEAT), pick(LANE_DREAM)
+
+    _set(ledger, capture, state="retryable", error_count=1, updated_at=failed_at.isoformat())
+    assert lanes(failed_at + timedelta(minutes=FIRST_FAILURE_WAIT_MINUTES - 1)) == (False, False)
+    assert lanes(failed_at + timedelta(minutes=FIRST_FAILURE_WAIT_MINUTES + 1)) == (True, True)  # the beat retries it
+
+    _set(ledger, capture, error_count=2)  # the second counted failure: slow lane, 10 h backoff
+    assert lanes(failed_at + timedelta(hours=9)) == (False, False)
+    assert lanes(failed_at + timedelta(hours=11)) == (False, True)  # only the 6-hourly run takes it
+
+
+def test_the_dream_run_takes_due_slow_captures_beyond_its_ordinary_slots(tmp_path: Path) -> None:
+    ledger = DreamLedger(tmp_path / "capture.db")
+    slow = [H["_capture"](ledger, session_hash=f"slow{n}") for n in range(30)]
+    fast = [H["_capture"](ledger, session_hash=f"fast{n}") for n in range(30)]
+    for capture_id in slow:
+        _set(ledger, capture_id, error_count=SLOW_ERROR_COUNT, updated_at=(NOW - timedelta(days=3)).isoformat())
+
+    rows = ledger.eligible(idle_minutes=0, max_sessions=20, now=NOW, oldest_reserve=10, lane=LANE_DREAM, slow_slots=500)
+    picked = [int(r["id"]) for r in rows]
+
+    assert set(slow) <= set(picked) and len(picked) == 30 + 20  # every due slow one, plus the unchanged ordinary quota
+    assert len([i for i in picked if i in fast]) == 20
+    assert len(ledger.eligible(idle_minutes=0, max_sessions=20, now=NOW, oldest_reserve=10, lane=LANE_DREAM)) == 20
 
 
 def test_the_backoff_doubles_with_every_failure_and_stops_at_the_cap(tmp_path: Path) -> None:
@@ -215,7 +251,7 @@ def test_the_prefix_counts_against_the_slots_and_never_skips_a_predecessor(tmp_p
 def test_a_gap_in_the_session_stops_the_prefix(tmp_path: Path) -> None:
     ledger = DreamLedger(tmp_path / "capture.db")
     chain = [_next_capture(ledger, "same", n) for n in range(3)]
-    _set(ledger, chain[1], error_count=1)  # charged: slow lane, not for the beat
+    _set(ledger, chain[1], error_count=SLOW_ERROR_COUNT)  # charged twice: slow lane, not for the beat
 
     assert _picked(ledger, 10, 2, lane=LANE_BEAT) == chain[:1]  # chain[2] must not overtake chain[1]
     _set(ledger, chain[0], state="applied")

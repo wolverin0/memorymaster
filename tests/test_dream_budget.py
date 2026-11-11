@@ -18,6 +18,7 @@ from memorymaster.core.structured_log import _FIELDS_ATTR
 from memorymaster.dreaming import worker as worker_module
 from memorymaster.dreaming.ledger import LANE_BEAT, LANE_DREAM, DreamLedger
 from memorymaster.dreaming.worker import DreamConfig, DreamWorker
+from memorymaster.knowledge.graph_observation_engine import ObservationBudgetDeferred
 from memorymaster.surfaces import scheduled_task
 
 H = runpy.run_path("tests/test_dreaming_worker.py")
@@ -397,7 +398,7 @@ def test_an_observation_call_is_skipped_when_the_budget_cannot_hold_it_and_guard
     clock = Clock()
     worker, _ = _worker(tmp_path, clock, TimedExtractor(clock), TimedConsolidator(clock), run_budget_seconds=100)
     worker._deadline = clock() + 100
-    with pytest.raises(worker_module.DreamBudgetDeferred):
+    with pytest.raises(ObservationBudgetDeferred):
         worker._observation_llm("system", "prompt")
     assert worker._summary["graph_observation_calls_skipped"] == 1
 
@@ -411,7 +412,8 @@ def test_an_observation_call_is_skipped_when_the_budget_cannot_hold_it_and_guard
 
 # --- the beat drains a backlog even when a third of its extractions fail --------------------------------------
 
-def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool, failure_rate: float = 0.35) -> tuple[int, int]:
+def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool = False, failure_rate: float = 0.35,
+              kind: str = "transient", dream_runs: bool = False, exile_charged: bool = False) -> tuple[int, int]:
     """48 simulated hours of 15-minute beat ticks (2 arrivals, 6 slots each); returns (initial, final) unfinished."""
     import random
 
@@ -430,6 +432,8 @@ def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool, failure_rat
             return sql + (" AND c.state != 'retryable'" if lane == LANE_BEAT else ""), params
 
         monkeypatch.setattr(ledger_module, "_lane_clause", exiling)
+    if exile_charged:  # the policy of c945f6da: one counted failure already exiles a capture
+        monkeypatch.setattr(ledger_module, "_SLOW", "(c.byte_count >= :slow_bytes OR c.error_count > 0)")
     rng = random.Random(11)
 
     class Flaky:
@@ -437,6 +441,8 @@ def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool, failure_rat
 
         def extract(self, messages, *, scope, capture_hash):
             if rng.random() < failure_rate:
+                if kind == "timeout":
+                    raise _wrapped_timeout()
                 raise ProviderCallError("provider request failed with HTTP 503", http_status=503)
             tag = capture_hash.replace(":", "-")
             return ExtractionResult((
@@ -467,12 +473,16 @@ def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool, failure_rat
         with ledger._connect() as conn:
             return conn.execute("SELECT COUNT(*) FROM dream_captures WHERE state IN ('captured','retryable','extracted')").fetchone()[0]
 
+    dream_cfg = replace(cfg, max_sessions=20, oldest_reserve=10, lane=LANE_DREAM, slow_slots=500, max_consolidate_captures_per_run=0)
+    dreamer = DreamWorker(ledger, H["_service"](tmp_path), Flaky(), H["_Consolidator"](), config=dream_cfg, now=lambda: sim["now"])
     initial = unfinished()
-    for _ in range(96 * 2):
+    for tick in range(96 * 2):
         sim["now"] += timedelta(minutes=15)
         for _ in range(2):
             arrive(ledger, sim["now"] - timedelta(minutes=45))
         worker.run(apply_candidates=False)
+        if dream_runs and tick % 24 == 23:  # the 6-hourly run
+            dreamer.run(apply_candidates=False)
     return initial, unfinished()
 
 
@@ -510,3 +520,16 @@ def test_selection_stays_fast_on_a_ten_thousand_row_ledger(tmp_path: Path) -> No
     elapsed = time.monotonic() - started
     print(f"eligible on 10k rows: {elapsed:.3f}s")
     assert len(rows) == 6 and elapsed < 3.0
+
+
+def test_the_beat_drains_when_every_failure_is_counted(tmp_path: Path, monkeypatch) -> None:
+    initial, final = _simulate(tmp_path / "new", monkeypatch, kind="timeout", dream_runs=True)
+    assert final < initial
+
+
+def test_exiling_after_one_counted_failure_does_not_drain(tmp_path: Path, monkeypatch) -> None:
+    _, second = _simulate(tmp_path / "new", monkeypatch, kind="timeout", dream_runs=True)
+    monkeypatch.undo()
+    initial, first = _simulate(tmp_path / "old", monkeypatch, kind="timeout", dream_runs=True, exile_charged=True)
+    print(f"counted failures, 48 h at 35%: initial={initial} exile-after-2nd={second} exile-after-1st={first}")
+    assert first > second

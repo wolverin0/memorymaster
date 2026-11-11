@@ -11,6 +11,7 @@ import re
 import subprocess
 import threading
 import time
+from types import SimpleNamespace
 import unicodedata
 import uuid
 from collections import deque
@@ -257,6 +258,8 @@ class DreamConfig:
     oldest_reserve: int = 0
     # D-11: wall-clock seconds this run may take (0 = unbounded) and which ledger lane it draws from.
     run_budget_seconds: float = 0.0
+    # Extra slots for slow-lane captures whose backoff elapsed (the 6-hourly run); the run budget bounds them.
+    slow_slots: int = 0
     lane: str = LANE_ALL
     # TOPE DE GASTO, ordenado por el operador el 2026-08-24 (ruling MM3).
     # Los dos topes de arriba cuentan LLAMADAS, y por eso nunca acotaron el gasto:
@@ -492,7 +495,7 @@ class DreamWorker:
             fresh = self._extract(run_id, scope, limit, summary)
             self._consolidate(run_id, fresh, summary)
             if apply_candidates:
-                pending = self.ledger.consolidated(max_sessions=limit, scope=scope)
+                pending = self.ledger.consolidated(max_sessions=limit + self.config.slow_slots, scope=scope)
                 self._apply(run_id, pending, summary)
             if self.config.enable_graph_observations:
                 self._hold_lease()
@@ -560,14 +563,13 @@ class DreamWorker:
         No se fija proveedor a proposito: el default es el que sigue la migracion,
         asi que la proxima no vuelve a dejar este call site atras.
         """
-        from types import SimpleNamespace
-
         from memorymaster.core.llm_provider import call_llm
+        from memorymaster.knowledge.graph_observation_engine import ObservationBudgetDeferred
 
         bounded = SimpleNamespace(provider="default", model="", timeout=DEFAULT_CALL_TIMEOUT_SECONDS)
         if not self._fits(bounded):  # the engine retries the job from its ids in a later run
             self._summary["graph_observation_calls_skipped"] += 1
-            raise DreamBudgetDeferred("run budget cannot hold another observation call")
+            raise ObservationBudgetDeferred("run budget cannot hold another observation call")
         safe = export_stored(prompt)
         if safe is None:  # the existing no-verdict answer: the job completes, nothing is sent
             self.observations_withheld += 1
@@ -581,7 +583,7 @@ class DreamWorker:
     ) -> dict[str, int]:
         from memorymaster.knowledge.graph_observation_engine import (
             GraphObservationEngine,
-        )
+        )  # ObservationBudgetDeferred: see _observation_llm
         from memorymaster.knowledge.ontology import load_ontology
 
         engine = GraphObservationEngine(self.service.store, llm_call=self._observation_llm)
@@ -618,7 +620,9 @@ class DreamWorker:
             totals["discovery_no_supports"] += discovered.discovery_no_supports
             totals["discovery_no_components"] += discovered.discovery_no_components
             totals["failed"] += discovered.failed
-            if synthesize:
+            if synthesize and not self._fits(SimpleNamespace(timeout=DEFAULT_CALL_TIMEOUT_SECONDS)):
+                self._summary["graph_observation_calls_skipped"] += 1  # before leasing: no job is touched
+            elif synthesize:
                 synthesized = engine.process_synthesis(owner=owner, scope=target_scope)
                 totals["emitted"] += synthesized.emitted
                 totals["failed"] += synthesized.failed
@@ -627,7 +631,8 @@ class DreamWorker:
 
     def _extract(self, run_id: str, scope: str | None, limit: int, summary: dict[str, Any]) -> list[dict[str, Any]]:
         rows = self.ledger.eligible(idle_minutes=self.config.idle_minutes, max_sessions=limit, scope=scope, now=self.now(),
-                                    oldest_reserve=self.config.oldest_reserve, lane=self.config.lane)
+                                    oldest_reserve=self.config.oldest_reserve, lane=self.config.lane,
+                                    slow_slots=self.config.slow_slots)
         extracted: list[dict[str, Any]] = []
         held_back: set[tuple] = set()  # sessions with an unfinished capture in this run: later ones wait (order)
         for row in rows:

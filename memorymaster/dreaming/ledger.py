@@ -182,6 +182,7 @@ LANE_ALL, LANE_BEAT, LANE_DREAM = "all", "beat", "dream"
 # (4.6k waiting) the p99 is 278 KB, 7 captures are over 1 MiB and hold 17 MB of the 88 MB queued. After
 # max_capture_errors the existing quarantine applies. shortcut: byte count, not tokens.
 SLOW_CAPTURE_BYTES = 1024 * 1024
+SLOW_ERROR_COUNT = 2  # counted failures that exile a capture to the slow lane; the first one is retried by the beat
 # Retry wait after the Nth counted failure: 5 h doubling, at most 48 h (the Dreaming cadence is 6 h, so the first
 # retry lands on the next run). No failure counted yet = no wait.
 SLOW_BACKOFF_BASE_HOURS = 5
@@ -190,12 +191,13 @@ _BACKOFF_STEPS = 8
 # An uncounted failure (retryable, error_count 0: provider outage, unattributed timeout) stays in the beat but
 # waits this long after its last attempt. shortcut: fixed wait, no counter exists for uncounted failures.
 UNCHARGED_RETRY_WAIT_MINUTES = 30
+FIRST_FAILURE_WAIT_MINUTES = 120  # after ONE counted failure
 # Captures of one session a run may take together, in id order (extraction, consolidation and apply all go in
 # id order inside a run; a failed one holds back its later siblings: DreamWorker._extract / _apply).
 SESSION_PREFIX = 4
 _OPEN = ("((c.state IN ('captured','retryable') OR (c.state='extracted' AND c.resume_eligible=1)) "
          "AND c.turn_count >= 2)")
-_SLOW = "(c.byte_count >= :slow_bytes OR c.error_count > 0)"
+_SLOW = "(c.byte_count >= :slow_bytes OR c.error_count >= :slow_errors)"
 
 
 def _backoff_hours() -> list[float]:
@@ -204,11 +206,13 @@ def _backoff_hours() -> list[float]:
 
 def _lane_clause(lane: str, current: datetime) -> tuple[str, dict[str, Any]]:
     """SQL (leading AND) and named parameters of one lane's rule."""
-    params: dict[str, Any] = {"slow_bytes": SLOW_CAPTURE_BYTES}
+    params: dict[str, Any] = {"slow_bytes": SLOW_CAPTURE_BYTES, "slow_errors": SLOW_ERROR_COUNT}
     if lane not in (LANE_BEAT, LANE_DREAM):
         return "", params
     params["retry_cut"] = _iso(current - timedelta(minutes=UNCHARGED_RETRY_WAIT_MINUTES))
-    fast = f"(NOT {_SLOW} AND (c.state != 'retryable' OR COALESCE(c.updated_at, '') <= :retry_cut))"
+    params["first_cut"] = _iso(current - timedelta(minutes=FIRST_FAILURE_WAIT_MINUTES))
+    fast = (f"(NOT {_SLOW} AND ((c.error_count = 0 AND (c.state != 'retryable' OR COALESCE(c.updated_at, '') <= :retry_cut)) "
+            "OR (c.error_count = 1 AND COALESCE(c.updated_at, '') <= :first_cut)))")
     if lane == LANE_BEAT:
         return f" AND {fast}", params
     for n, hours in enumerate(_backoff_hours()):
@@ -366,7 +370,7 @@ class DreamLedger:
 
     def eligible(
         self, *, idle_minutes: int, max_sessions: int, scope: str | None = None, now: datetime | None = None,
-        oldest_reserve: int = 0, lane: str = LANE_ALL,
+        oldest_reserve: int = 0, lane: str = LANE_ALL, slow_slots: int = 0,
     ) -> list[dict[str, Any]]:
         """Captures a run may work on.
 
@@ -378,7 +382,8 @@ class DreamLedger:
         it in that prefix; they count against the slots.
 
         ``lane``: ``beat`` skips slow captures (large, or with a counted failure); ``dream`` takes them once their
-        backoff elapsed, before the ordinary quota; ``all`` applies no lane rule. An uncounted failure waits
+        backoff elapsed, before the ordinary quota and in up to ``max(max_sessions, slow_slots)`` slots of
+        their own (the ordinary quota is unchanged); ``all`` applies no lane rule. An uncounted failure waits
         ``UNCHARGED_RETRY_WAIT_MINUTES`` in both lanes.
         """
         current = now or _utc_now()
@@ -422,12 +427,13 @@ class DreamLedger:
 
         if lane == LANE_DREAM:  # slow captures whose backoff elapsed: nothing else will serve them
             for key, pos, row in (m for m in by_age if m[2]["slow"]):
-                take(key, pos, limit)
-        newest_cap = min(limit, len(taken) + limit - min(limit, oldest_reserve))
+                take(key, pos, max(limit, slow_slots))
+        base = len(taken)
+        newest_cap = base + limit - min(limit, oldest_reserve)
         for key, pos, row in reversed(by_age):
             take(key, pos, newest_cap)
         for key, pos, row in by_age:
-            take(key, pos, limit)
+            take(key, pos, base + limit)
         if not taken:
             return []
         with self._connect() as conn:
