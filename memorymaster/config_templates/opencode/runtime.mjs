@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 const python = __MEMORYMASTER_PYTHON_JSON__;
 const projectRoot = __MEMORYMASTER_ROOT_JSON__;
 const prefix = "[MemoryMaster recall]\n";
+const briefPrefix = "[MemoryMaster project brief]\n";
 
 function command(module, payload, extra = [], timeout = 2800) {
   return new Promise((resolve) => {
