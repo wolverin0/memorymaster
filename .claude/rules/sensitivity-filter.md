@@ -12,28 +12,26 @@ MemoryMaster ingests ambient data from LLM transcripts, dream bridge, and MCP ca
 - Email addresses of third parties (user's own email is OK if explicitly opted in)
 - Payment card data, SSN, national ID numbers
 
-## IP privadas: se ingieren a propósito, se redactan al exportar
+## IP privadas: dos escritores, dos políticas (a propósito)
 
-**No están en la lista de arriba y no es un olvido.** Una IP privada se guarda en
-ingest y se redacta recién al exportar a memoria externa. La decisión está en
-`core/security.py` con su motivo —una claim de infraestructura sin la IP es
-inútil, "el servidor está en algún lado" no sirve para nada— y está fijada por
-`tests/test_security_patterns.py::TestPrivateIPv4NotRedactedAtIngest`.
+- `redact_text` / `_redact` (fuentes crudas ADR-0006, evidencia, prefiltro de export) **no** redacta una IP
+  privada suelta: una claim de infraestructura sin la IP es inútil. Fijado por
+  `tests/test_security_patterns.py::TestPrivateIPv4NotRedactedAtIngest`.
+- `sanitize_claim_input` (todo escritor de claims) **sí** la redacta (`_CLAIM_ONLY_PATTERNS`, `private_ipv4`,
+  más rutas absolutas): la memoria de claims tiene un contrato más estricto. Fijado por
+  `tests/test_claim_intake_private_context.py` y `test_private_ip_policy_differs_by_writer_on_purpose`.
+- La IP + puerto en prosa se redacta en ambos (`private_ip_port`); `dream_bridge.py` y `profile/egress.py`
+  redactan al exportar, incluida la IP suelta.
 
-El control compensatorio existe y funciona: `dream_bridge.py` las redacta al
-sembrar hacia afuera, incluida la IP suelta en prosa, no sólo `IP:puerto`
-(verificado el 2026-08-20 contra los cuatro casos).
+Una versión anterior de esta regla decía "las IP privadas se ingieren" sin distinguir escritor y contradecía al
+código de claims. Si se cambia una política, el cambio va en `security.py`, en su test y aquí, juntos.
 
-**Por qué se aclara acá:** esta regla decía "nunca ingerir IP privadas" mientras
-el código deliberadamente lo hacía. Esa contradicción costó una investigación
-completa de un no-problema: 229 claims con IP privada se leyeron como fuga activa,
-llegando a "agujero abierto, prioridad máxima", antes de encontrar la decisión
-documentada. Una regla que el código contradice a propósito no protege nada —
-entrena a ignorar las reglas, o a redescubrir la misma decisión cada pocos meses.
-
-Si en algún momento se decide que las IP privadas tampoco deben ingerirse, el
-cambio va en `security.py` y en su test, y esta sección se borra. Lo que no puede
-volver a pasar es que el documento y el código digan cosas distintas.
+Formas que el filtro cubre además de las claves de proveedor: contraseña en prosa en español
+(`la contraseña ... es X`, `clave: X`; el valor debe tener letra y dígito/símbolo, así `clave primaria` pasa),
+`esquema://usuario:clave@host` de cualquier esquema (sólo se redacta la clave), AWS secret access key con
+contexto AWS, OTP/PIN con palabra clave, CUIT/CUIL con dígito verificador válido, rutas home con `/` o `\`.
+Fuera de alcance: secretos partidos por espacios o saltos de línea, o en hex puro. Una huella SSH
+`SHA256:<43 b64>` es pública y no se redacta.
 
 ## Where the filter applies
 
