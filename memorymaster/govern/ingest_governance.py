@@ -28,6 +28,7 @@ MAX_SUPERSEDES = 5  # per call; no caller needs more (checkpoint items carry the
 # bounds what a junk or compromised caller can queue; further ones are refused, nothing written.
 MAX_DECLARED_PER_AGENT_PER_DAY = 25
 INACTIVE_STATUSES = frozenset({"archived", "superseded"})
+MAX_LIVE_PROPOSALS_PER_TARGET = 3
 # Proposal ``source`` values. Text-inferred proposals are operator-only (govern.steward.OPERATOR_ONLY_SOURCES):
 # the curation drain must not apply a guess made from prose.
 SOURCE_DIRECT_INGEST = "direct-ingest"
@@ -237,10 +238,19 @@ def _is_proposal(event: Any) -> bool:
     return str(getattr(event, "details", "") or "") == PROPOSAL_DETAILS
 
 
-def has_live_proposal(store: Any, target_id: int) -> bool:
+def has_live_proposal(store: Any, target_id: int, replacement_id: int | None = None) -> bool:
     """An unresolved supersession proposal exists for the target (resolved or rejected ones do not count).
 
     Mirrors ``recall.retrieval.pending_supersession_ids``: an approval that failed to apply does not resolve.
+
+    One live proposal per target is the queue-flood bound, so a proposal holds the slot against ANOTHER
+    replacement unless its own replacement has already failed: it is retired, or the validator examined it and
+    left it a candidate (too short, held author). Such a replacement may never become deliverable, and it used to
+    block the next, honest correction of the same target for good, leaving old and new both served. A replacement
+    nobody has ruled on yet still holds the slot. A proposal already filed by ``replacement_id`` itself always
+    counts (declared + named in prose is one proposal). Failed replacements release the slot only up to
+    ``MAX_LIVE_PROPOSALS_PER_TARGET``: each one stays in the queue until someone resolves it, so without the bound
+    a caller whose corrections keep failing could stack proposals on one target without limit.
     """
     resolved: set[int] = set()
     for event in store.list_events(claim_id=target_id, event_type="audit", limit=200):
@@ -255,10 +265,27 @@ def has_live_proposal(store: Any, target_id: int) -> bool:
             continue
         if isinstance(payload.get("proposal_event_id"), int):
             resolved.add(payload["proposal_event_id"])
-    return any(
-        _is_proposal(event) and int(event.id) not in resolved
-        for event in store.list_events(claim_id=target_id, event_type="policy_decision", limit=100)
-    )
+    live = 0
+    for event in store.list_events(claim_id=target_id, event_type="policy_decision", limit=100):
+        if not _is_proposal(event) or int(event.id) in resolved:
+            continue
+        live += 1
+        if live >= MAX_LIVE_PROPOSALS_PER_TARGET:
+            return True
+        try:
+            payload = json.loads(getattr(event, "payload_json", None) or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        filed_by = payload.get("replaced_by_claim_id") if isinstance(payload, dict) else None
+        if not isinstance(filed_by, int) or filed_by == replacement_id:
+            return True
+        replacement = store.get_claim(filed_by, include_citations=False)
+        if replacement is None or replacement.status in INACTIVE_STATUSES or replacement.status == "conflicted":
+            continue
+        if replacement.status == "candidate" and store.list_events(claim_id=filed_by, event_type="validator", limit=1):
+            continue
+        return True
+    return False
 
 
 def enforce_daily_bound(store: Any, source_agent: str | None, new_targets: int) -> None:
@@ -429,7 +456,7 @@ def queue_supersession_proposal(
     # filed one second apart against claim 123737 latched into an unrecoverable state). A RESOLVED or rejected
     # proposal must not block a new one: a junk proposal that was rejected would otherwise stop the real
     # correction forever.
-    if has_live_proposal(store, target.id):
+    if has_live_proposal(store, target.id, replacement.id):
         return 0
     store.record_event(
         claim_id=target.id,
@@ -476,3 +503,52 @@ def queue_supersession_proposal(
         },
     )
     return 1
+
+
+def validate_now(service: Any, claim_id: int) -> dict[str, object]:
+    """Ingest fast path (ROADMAP 1.4; audit D-2/D-3): rule on ONE fresh candidate now, not at the next cycle.
+
+    It runs the cycle's own stages for that claim, in the cycle's order: the deterministic format checks (a hard
+    fail is ``conflicted``), the near-duplicate decision, the validator's gates (source and structure policy,
+    pending supersession, tuple conflict, classifier or score) and, once the claim is confirmed, the curation
+    drain's rule for the supersessions it declared (same-agent only; cross-identity and prose stay with the
+    operator). No new promotion rule lives here. A near-duplicate is left a candidate whatever this process's
+    dedupe flags say (``held: near_duplicate``): only candidates are ever deduped, so the cycle has to rule on it.
+    Callers are the surfaces where an agent states a fact on purpose (MCP ``ingest_claim`` / ``checkpoint``);
+    background intake keeps the steward cadence. Never raises: a fault leaves the claim a candidate for the cycle.
+    ``MEMORYMASTER_INLINE_VALIDATION=0`` turns it off.
+    """
+    import contextlib
+    import os
+
+    if os.environ.get("MEMORYMASTER_INLINE_VALIDATION", "1").strip().lower() in {"0", "false", "off", "no"}:
+        return {"enabled": False}
+    from memorymaster.govern import candidate_dedupe
+    from memorymaster.govern.jobs import curation_drain, deterministic, validator
+
+    store = service.store
+    report: dict[str, object] = {"enabled": True, "superseded": []}
+    try:
+        deterministic.run(store, workspace_root=service.workspace_root, limit=1, claim_ids=[claim_id])
+        claim = store.get_claim(claim_id, include_citations=False)
+        if claim is not None and claim.status == "candidate" and claim.text and claim.scope:
+            with contextlib.closing(store.connect()) as conn:
+                duplicate = candidate_dedupe.find_near_duplicate(
+                    conn, candidate_id=claim.id, candidate_text=claim.text, candidate_scope=claim.scope
+                )
+            if duplicate.action == "archive":
+                report["held"] = "near_duplicate"
+            else:
+                validator.run(store, limit=1, claim_ids=[claim_id])
+        claim = store.get_claim(claim_id, include_citations=False)
+        if claim is not None and claim.status == "confirmed":
+            drained = curation_drain.drain_proposals(service, apply=True, replacement_claim_id=claim_id)
+            report["superseded"] = drained["applied_targets"]
+    except Exception as exc:  # noqa: BLE001 - see docstring
+        logger.warning("inline validation of claim %s failed: %s", claim_id, type(exc).__name__, exc_info=True)
+        report["error"] = type(exc).__name__
+    # the replacement's status decides whether its target is hidden (recall.retrieval.pending_supersession_ids)
+    service.__dict__.pop("_pending_supersession_cache", None)
+    claim = store.get_claim(claim_id, include_citations=False)
+    report["status"] = claim.status if claim is not None else None
+    return report
