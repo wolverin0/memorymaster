@@ -355,7 +355,7 @@ def test_agy_new_shape_needs_at_least_three_attributable_files(world, n, attribu
               agy_rows("Which cadence for the marzipan snapshots?", "We decided the marzipan snapshots run every 7 hours, final."),
               touched=_touch(world, world.cwd, n))
     stats = world.index()
-    assert (stats["agy_files_indexed"], stats["agy_skipped_no_workspace"]) == ((1, 0) if attributed else (0, 1))
+    assert (stats["agy_files_indexed"], stats.get("agy_skipped_no_workspace", 0)) == ((1, 0) if attributed else (0, 1))
 
 
 def test_agy_new_shape_without_a_clear_majority_is_not_attributed(world):
@@ -484,7 +484,7 @@ def test_a_corrupt_or_locked_source_is_counted_and_never_stops_the_others(world)
     assert len(world.search("quartzite audit logs retention")) == 1 and len(world.search("thimble queue")) == 1
     assert stats["errors"] == 2
     again = world.index()  # the unreadable agy session is remembered under its stamp, not re-read
-    assert again["agy_skipped_unreadable"] == 0 and again["agy_files_seen"] == 2 and again["files_skipped"] >= 2
+    assert again.get("agy_skipped_unreadable", 0) == 0 and again["agy_files_seen"] == 2 and again["files_skipped"] >= 2
 
 
 def test_a_locked_opencode_database_skips_the_round_and_keeps_the_rest(world):
