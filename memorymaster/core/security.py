@@ -90,9 +90,11 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # fails on these because `_` is a regex word-char; this pattern matches
     # an optional prefix + credential core + optional suffix + value.
     ("compound_credential", re.compile(
-        r"(?i)(?:[A-Z][A-Z0-9]*_)?"
+        # Linear time: the prefix only starts at a word start and the suffix is bounded, so a long
+        # alphanumeric run or "tokentokentoken..." cannot make it quadratic.
+        r"(?i)(?:(?<![A-Za-z0-9])[A-Z][A-Z0-9]*_)?"
         r"(?:password|passwd|pwd|secret|token|api[_-]?key|client_secret|auth_token)"
-        r"[A-Z0-9_]*\s*[:=]\s*['\"`]?([^\s'\"`,;]+)"
+        r"[A-Z0-9_]{0,64}\s*[:=]\s*['\"`]?([^\s'\"`,;]+)"
     )),
     # Abbreviated password keys: MYPW, UPW, ADMINPW, DBPW (all-caps + PW tail).
     # Requires explicit assignment, won't match PWA/PWS/SPWN.

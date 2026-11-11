@@ -458,3 +458,21 @@ def test_argentine_dni_with_a_short_connector_is_redacted(text: str) -> None:
     assert "argentine_dni" in findings
     assert not any(ch.isdigit() for ch in redacted)
 
+
+def test_compound_credential_is_linear_on_adversarial_input() -> None:
+    from memorymaster.core import security
+
+    pattern = dict(security._SECRET_PATTERNS)["compound_credential"]
+    for blob in ("a://:" * 60_000, "x" * 300_000, "token" * 60_000, "MY_" * 100_000, "password " * 30_000):
+        start = time.perf_counter()
+        redact_text(blob)
+        assert time.perf_counter() - start < 1.0, blob[:12]
+    # same matches as before on the shapes that matter
+    for text, value in (
+        ("export DB_PASSWORD=Hunter2xyz", "Hunter2xyz"),
+        ("PGPASSWORD=Hunter2xyz psql", "Hunter2xyz"),
+        ("MY_API_KEY: 'Hunter2xyz'", "Hunter2xyz"),
+        ("cfg client_secret = Hunter2xyz", "Hunter2xyz"),
+    ):
+        match = pattern.search(text)
+        assert match and match.group(1) == value, text
