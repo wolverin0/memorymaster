@@ -14,7 +14,7 @@ from pathlib import Path
 
 from memorymaster.dreaming.models import ConsolidationResult, DreamCandidate, DreamDecision, ProviderUsage
 from test_dreaming_worker import NOW, _capture, _service
-from test_provider_egress_gate import TOKEN, BENIGN, BLOCKED, IP, MAIL, WIN_PATH, B64, _assert_clean
+from test_provider_egress_gate import TOKEN, _run, BENIGN, BLOCKED, IP, MAIL, WIN_PATH, B64, _assert_clean
 
 ROOT = Path(__file__).resolve().parents[1]
 USAGE = ProviderUsage("stub", "stub", 200, 1, 10, 2, True)
@@ -209,14 +209,15 @@ def test_contradiction_probe_pseudonyms_keep_swapped_values_distinguishable(monk
     ]
 
 
-def test_contradiction_probe_skips_a_blocked_pair_and_a_pair_with_a_literal_credential(monkeypatch):
+def test_contradiction_probe_skips_a_blocked_pair_and_masks_a_literal_credential(monkeypatch):
     from memorymaster.govern import contradiction_probe as probe
 
     seen: list[str] = []
     monkeypatch.setattr(probe.llm_provider, "call_llm", lambda prompt, body: seen.append(body) or "[]")
     assert probe._judge_llm(_claim("deploy " + BLOCKED), _claim(BENIGN)) is None
-    assert probe._judge_llm(_claim("the key is " + TOKEN), _claim("the key is another")) is None
     assert seen == []
+    probe._judge_llm(_claim("the key is " + TOKEN), _claim("the key is another"))
+    assert len(seen) == 1 and TOKEN not in seen[0]  # substituted, as in the claim gate
 
 
 # ---- entity graph ---------------------------------------------------------------------------
@@ -418,3 +419,51 @@ def test_a_context_secret_is_never_cut_from_its_value_at_any_offset(stored):
             text = ("lorem ipsum " * 2_000)[:offset] + " " + shape + " trailing words"
             out = export_messages([{"text": text}])[0][0]["text"] if stored else export_text(text)
             assert out is None or value not in out, (offset, shape)
+
+
+# ---- follow-ups: pair blocking, trusted names, marker-only messages, marker-only quotes -----
+
+
+def test_pair_with_a_home_path_or_a_private_ip_port_is_sent_not_skipped(monkeypatch):
+    from memorymaster.govern import contradiction_probe as probe
+
+    seen: list[str] = []
+    monkeypatch.setattr(probe.llm_provider, "call_llm", lambda prompt, body: seen.append(body) or "[]")
+    probe._judge_llm(
+        _claim("The config lives in /home/jdoe/app.yml"), _claim("The config lives in /home/asmith/app.yml")
+    )
+    probe._judge_llm(_claim("The database listens on 10.1.2.3:5432"), _claim("The database listens on 10.9.8.7:5432"))
+    assert len(seen) == 2
+    assert "jdoe" not in seen[0] and "asmith" not in seen[0] and "#1" in seen[0] and "#2" in seen[0]
+    assert "10.1.2.3" not in seen[1] and "10.9.8.7" not in seen[1]
+
+
+def test_trusted_neutralisation_accepts_only_marker_names_our_gate_emits():
+    from memorymaster.dreaming.consolidation_egress import gate_consolidation
+
+    fake = [
+        _candidate("akia", "x AKIA[REDACTED:x]IOSFODNN7EXAMPLE y"),
+        _candidate("anthropic", "key sk-ant-api03-A1b2C3d4[REDACTED:x]E5f6G7h8I9j0K1l2M3n4O5p6 end"),
+    ]
+    sent, ignored, _refs, _n = gate_consolidation(fake, [])
+    assert sent == [] and [d.candidate_id for d in ignored] == ["akia", "anthropic"]
+    ours = [_candidate("ok", "The host [REDACTED:private_ipv4] is up and /home/x[REDACTED:home_path_unix]y")]
+    assert [c.candidate_id for c in gate_consolidation(ours, [])[0]] == ["ok"]
+
+
+def test_a_message_of_only_blobs_counts_as_withheld_and_a_window_of_them_makes_no_call(tmp_path):
+    from memorymaster.core.provider_egress import LONG_TOKEN, export_messages
+
+    safe, withheld = export_messages([{"message_id": "a", "text": "A" * 5_000}, {"message_id": "b", "text": BENIGN}])
+    assert withheld == 1 and safe[0]["text"] == LONG_TOKEN and safe[1]["text"] == BENIGN
+    summary, extractor, _ledger, _cid = _run(tmp_path, ["A" * 5_000, "B" * 5_000])
+    assert extractor.calls == [] and summary["errors"] == 0 and summary["egress_withheld"] == 2
+
+
+def test_a_quote_with_no_content_outside_markers_does_not_bind():
+    from memorymaster.core.provider_egress import quote_in_sent_text
+
+    text = f"The primary lives at {IP} in the lab"
+    assert quote_in_sent_text("lives at [REDACTED:private_ipv4] in", text) is True
+    assert quote_in_sent_text("[REDACTED:private_ipv4]", text) is False
+    assert quote_in_sent_text("[WITHHELD:long_token]", "A" * 5_000) is False

@@ -265,12 +265,13 @@ def test_a_huge_unbroken_token_is_replaced_fast_and_a_long_prose_message_still_g
     from memorymaster.core.provider_egress import LONG_TOKEN, export_messages, export_text
 
     blob = "A1" * 10_000
+    export_text("warm the lazy pattern caches")
     started = time.monotonic()
     assert export_text(blob) == LONG_TOKEN
     prose = "The service retries three times. " * 2_000  # ~66k chars
     safe, withheld = export_messages([{"message_id": "a", "text": blob}, {"message_id": "b", "text": prose}])
     assert time.monotonic() - started < 3
-    assert withheld == 0 and safe[0]["text"] == LONG_TOKEN and safe[1]["text"] == prose
+    assert withheld == 1 and safe[0]["text"] == LONG_TOKEN and safe[1]["text"] == prose
 
 
 @pytest.mark.parametrize("loader", [_script_module, _packaged_module], ids=["script", "package"])

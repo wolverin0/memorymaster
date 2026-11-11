@@ -45,6 +45,14 @@ MAX_INPUT = 20_000  # callers that cut to a few hundred characters anyway bound 
 _LONG_TOKEN = re.compile(r"\S{%d,}" % (MAX_TOKEN + 1))
 
 
+_MARKER = re.compile(r"\[(?:REDACTED|WITHHELD):[A-Za-z0-9_#]+\]")
+
+
+def _only_markers(text: str) -> bool:
+    """Whether ``text`` has no content outside redaction/withheld markers and whitespace."""
+    return not _MARKER.sub("", text).strip()
+
+
 def _gate(text: str, *, stored: bool, trusted: bool = False) -> str | None:
     """Provider-safe ``text`` or ``None`` when blocked; may raise (callers contain it per text)."""
     text = _LONG_TOKEN.sub(LONG_TOKEN, text)
@@ -130,6 +138,8 @@ def export_messages(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         if text is None:
             withheld += 1
             text = marker
+        elif _only_markers(text):  # nothing but markers is nothing to send
+            withheld += 1
         safe.append({**message, "text": text})
     return safe, withheld
 
@@ -137,4 +147,4 @@ def export_messages(messages: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
 def quote_in_sent_text(quote: str, text: str) -> bool:
     """Whether ``quote`` is a substring of the text the provider saw for the stored message ``text``."""
     sent = export_messages([{"text": text}])[0][0]["text"]
-    return bool(quote) and quote in sent
+    return bool(quote) and not _only_markers(quote) and quote in sent
