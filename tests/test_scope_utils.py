@@ -370,3 +370,28 @@ def test_strict_resolver_honours_a_canonical_slug_alias_like_the_relaxed_one(tmp
     (cwd / ".git").mkdir(parents=True)
     for strict in (False, True):
         assert resolve_workspace_scope(cwd, strict=strict) == "project:logical", strict
+
+
+def test_a_directory_of_thousands_of_subfolders_is_not_walked_whole(tmp_path, monkeypatch):
+    """T-2277: the collection-root check read every entry of a ~20k-folder cwd and stalled an indexing run."""
+    for i in range(3000):
+        (tmp_path / "bigdir" / f"d{i:04d}").mkdir(parents=True)
+    seen = []
+    real = Path.iterdir
+
+    def counting(self):
+        for child in real(self):
+            seen.append(child)
+            yield child
+
+    monkeypatch.setattr(Path, "iterdir", counting)
+    assert scope_from_cwd(tmp_path / "bigdir") == "project:bigdir"
+    assert len(seen) <= 1025
+
+
+def test_a_collection_root_of_checkouts_is_still_global_and_stops_at_the_second(tmp_path, monkeypatch):
+    for name in ("a", "b", "c"):
+        (tmp_path / "coll" / name / ".git").mkdir(parents=True)
+    for i in range(500):
+        (tmp_path / "coll" / f"z{i}").mkdir()
+    assert scope_from_cwd(tmp_path / "coll") == "global"
