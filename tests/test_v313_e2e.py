@@ -59,7 +59,7 @@ def test_dedupe_archives_paraphrase_without_llm(
 
     paraphrase_id = _seed(
         service,
-        "user prefers vim editor with vim plugins for python coding",
+        "user prefers vim editor with vim plugins for python",  # adds no word: a paraphrase that does is not a duplicate
         "editor_pref_alt",
         "vim",
     )
@@ -114,7 +114,7 @@ def test_dedupe_disabled_passes_to_llm(
 
     paraphrase_id = _seed(
         service,
-        "user prefers vim editor with vim plugins for python coding",
+        "user prefers vim editor with vim plugins for python",  # adds no word: a paraphrase that does is not a duplicate
         "editor_pref_alt",
         "vim",
     )
@@ -163,7 +163,7 @@ def test_dedupe_shadow_mode_does_not_archive(
 
     paraphrase_id = _seed(
         service,
-        "user prefers vim editor with vim plugins for python coding",
+        "user prefers vim editor with vim plugins for python",  # adds no word: a paraphrase that does is not a duplicate
         "editor_pref_alt",
         "vim",
     )
