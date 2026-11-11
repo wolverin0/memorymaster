@@ -303,4 +303,4 @@ def test_no_new_ungated_call_llm_call_site():
         f"new call_llm call site(s) {sorted(unknown)}: gate them with core.provider_egress, then list them in GATED"
     )
     for rel in GATED:
-        assert "provider_egress" in (ROOT / rel).read_text(encoding="utf-8"), rel + " lost its egress gate"
+        assert "egress import" in (ROOT / rel).read_text(encoding="utf-8"), rel + " lost its egress gate"
