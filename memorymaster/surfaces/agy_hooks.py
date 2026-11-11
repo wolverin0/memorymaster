@@ -55,6 +55,16 @@ def normalize_payload(payload: dict) -> dict | None:
             "model": payload.get("modelName"), "transcript_path": payload.get("transcriptPath")}
 
 
+def _project_context(data: dict) -> str | None:
+    """SessionStart delivers the published project brief (T-2278); ``None`` while projections are off, which
+    leaves the scope recall below as the SessionStart fallback."""
+    from memorymaster.profile.project_runtime import session_start_context
+    from memorymaster.recall.delivery import reset_session
+
+    reset_session(data["session_id"])  # a new session may see unchanged context again, as in Claude's hook
+    return session_start_context(data)
+
+
 def run_hook(event: str, payload: dict, *, db_path: str, emit: Callable[[str], object] | None = None) -> str:
     """Return strict agy JSON or silence; errors never veto the agent's turn.
 
@@ -81,7 +91,10 @@ def run_hook(event: str, payload: dict, *, db_path: str, emit: Callable[[str], o
         # Dependencies can print diagnostics. Nothing except our strict envelope
         # may reach agy's protojson parser, including on a failing dependency.
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            if event in {"SessionStart", "PreInvocation"}:
+            brief = _project_context(data) if event == "SessionStart" else None
+            if brief is not None:
+                output, count = json.dumps({"injectSteps": [{"ephemeralMessage": brief}]}), 1
+            elif event in {"SessionStart", "PreInvocation"}:
                 from memorymaster.core.scope_utils import scope_from_cwd
                 from memorymaster.recall.remote import hook_recall
 

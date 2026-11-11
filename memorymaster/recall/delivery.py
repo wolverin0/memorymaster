@@ -37,12 +37,31 @@ def _state_path(session_id: str, state_dir: Path | None = None) -> Path:
     return directory / (name + ".json")
 
 
+def _brief_marker(session_id: str, state_dir: Path | None = None) -> Path:
+    return _state_path(session_id, state_dir).with_suffix(".brief")
+
+
+def brief_pending(session_id: str, *, state_dir: Path | None = None) -> bool:
+    """True until the project brief was delivered for this session id (CLIs with no SessionStart event)."""
+    return isinstance(session_id, str) and bool(session_id) and not _brief_marker(session_id, state_dir).exists()
+
+
+def mark_brief_delivered(session_id: str, *, state_dir: Path | None = None) -> None:
+    try:
+        marker = _brief_marker(session_id, state_dir)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    except OSError:
+        pass  # worst case the brief repeats on the next prompt
+
+
 def reset_session(session_id: str, *, state_dir: Path | None = None) -> None:
     """SessionStart (including compact/resume) permits unchanged context again."""
     if not isinstance(session_id, str) or not session_id:
         return
     try:
         _state_path(session_id, state_dir).unlink(missing_ok=True)
+        _brief_marker(session_id, state_dir).unlink(missing_ok=True)
     except OSError:
         pass
     hook_policy.forget(session_id)  # the claims injected before are gone from the context too
