@@ -31,6 +31,9 @@ def world(tmp_path: Path, monkeypatch):
     for name in ("QDRANT_URL", "MEMORYMASTER_SCOPE_DEFAULT"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(transcript_fallback.ENABLED_ENV, "1")  # the fallback is opt-in (T-1876 N3)
+    # The 120 ms budget is a latency guard, not what these tests check: on a loaded host it expires and the
+    # fragment silently goes missing (seen on Windows). The deadline tests below set their own value.
+    monkeypatch.setenv(transcript_fallback.DEADLINE_ENV, "10000")
     monkeypatch.setenv("MEMORYMASTER_SPOOL_DIR", str(tmp_path / "spool"))
     monkeypatch.setenv("MEMORYMASTER_RECALL_HOOK_MAX_CLAIMS", "2")
     idx = tmp_path / "idx" / "transcripts.db"
