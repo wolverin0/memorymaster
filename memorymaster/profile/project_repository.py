@@ -148,7 +148,7 @@ def _ledger_records(data: Any) -> tuple[list, bool]:
     return tasks, complete
 
 
-VALIDATION_SECONDS = 0.1  # cooperative deadline of the claim read and, at SessionStart validation, of the ledger read
+VALIDATION_SECONDS = 0.1  # cooperative deadline of the SessionStart claim and ledger reads
 _CARD_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,47}")
 
 
@@ -606,7 +606,10 @@ def _read_claims(
     byte_limit = 2 * 1024 * 1024 if validation else MAX_SOURCE_BYTES
     if ids is not None and len(ids) > MAX_CLAIMS:
         raise ValueError("claim_limit")
-    deadline = time.monotonic() + VALIDATION_SECONDS
+    # SessionStart reads (validation, explicit ids, incremental baseline) keep the tight deadline; the refresh-path
+    # builder scan reads the whole renderable set and measured 0.1-0.3 s on a loaded Windows host.
+    interactive = validation or ids is not None or changed_since
+    deadline = time.monotonic() + (VALIDATION_SECONDS if interactive else BRIEF_QUERY_SECONDS)
     with closing(
         sqlite3.connect(Path(config.db_path).resolve().as_uri() + "?mode=ro", uri=True, timeout=0.025)
     ) as conn:
