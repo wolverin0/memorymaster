@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from memorymaster.recall import context_hook
 from memorymaster.recall.context_hook import classify_observation, observe, recall
 
 
