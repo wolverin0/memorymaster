@@ -247,20 +247,27 @@ def _git_project_root(
     return None
 
 
+_COLLECTION_SCAN_LIMIT = 32768
+
+
 def _holds_several_repositories(directory: Path) -> bool:
     """Whether ``directory`` is a collection root (two or more child checkouts).
 
-    Stops at the second checkout and looks at no more than 1024 entries (the strict resolver's bound): a
-    directory of ~20k subfolders stalled an indexing run for minutes (T-2277).
-    shortcut: a checkout listed after the 1024th entry is not counted; raise the bound if collection roots grow past it.
+    The old version listed the whole directory and made two stat calls per entry (``is_dir`` and ``.git``): ~20k
+    subfolders stalled an indexing run for minutes (T-2277).  Now the listing is lazy (``os.scandir`` answers
+    "is a directory" from the listing itself), so a folder costs one stat (its ``.git``), and the scan stops at the
+    second checkout.  Deterministic: no time budget, the entry cap only guards pathological directories.
+    shortcut: a checkout listed after :data:`_COLLECTION_SCAN_LIMIT` entries is not counted.
     """
     repositories = 0
-    for index, child in enumerate(directory.iterdir()):
-        if index >= 1024:
-            return False
-        repositories += int(child.is_dir() and (child / ".git").exists())
-        if repositories > 1:
-            return True
+    with os.scandir(directory) as entries:
+        for index, entry in enumerate(entries):
+            if index >= _COLLECTION_SCAN_LIMIT:
+                return False
+            if entry.is_dir() and os.path.exists(os.path.join(entry.path, ".git")):
+                repositories += 1
+                if repositories > 1:
+                    return True
     return False
 
 
