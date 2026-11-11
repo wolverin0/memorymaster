@@ -45,6 +45,12 @@ RAW_FRAGMENTS = (VAL, URL_PW, PW)
 
 
 def _sha(path: Path) -> str:
+    import sqlite3
+
+    # Fold pending WAL frames into the main file first: a fixture connection's late checkpoint is not the tool's write.
+    with sqlite3.connect(path) as conn:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+    conn.close()
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
