@@ -355,5 +355,6 @@ def pending_depth(db_path: str | Path) -> dict[str, int]:
     if not spool_dir.exists():
         return {"files": 0, "lines": 0}
     files = sorted(spool_dir.glob("*.jsonl")) + sorted(spool_dir.glob(f"*{DRAINING_SUFFIX}"))
+    files = [p for p in files if not p.with_name(p.name + ".done").exists()]  # replayed, delete pending
     lines = sum(len(read_lines(path)) for path in files)
     return {"files": len(files), "lines": lines}

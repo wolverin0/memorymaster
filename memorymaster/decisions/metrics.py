@@ -43,7 +43,7 @@ LIFECYCLE_MATURITY = timedelta(days=7)
 # Calibration labels: never Jev grading itself, never an override nobody attributed.
 # Single source for every calibration/OPE/metrics consumer: labels whose actor
 # is Jev itself or cannot be attributed never count as ground truth.
-UNTRUSTED_LABEL_SOURCES = frozenset({"jev", "unattributed_override", "unknown_actor", "unknown"})
+UNTRUSTED_LABEL_SOURCES = frozenset({"jev", "agent", "unattributed_override", "unknown_actor", "unknown"})
 HELD_ACTION = "hold"  # a held INGEST candidate never reaches the steward: no verdict is not a "no"
 # ``record_skip`` rows: the surface ran but did not ask Jev (``fallback_reason`` ``skip:<why>``,
 # ``attempt_count`` 0).  Counted in volume and fallback_by_reason; never in latency, calibration

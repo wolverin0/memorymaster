@@ -11,12 +11,14 @@ NORMAL service paths — never raw SQL:
 - ``verbatim`` → ``verbatim_store.store_verbatim`` (its own sensitivity +
   per-session dedup apply).
 - ``access`` → ``store.record_accesses_batch`` — monotonic increments; a
-  rare double-count on crash-replay is harmless by design.
+  crash mid-replay may double-count once (a failed delete does not, see ``.done``).
 - ``feedback`` → ``FeedbackTracker.record_retrieval``.
 
 Idempotent on replay: a crashed drain leaves ``.draining`` files which the
-next run re-claims; re-running every line is safe because ingest dedupes and
-the other ops are additive. Unknown ``op``/``v`` or poison lines go to the
+next run re-claims; ingest dedupes and the other ops are additive. A file
+replayed but not deletable gets a ``.done`` marker so it is never replayed again.
+Remaining window: a crash between the last replay and writing ``.done`` replays that file once more,
+so an ``access`` count can double once. Unknown ``op``/``v`` or poison lines go to the
 spool's ``quarantine/`` folder — preserved, never dropped silently, and a
 single bad line can never wedge the drain.
 
@@ -27,6 +29,7 @@ lag_seconds}`` into the cycle result (§2.10 drain-lag metric).
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -185,6 +188,7 @@ def run(
     result: dict[str, object] = {
         "drained": 0,
         "quarantined": 0,
+        "unlink_failed": 0,
         "files": len(files),
         "lag_seconds": 0.0,
         "by_op": {},
@@ -196,9 +200,15 @@ def run(
     oldest: datetime | None = None
     drained = 0
     quarantined = 0
+    unlink_failed = 0
     by_op: dict[str, int] = {}
     for path in files:
-        for raw in spool.read_lines(path):
+        # A ``.done`` marker next to the file means it was fully replayed but could not be deleted (locked on
+        # Windows): only retry the delete, never replay it again (``access`` increments are not idempotent).
+        # shortcut: a crash between the last replay and the marker write still replays once; a marker whose file
+        # was deleted but whose own delete failed is left behind (harmless, never matched by claim_files).
+        marker = path.with_name(path.name + ".done")
+        for raw in ([] if marker.exists() else spool.read_lines(path)):
             try:
                 envelope = json.loads(raw)
             except json.JSONDecodeError:
@@ -233,12 +243,21 @@ def run(
                 oldest = stamp
         # Lines are now either replayed or quarantined — retire the file.
         try:
+            marker.touch()
+        except OSError as exc:
+            logger.warning("spool drain: could not mark %s as replayed: %s", path, exc)
+        try:
             path.unlink()
         except OSError as exc:
+            unlink_failed += 1
             logger.warning("spool drain: could not remove %s: %s", path, exc)
+        else:
+            with contextlib.suppress(OSError):
+                marker.unlink()
 
     result["drained"] = drained
     result["quarantined"] = quarantined
+    result["unlink_failed"] = unlink_failed
     result["by_op"] = by_op
     if oldest is not None:
         result["lag_seconds"] = round(max(0.0, (ref - oldest).total_seconds()), 3)
@@ -252,6 +271,7 @@ def run(
     _record(store, MARKER_DRAIN, {
         "drained": drained,
         "quarantined": quarantined,
+        "unlink_failed": unlink_failed,
         "files": result["files"],
         "lag_seconds": result["lag_seconds"],
         "by_op": by_op,

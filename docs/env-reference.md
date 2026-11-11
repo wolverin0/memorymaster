@@ -5,7 +5,7 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 349 variables.
+Total: 353 variables.
 
 | Variable | Referenced in |
 |---|---|
@@ -27,6 +27,8 @@ Total: 349 variables.
 | `MEMORYMASTER_BEAT_GUARD_WINDOW_MINUTES` | `memorymaster/dreaming/latency_guard.py` |
 | `MEMORYMASTER_BEAT_HOOK_HARD_MS` | `memorymaster/dreaming/latency_guard.py` |
 | `MEMORYMASTER_BEAT_HOOK_SOFT_MS` | `memorymaster/dreaming/latency_guard.py` |
+| `MEMORYMASTER_BEAT_MAX_CONSOLIDATE_CAPTURES` | `memorymaster/surfaces/scheduled_task.py` |
+| `MEMORYMASTER_BEAT_MAX_SESSIONS` | `memorymaster/surfaces/scheduled_task.py` |
 | `MEMORYMASTER_BM25_` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_BM25_B` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_BM25_K1` | `memorymaster/recall/context_hook.py` |
@@ -184,6 +186,7 @@ Total: 349 variables.
 | `MEMORYMASTER_MCP_DB_ALLOWLIST` | `memorymaster/surfaces/mcp_path_policy.py`, `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_MCP_HTTP_ALLOWED_HOSTS` | `memorymaster/surfaces/mcp_http.py` |
 | `MEMORYMASTER_MCP_HTTP_TOKEN` | `memorymaster/core/shared_mcp.py`, `memorymaster/surfaces/mcp_http.py`, `memorymaster/surfaces/mcp_stdio_proxy.py` |
+| `MEMORYMASTER_MCP_OPERATOR_RESOLVE` | `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_MCP_PRINCIPAL` | `memorymaster/core/access_control.py` |
 | `MEMORYMASTER_MCP_STALL_DUMP_SECONDS` | `memorymaster/surfaces/mcp_http.py` |
 | `MEMORYMASTER_MCP_TENANT_ID` | `memorymaster/core/access_control.py` |
@@ -272,6 +275,7 @@ Total: 349 variables.
 | `MEMORYMASTER_RECALL_HOOK_MIN_TERMS` | `memorymaster/recall/hook_lexical.py` |
 | `MEMORYMASTER_RECALL_LEXICAL_MIN_RELEVANCE` | `memorymaster/recall/hook_policy.py` |
 | `MEMORYMASTER_RECALL_MACHINE_FILTER_` | `memorymaster/recall/machine_traffic.py` |
+| `MEMORYMASTER_RECALL_MACHINE_FILTER_CODEX` | `memorymaster/config_templates/hooks/memorymaster-codex-recall.py` |
 | `MEMORYMASTER_RECALL_QUERY_EXPANSION` | `memorymaster/recall/context_hook.py`, `memorymaster/recall/query_expansion.py` |
 | `MEMORYMASTER_RECALL_RERANK_LOCAL` | `memorymaster/recall/context_hook.py`, `memorymaster/recall/local_rerank.py` |
 | `MEMORYMASTER_RECALL_RERANK_LOCAL_MAX_PAIRS` | `memorymaster/recall/local_rerank.py` |

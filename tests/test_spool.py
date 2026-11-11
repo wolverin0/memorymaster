@@ -300,3 +300,37 @@ def test_cli_drain_spool_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     assert out["ok"] is True
     assert out["data"]["drained"] == 1
     assert out["data"]["quarantined"] == 0
+
+
+def test_a_spool_file_that_cannot_be_deleted_is_not_replayed_again(svc: MemoryService, monkeypatch) -> None:
+    """G-8: a locked .draining file (Windows) was reprocessed by the next drain, doubling access_count."""
+    claim = svc.ingest(
+        text="The spool drain must not double count a locked file",
+        citations=[CitationInput(source="session://chat", locator="turn-1")],
+    )
+    spool.append(_db(svc), "access", {"claim_ids": [claim.id]}, idempotency_key="acc-1")
+    real_unlink = Path.unlink
+    failed = []
+
+    def flaky(self, *a, **k):
+        if self.name.endswith(".draining") and not failed:
+            failed.append(self.name)
+            raise PermissionError("simulated lock")
+        return real_unlink(self, *a, **k)
+
+    monkeypatch.setattr(Path, "unlink", flaky)
+    first = spool_drain.run(svc)
+    second = spool_drain.run(svc)
+    third = spool_drain.run(svc)
+
+    assert first["drained"] == 1 and first["unlink_failed"] == 1
+    assert second["drained"] == 0 and second["unlink_failed"] == 0
+    assert third["files"] == 0
+    with svc.store.connect() as conn:
+        assert conn.execute("SELECT access_count FROM claims WHERE id = ?", (claim.id,)).fetchone()[0] == 1
+    assert list(spool.spool_dir_for(_db(svc)).iterdir()) == [] or all(
+        p.name == "quarantine" for p in spool.spool_dir_for(_db(svc)).iterdir())
+
+
+def test_an_empty_drain_reports_unlink_failed(svc: MemoryService) -> None:
+    assert spool_drain.run(svc)["unlink_failed"] == 0
