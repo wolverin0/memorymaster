@@ -190,7 +190,9 @@ def proposal_flood(tmp_path_factory) -> tuple[MemoryService, int]:
     """
     svc = _svc(tmp_path_factory.mktemp("r4-proposals"))
     pending = _ingest(svc, "a measurement whose correction is still queued for review")
-    _ingest(svc, "the queued correction", supersedes_claim_id=pending.id)
+    correction = _ingest(svc, "the queued correction", supersedes_claim_id=pending.id)
+    # recall hides a target only once its replacement is deliverable, so the correction is confirmed
+    svc.store.apply_status_transition(correction, to_status="confirmed", reason="fixture", event_type="validator")
     _flood(svc, "policy_decision", _OLD_RECALL_CAP + 10)
     return svc, pending.id
 
@@ -231,8 +233,7 @@ def test_the_recall_demotion_survives_an_event_flood(proposal_flood) -> None:
     """Losing the proposal here restores FULL score to the claim someone
     declared outdated, so it outranks its own correction again."""
     svc, pending_id = proposal_flood
-    # deliverable_only=False: the fixture's correction is a candidate; the scan under test is the same one
-    assert pending_id in pending_supersession_ids(svc, use_cache=False, deliverable_only=False), (
+    assert pending_id in pending_supersession_ids(svc, use_cache=False), (
         f"the demotion silently lifted behind {_OLD_RECALL_CAP}+ newer events"
     )
 

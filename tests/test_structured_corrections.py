@@ -461,6 +461,61 @@ def test_the_drain_does_not_retire_a_target_whose_replacement_is_not_confirmed(s
     assert _get(svc, old.id).status == "superseded"
 
 
+def test_validate_now_runs_the_deterministic_gate_first(svc) -> None:
+    """The cycle runs deterministic before the validator: a format-invalid value is conflicted, never confirmed."""
+    bad = _claim(svc, "The staging database server listens on the address 999.1.1.1 since the migration",
+                 subject="staging-db", predicate="ip_address", object_value="999.1.1.1", confirm=False)
+    report = svc.validate_now(bad.id)
+    assert report["status"] == "conflicted", report
+
+
+def test_validate_now_leaves_a_near_duplicate_for_the_cycle(svc, monkeypatch) -> None:
+    """Whatever the dedupe flags of THIS process: only candidates are deduped, so confirming a near-duplicate here
+    would keep both forever. The cycle rules on it with its own configuration."""
+    monkeypatch.delenv("MEMORYMASTER_DEDUPE_ENABLED", raising=False)
+    _claim(svc, "The nightly backup job of the staging cluster runs at three in the morning on weekdays")
+    dup = _claim(svc, "The nightly backup job of the staging cluster runs at three in the morning", confirm=False)
+    report = svc.validate_now(dup.id)
+    assert report["status"] == "candidate" and report["held"] == "near_duplicate", report
+
+
+def test_a_correction_that_never_confirms_does_not_block_the_next_one(svc) -> None:
+    old = _claim(svc, "The staging admin panel listens on port 8080")
+    stuck = _claim(svc, "port 7777", supersedes=[old.human_id], confirm=False)
+    assert svc.validate_now(stuck.id)["status"] == "candidate"  # too short for the validator score
+    report: dict = {}
+    good = svc.ingest("The staging admin panel listens on port 9443 since the 2026 migration",
+                      [CitationInput(source="test://t2276", locator="x")], scope=SCOPE, source_agent="fixture",
+                      supersedes=[old.human_id], supersession_report=report)
+    assert report["filed"] == [old.id], "an undeliverable replacement must not hold the target's only proposal slot"
+    assert svc.validate_now(good.id)["superseded"] == [old.id]
+    assert _get(svc, old.id).status == "superseded" and _get(svc, old.id).replaced_by_claim_id == good.id
+    summary = drain_proposals(svc, apply=True)  # the first proposal is now moot: its target is retired
+    assert summary["rejected_moot"] == 1 and summary["failed"] == 0, summary
+    assert drain_proposals(svc, apply=True)["scanned"] == 0
+
+
+def test_the_drain_rejects_a_proposal_whose_replacement_is_retired(svc) -> None:
+    old = _claim(svc, "Retention is 30 days")
+    dead = _claim(svc, "Retention is 90 days", supersedes=[old.human_id], confirm=False)
+    lifecycle.transition_claim(svc.store, dead.id, "archived", reason="fixture", event_type="transition")
+    summary = drain_proposals(svc, apply=True)
+    assert summary["rejected_moot"] == 1 and summary["approved"] == 0, summary
+    assert _get(svc, old.id).status == "confirmed" and _proposals(svc, old.id)
+    assert drain_proposals(svc, apply=True)["scanned"] == 0, "a moot proposal must leave the queue"
+
+
+def test_the_recall_view_reads_replacement_states_in_one_query(svc, monkeypatch) -> None:
+    """Hooks build a fresh service per prompt, so the 300 s cache never helps them: no per-proposal claim read."""
+    olds = [_claim(svc, f"Service number {i} of the fleet listens on port {8000 + i}", source_agent="agent-a")
+            for i in range(4)]
+    for i, old in enumerate(olds):
+        _claim(svc, f"Service number {i} of the fleet listens on port {9000 + i}", source_agent="agent-b",
+               supersedes=[old.human_id], confirm=(i % 2 == 0))
+    monkeypatch.setattr(type(svc.store), "get_claim", lambda *a, **k: pytest.fail("per-proposal claim read"))
+    assert pending_supersession_ids(svc, use_cache=False) == frozenset({olds[0].id, olds[2].id})
+
+
 def test_mcp_ingest_claim_is_deliverable_at_once(mcp_db) -> None:
     from memorymaster.surfaces.mcp_server import checkpoint, ingest_claim
 
