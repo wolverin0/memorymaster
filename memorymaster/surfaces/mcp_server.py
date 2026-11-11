@@ -2991,12 +2991,17 @@ if FastMCP is not None:
         """Approve or reject a steward proposal by proposal_event_id or claim_id.
 
         Jev (``source: jev``) proposals are refused: only the operator resolves
-        them, through the dashboard or the CLI with ``--actor operator``.
+        them, through the dashboard or the CLI with ``--actor operator``. Approving any
+        operator-only proposal (cross-identity, fuzzy, prose-correction) is refused too
+        unless the server runs with MEMORYMASTER_MCP_OPERATOR_RESOLVE=1; reject is allowed.
         """
-        from memorymaster.govern.steward import JevProposalOperatorOnly
+        from memorymaster.govern.steward import JevProposalOperatorOnly, OperatorOnlyProposalRefused
         from memorymaster.govern.steward import resolve_steward_proposal as _resolve_steward_proposal
 
         svc = _service(db, workspace)
+        # Local-trusted MCP makes every session admin, so the channel is an agent unless the server's
+        # operator started it with MEMORYMASTER_MCP_OPERATOR_RESOLVE=1 (default off).
+        operator = os.environ.get("MEMORYMASTER_MCP_OPERATOR_RESOLVE", "").strip().lower() in {"1", "true", "yes", "on"}
         try:
             result = _resolve_steward_proposal(
                 svc,
@@ -3004,8 +3009,11 @@ if FastMCP is not None:
                 proposal_event_id=proposal_event_id,
                 claim_id=claim_id,
                 apply_on_approve=apply_on_approve,
+                actor="operator" if operator else "agent",
                 allow_jev=False,
             )
+        except OperatorOnlyProposalRefused as exc:
+            return _structured_error(str(exc), "PROPOSAL_OPERATOR_ONLY")
         except JevProposalOperatorOnly as exc:
             return _structured_error(str(exc), "JEV_PROPOSAL_OPERATOR_ONLY")
         return {"ok": True, "result": result}
