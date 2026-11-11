@@ -432,25 +432,70 @@ def test_transcript_fallback_block_is_counted_in_the_callers_budget(monkeypatch)
     assert context_hook._with_transcript_fallback(claims_block, [restating], 2, 10_000) == claims_block  # cap full, no value
 
 
-def test_evidence_fragment_key_rule_and_cost() -> None:
-    """D-5: the extra slot's decision is pure string work, far under 5 ms for 8 claims and 5 fragments."""
-    import time
+_PLAIN_CLAIMS = chr(10).join(f"- [mm-{i:04d}] the router firmware version setting lives in the deploy page" for i in range(8))
+_FW_QUERY = "which firmware version did we choose for the router"
+
+
+def _frag(text: str):
     from types import SimpleNamespace
 
-    from memorymaster.recall import context_hook
+    return SimpleNamespace(excerpt=text)
 
-    nl = chr(10)
-    claims = nl.join(f"- [mm-{i:04d}] the router firmware version setting no. {i} lives in the deploy page"
-                     for i in range(8))
-    plain = nl.join(f"- [mm-{i:04d}] the router firmware version setting lives in the deploy page" for i in range(8))
-    frag = SimpleNamespace(excerpt="we chose firmware 7.18.2 " + "filler " * 50)
-    q = "which firmware did we choose"
+
+# Incidental digit-bearing shapes: none of these is an answer to the question, so none may win the extra slot.
+_INCIDENTAL = {
+    "date": "On 2026-08-01 we talked about the router firmware version at length",
+    "locale date": "On 01/08/2026 we talked about the router firmware version at length",
+    "timestamp": "At 2026-08-01T10:22:31Z we talked about the router firmware version",
+    "clock": "At 10:22:31 we talked about the router firmware version",
+    "line range": "See notes lines 120-140 about the router firmware version",
+    "line ref": "See router_notes.py:123 about the router firmware version",
+    "message id": "Message msg_01H8XYZ4829 discusses the router firmware version",
+    "commit": "Commit 9f2c1ab3d4e5 changed the router firmware version handling",
+    "path": "Edit src/fw2/router3/version.py for the router firmware version handling",
+    "ticket": "Ticket T-2271 tracks the router firmware version handling",
+    "pr": "PR 1234 reviews the router firmware version handling and #4567 too",
+    "uuid": "Run 123e4567-e89b-12d3-a456-426614174000 covered the router firmware version handling",
+    "unrelated count": "We had 3 retries yesterday. The router firmware version is a separate topic",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_INCIDENTAL))
+def test_d5_incidental_digits_never_win_the_extra_slot(shape) -> None:
+    assert context_hook._evidence_fragment_key(_PLAIN_CLAIMS, _frag(_INCIDENTAL[shape]), _FW_QUERY, None) is None
+
+
+@pytest.mark.parametrize("noise", [
+    "Ticket T-2271 covers the router firmware version field",
+    "The router firmware version field was added on 2026-08-01",
+    "We had 3 retries yesterday. The router firmware version field is listed",
+    "See PR 1234 and commit 9f2c1ab3d4e5 for the router firmware version field",
+])
+def test_d5_incidental_digits_in_claims_do_not_suppress_the_answer(noise) -> None:
+    claims = _PLAIN_CLAIMS + chr(10) + "- [mm-0099] " + noise
+    frag = _frag("The router firmware version we chose was 7.18.2 after the rollback")
+    assert context_hook._evidence_fragment_key(claims, frag, _FW_QUERY, None) is not None
+
+
+def test_d5_a_claim_that_answers_with_its_own_value_still_wins() -> None:
+    claims = _PLAIN_CLAIMS + chr(10) + "- [mm-0099] Correction: the router firmware version is now 7.20.1"
+    frag = _frag("The router firmware version we chose was 7.18.2 after the rollback")
+    assert context_hook._evidence_fragment_key(claims, frag, _FW_QUERY, None) is None
+
+
+def test_d5_the_value_must_sit_next_to_a_query_term() -> None:
+    frag = _frag("We upgraded the switch to 4.2.1 yesterday. The router firmware version is a topic for later")
+    assert context_hook._evidence_fragment_key(_PLAIN_CLAIMS, frag, _FW_QUERY, None) is None
+
+
+def test_d5_evidence_slot_cost_is_under_5ms_per_prompt() -> None:
+    import time
+
+    frag = _frag("we chose router firmware version 7.18.2 " + "filler " * 50)
     key = context_hook._evidence_fragment_key
-    assert key(claims, frag, q, None) is None  # claims carry values of their own: possible correction, withhold
-    assert key(plain, frag, q, None) is not None
-    assert key(plain, SimpleNamespace(excerpt="the firmware setting lives in the deploy page"), q, None) is None
+    assert key(_PLAIN_CLAIMS, frag, _FW_QUERY, None) is not None
     started = time.perf_counter()
     for _ in range(5 * 20):
-        key(plain, frag, q, None)
+        key(_PLAIN_CLAIMS, frag, _FW_QUERY, None)
     per_prompt_ms = (time.perf_counter() - started) * 1000 / 20  # 5 fragments' worth of calls per prompt
-    assert per_prompt_ms < 5.0, per_prompt_ms
+    assert per_prompt_ms < 5.0, f"evidence-slot decision took {per_prompt_ms:.3f} ms per prompt (limit 5 ms)"

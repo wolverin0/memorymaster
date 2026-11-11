@@ -372,3 +372,27 @@ def test_centered_excerpt_windows_around_the_densest_match() -> None:
 def test_centered_excerpt_keeps_short_text_whole_and_falls_back_to_the_head() -> None:
     assert centered_excerpt("short text", "anything", 200) == "short text"
     assert centered_excerpt("x" * 500, "zebra", 100).startswith("xxxx")
+
+
+def test_d5_a_correction_without_digits_gets_no_extra_slot_for_the_old_value(world) -> None:
+    """The stale 8080 fragment must not ride the extra slot when a claim in play is the correction of another."""
+    world.transcripts(("assistant", "The router proxy port we chose was 8080 after the rollback", "2026-08-01T00:00:00Z",
+                       world.cwd))
+    old = world.claim("The router proxy port used to be set in the deploy page")
+    new = world.service.ingest("Correction: the router proxy port moved to the vault-managed setting",
+                               [CitationInput(source="test://fb", locator="y")], scope="project:here",
+                               source_agent="fixture", supersedes_claim_id=old)
+    lifecycle.transition_claim(world.service.store, new.id, "confirmed", reason="fixture", event_type="validator")
+    world.claim("The router proxy port field must be in the deploy checklist")
+    text, ids = world.ask("which router proxy port did we choose")
+    assert new.id in ids and "8080" not in text
+
+
+def test_d5_turn_two_recovers_the_fragment_through_the_free_slot_when_turn_one_could_not_carry_it(world) -> None:
+    """Pins the free-slot recovery: claims seen on turn 1 free the slots, a fragment never delivered arrives on turn 2."""
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
+                       "2026-08-01T00:00:00Z", world.cwd))
+    _two_claims(world)
+    world.ask("firmware router version deploy checklist", session_id="s-r")  # claims, no fragment (no novel value)
+    text, ids = world.ask(session_id="s-r")  # same session, the question the fragment answers
+    assert ids == [] and "7.18.2" in text
