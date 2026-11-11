@@ -28,7 +28,7 @@ from memorymaster.dreaming.consolidation_egress import WITHHELD_RATIONALE, gate_
 from memorymaster.core.service import MemoryService
 from memorymaster.dreaming import held
 from memorymaster.dreaming.extraction_window import PIECE_CHARS, extraction_complete, next_window
-from memorymaster.dreaming.ledger import LANE_ALL, DreamLedger
+from memorymaster.dreaming.ledger import LANE_ALL, SLOW_CAPTURE_BYTES, SLOW_ERROR_COUNT, DreamLedger
 from memorymaster.dreaming.models import (
     ConsolidationResult,
     DreamCandidate,
@@ -116,6 +116,10 @@ def _is_timeout(error: BaseException | None) -> bool:
         seen.add(id(error))
         error = error.__cause__
     return False
+
+
+def _is_slow(row: dict[str, Any]) -> bool:
+    return int(row.get("byte_count") or 0) >= SLOW_CAPTURE_BYTES or int(row.get("error_count") or 0) >= SLOW_ERROR_COUNT
 
 
 def _json_bytes(value: Any) -> int:
@@ -717,7 +721,7 @@ class DreamWorker:
                         )),
                     )
                 self._hold_lease()
-                self._mark_semantic_failure(row, run_id, exc, stage="extract", charge=self._timeout_charged(exc))
+                self._mark_semantic_failure(row, run_id, exc, stage="extract", charge=self._timeout_charged(exc, row))
                 summary["errors"] += 1
                 return None, (isinstance(exc, ProviderCallError) and exc.http_status == 429) or (
                     _is_timeout(exc) and summary["abandoned_calls"] >= MAX_ABANDONED_CALLS)
@@ -730,10 +734,11 @@ class DreamWorker:
                 break  # active again: the idle gate decides when the new tail is extracted
         return None, False
 
-    def _timeout_charged(self, error: BaseException) -> bool:
-        """A timeout is charged to the capture (error_count, so backoff and quarantine apply) only when the
-        provider answered another call in this run; otherwise it may be an outage and costs nothing."""
-        return _is_timeout(error) and self._answered > 0
+    def _timeout_charged(self, error: BaseException, row: dict[str, Any]) -> bool:
+        """A timeout is charged to the capture (error_count, so backoff and quarantine apply) when the provider
+        answered another call in this run, or the capture is already slow-lane (no benefit of the doubt);
+        otherwise it may be an outage and costs nothing."""
+        return _is_timeout(error) and (self._answered > 0 or _is_slow(row))
 
     def _mark_semantic_failure(
         self, row: dict[str, Any], run_id: str, error: Exception, *, stage: str, charge: bool = False,
@@ -1081,9 +1086,11 @@ class DreamWorker:
                     self.ledger.record_consolidation_trip(capture_ids, alone=len(capture_ids) == 1 and answered > 0, now=self.now())
                     provider_deferred.update(capture_ids)
                     summary["deferred_consolidate_provider"] = len(provider_deferred)
-                    if answered > 0:  # the provider answered others: the hang is these captures' (slow lane, backoff)
+                    # The provider answered others, or the capture is slow-lane already: the hang is its own.
+                    charged = [int(r["id"]) for r, _ in pairs if answered > 0 or _is_slow(r)]
+                    if charged:
                         self._hold_lease()
-                        self.ledger.charge_hang(capture_ids, run_id, max_errors=self.config.max_capture_errors)
+                        self.ledger.charge_hang(charged, run_id, max_errors=self.config.max_capture_errors)
                     continue
                 if provider_wide:
                     # Mirror of the extraction 429 break: one provider-wide

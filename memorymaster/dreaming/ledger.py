@@ -382,8 +382,8 @@ class DreamLedger:
         it in that prefix; they count against the slots.
 
         ``lane``: ``beat`` skips slow captures (large, or with a counted failure); ``dream`` takes them once their
-        backoff elapsed, before the ordinary quota and in up to ``slow_slots`` slots of
-        their own when given (the ordinary quota is unchanged), else within ``max_sessions``; ``all`` applies no lane rule. An uncounted failure waits
+        backoff elapsed, AFTER the ordinary quota, in up to ``slow_slots`` extra slots (else what is left of
+        ``max_sessions``); ``all`` applies no lane rule. An uncounted failure waits
         ``UNCHARGED_RETRY_WAIT_MINUTES`` in both lanes.
         """
         current = now or _utc_now()
@@ -425,15 +425,17 @@ class DreamLedger:
             if wanted and len(taken) + len(wanted) <= cap:
                 taken.extend(wanted)
 
-        if lane == LANE_DREAM:  # slow captures whose backoff elapsed: nothing else will serve them
+        # The ordinary quota is served FIRST (a bad slow capture must not eat the daily provider cap or the run);
+        # slow captures whose backoff elapsed follow, in their own slots: nothing else will serve them.
+        ordinary = [m for m in by_age if not m[2]["slow"]] if lane == LANE_DREAM else by_age
+        for key, pos, row in reversed(ordinary):
+            take(key, pos, limit - min(limit, oldest_reserve))
+        for key, pos, row in ordinary:
+            take(key, pos, limit)
+        if lane == LANE_DREAM:
+            cap = len(taken) + slow_slots if slow_slots > 0 else limit
             for key, pos, row in (m for m in by_age if m[2]["slow"]):
-                take(key, pos, slow_slots if slow_slots > 0 else limit)
-        base = len(taken) if slow_slots > 0 else 0  # own slots: the ordinary quota is on top of them
-        newest_cap = base + limit - min(limit, oldest_reserve)
-        for key, pos, row in reversed(by_age):
-            take(key, pos, newest_cap)
-        for key, pos, row in by_age:
-            take(key, pos, base + limit)
+                take(key, pos, cap)
         if not taken:
             return []
         with self._connect() as conn:

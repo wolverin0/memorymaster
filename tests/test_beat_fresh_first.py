@@ -162,13 +162,15 @@ def test_the_dream_run_takes_a_large_capture_and_respects_the_failure_backoff(tm
     assert picked(failed_at + timedelta(hours=wait + 1)) == sorted([large, failed])
 
 
-def test_the_dream_run_serves_due_slow_captures_before_the_ordinary_quota(tmp_path: Path) -> None:
+def test_the_dream_run_serves_the_ordinary_quota_before_due_slow_captures(tmp_path: Path) -> None:
     ledger = DreamLedger(tmp_path / "capture.db")
     old, new = _queue(ledger, backlog=0, fresh=5)
-    slow = new[0]  # the OLDEST activity of the five, but slow: nothing else will serve it
+    slow = new[0]
     _set(ledger, slow, error_count=SLOW_ERROR_COUNT, updated_at=(NOW - timedelta(days=3)).isoformat())
 
-    assert _picked(ledger, 2, 1, lane=LANE_DREAM)[0] == slow
+    picked = ledger.eligible(idle_minutes=0, max_sessions=2, now=NOW, oldest_reserve=1, lane=LANE_DREAM, slow_slots=5)
+    ids = [int(r["id"]) for r in picked]
+    assert ids[-1] == slow and len(ids) == 3 and slow not in ids[:2]  # ordinary first, the slow one after them
     assert slow not in _picked(ledger, 2, 1, lane=LANE_BEAT)
 
 

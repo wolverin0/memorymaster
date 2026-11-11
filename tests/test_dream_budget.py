@@ -549,7 +549,8 @@ def test_a_slow_capture_that_always_hangs_is_charged_every_run_and_never_starves
     offset = {"d": 0}
     ledger = DreamLedger(tmp_path / "capture.db")
     big = [H["_capture"](ledger, session_hash=f"big{n}", extra_text=f" BIG{n}") for n in range(2)]
-    ordinary = [H["_capture"](ledger, session_hash=f"ord{n}", extra_text=f" {n}") for n in range(10)]
+    for n in range(10):
+        H["_capture"](ledger, session_hash=f"ord{n}", extra_text=f" {n}")
     with ledger._connect() as conn:
         conn.executemany("UPDATE dream_captures SET byte_count=? WHERE id=?", [(2 * SLOW_CAPTURE_BYTES, i) for i in big])
     cfg = replace(DreamConfig(), idle_minutes=0, jev_triage_enabled=False, max_sessions=20, oldest_reserve=10,
