@@ -277,6 +277,7 @@ def test_atlas_digest_prompt_leaves_out_blocked_lines_and_redacts_the_rest():
 # ---- no new ungated call_llm site -----------------------------------------------------------
 
 GATED = {
+    "scripts/label_prompts_with_judge.py",
     "memorymaster/govern/auto_resolver.py",
     "memorymaster/govern/jobs/compact_summaries.py",
     "memorymaster/govern/llm_steward.py",
@@ -300,7 +301,6 @@ GATED = {
 DORMANT = {  # ungated, dormant: gate before enabling (see core/provider_egress.py)
     "memorymaster/core/llm_budget.py",
     "memorymaster/core/llm_provider.py",
-    "scripts/label_prompts_with_judge.py",
 }
 _CALL = re.compile(r"(?<![\w.])(?:\w+\.)?_?call_llm\(")
 
