@@ -10,11 +10,15 @@ claims, and nothing runs unless the operator calls ``transcript-index`` /
 
 Design
 ------
-* Source: ``~/.claude/projects/*/*.jsonl`` (read-only).  Only user/assistant
-  ``text`` blocks are indexed; tool calls/results, sidechains and harness noise
-  are skipped.
+* Sources (all read-only, each independently failing; see ``SOURCES``): Claude
+  ``~/.claude/projects/*/*.jsonl``, Codex ``~/.codex/sessions/Y/M/D/rollout-*.jsonl``, Antigravity
+  ``~/.gemini/antigravity*/brain/<uuid>/.system_generated/logs`` and OpenCode ``opencode.db``
+  (``transcript_sources.py``; T-2277).  Only user/assistant text is indexed; tool calls/results,
+  sidechains/sub-agents, headless runs and harness noise are skipped.  A fragment records its ``source``
+  (added to an existing index by ``ALTER TABLE``, so no rebuild); agy/OpenCode have no JSONL lines, so their
+  ``first_line``/``last_line`` are step/message ordinals and their sessions are re-read whole when they change.
 * Incremental: per-file ``(size, mtime_ns, byte offset, line count, prefix
-  sha256)``.  Files are append-only, so a grown file is parsed from the stored
+  sha256)`` (JSONL sources; OpenCode keys on its message/part change stamps).  Files are append-only, so a grown file is parsed from the stored
   offset *if* its indexed prefix still hashes to the stored digest; an
   unchanged one is skipped; a shrunk or rewritten one is re-indexed from
   scratch, and the fragments of a transcript that no longer exists are dropped.
@@ -28,7 +32,9 @@ Design
   marker (built by the earlier unsanitised code) is never served by
   :func:`search` and is dropped and rebuilt by :func:`index_transcripts`
   (``memorymaster transcript-index``).
-* Session id = ``sha256(<project-dir>/<file>)[:16]`` -- opaque (no username
+* Deployment: the indexer and the hooks that search it must be the same version.  An older indexer (it only
+  knows Claude) deletes every non-Claude row on its next run; this one re-parses them on its next run.
+* Session id = ``sha256(<project-dir>/<file>)[:16]`` (other sources hash ``<source>:<id or path>``) -- opaque (no username
   leaks from the encoded project directory) and identical to the T-1817 bench
   transcript id.  Fragments store the 0-based JSONL line range they cover.
 * Ranking: FTS5 BM25 relevance first; among results whose relevance is within
@@ -43,27 +49,37 @@ import hashlib
 import json
 import logging
 import os
-import re
 import sqlite3
 import time
 from contextlib import closing
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Callable, NamedTuple
 
 from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.core.security import sanitize_persisted_text
+from memorymaster.recall import transcript_sources as ts
 from memorymaster.recall.recall_tokenizer import _candidate_tokens, centered_excerpt
 from memorymaster.stores._storage_shared import connect_ro, open_conn
 
 logger = logging.getLogger(__name__)
 
 INDEX_ENV = "MEMORYMASTER_TRANSCRIPT_INDEX"
-ROOT_ENV = "MEMORYMASTER_TRANSCRIPT_ROOT"
+ROOT_ENV = "MEMORYMASTER_TRANSCRIPT_ROOT"  # the Claude root (unchanged meaning); one more variable per source:
+ROOT_ENVS = {
+    "claude": ROOT_ENV,
+    "codex": "MEMORYMASTER_TRANSCRIPT_ROOT_CODEX",
+    "agy": "MEMORYMASTER_TRANSCRIPT_ROOT_AGY",
+    "opencode": "MEMORYMASTER_TRANSCRIPT_ROOT_OPENCODE",
+}
+SOURCES = tuple(ROOT_ENVS)
+OFF_VALUES = {"off", "none", "0", "false", "no", "disabled"}  # a root variable set to one of these switches the source off
 
 FORMAT_VERSION = 1  # PRAGMA user_version; 0 = built before sanitise-on-write (T-1876)
 CHUNK_CHARS = 1800  # fragment size target (characters of "role: text")
-MIN_MESSAGE_CHARS = 20
+MIN_MESSAGE_CHARS = ts.MIN_MESSAGE_CHARS
 RELEVANCE_BAND = 0.05  # relevance fraction within which recency breaks ties
 EXCERPT_CHARS = 600
 MAX_QUERY_TOKENS = 12
@@ -71,11 +87,13 @@ MAX_QUERY_TOKENS = 12
 # record with this entrypoint; their transcripts quote prompts and answer keys.
 AUTOMATED_ENTRYPOINT = "sdk-cli"
 
-_NOISE = re.compile(r"^(<local-command|<command-name>|<system-reminder>|\[MemoryMaster|Caveat:)", re.I)
+_NOISE = ts.NOISE
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     rel TEXT PRIMARY KEY,
+    source TEXT NOT NULL DEFAULT 'claude',
+    state TEXT NOT NULL DEFAULT '',
     session_id TEXT NOT NULL,
     size INTEGER NOT NULL,
     mtime_ns INTEGER NOT NULL,
@@ -87,6 +105,7 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS fragments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'claude',
     scope TEXT NOT NULL,
     date TEXT NOT NULL,
     first_line INTEGER NOT NULL,
@@ -111,6 +130,7 @@ class TranscriptHit:
     last_line: int
     score: float
     excerpt: str
+    source: str = "claude"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -126,8 +146,41 @@ def default_root() -> Path:
     return Path(raw).expanduser() if raw else Path.home() / ".claude" / "projects"
 
 
-def session_id_for(root: Path, path: Path) -> str:
-    return hashlib.sha256(path.relative_to(root).as_posix().encode()).hexdigest()[:16]
+def source_root(name: str) -> Path | None:
+    """The root of one source (its env variable, else the CLI's default home location); ``None`` = switched off."""
+    raw = os.environ.get(ROOT_ENVS[name], "").strip()
+    if raw.lower() in OFF_VALUES:
+        return None
+    if name == "claude":
+        return default_root()
+    if raw:
+        return Path(raw).expanduser()
+    home = Path.home()
+    return {
+        "codex": home / ".codex" / "sessions",
+        "agy": home / ".gemini",
+        "opencode": Path(os.environ.get("XDG_DATA_HOME") or home / ".local" / "share") / "opencode",
+    }[name]
+
+
+def session_id_for(root: Path, path: Path, source: str = "claude") -> str:
+    rel = path.relative_to(root).as_posix()
+    return hashlib.sha256((rel if source == "claude" else f"{source}:{rel}").encode()).hexdigest()[:16]
+
+
+def _opaque_id(source: str, ident: str) -> str:
+    return hashlib.sha256(f"{source}:{ident}".encode()).hexdigest()[:16]
+
+
+_ADDED_COLUMNS = (
+    ("files", "source", "TEXT NOT NULL DEFAULT 'claude'"),
+    ("files", "state", "TEXT NOT NULL DEFAULT ''"),
+    ("fragments", "source", "TEXT NOT NULL DEFAULT 'claude'"),
+)
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
 
 
 def _connect(index_path: Path) -> tuple[sqlite3.Connection, bool]:
@@ -147,11 +200,17 @@ def _connect(index_path: Path) -> tuple[sqlite3.Connection, bool]:
         conn.execute("VACUUM")
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         rebuilt = True
-    elif has_tables and "automated" not in {r[1] for r in conn.execute("PRAGMA table_info(files)")}:
+    elif has_tables and "automated" not in _columns(conn, "files"):
         # T-2077 L28: additive, so a current-format index is not made unservable. Sessions that stored no
         # fragment are treated as skipped-automated once (a tool-only session just gets re-parsed, harmlessly).
         conn.execute("ALTER TABLE files ADD COLUMN automated INTEGER NOT NULL DEFAULT 0")
         conn.execute("UPDATE files SET automated = 1 WHERE session_id NOT IN (SELECT DISTINCT session_id FROM fragments)")
+        conn.commit()
+    if has_tables and not rebuilt:
+        # T-2277: additive too (the rows already in the index are all Claude's, which is the column default)
+        for table, column, ddl in _ADDED_COLUMNS:
+            if column not in _columns(conn, table):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         conn.commit()
     conn.executescript(_SCHEMA)
     conn.execute(f"PRAGMA user_version = {int(FORMAT_VERSION)}")
@@ -252,30 +311,105 @@ def _scope_for_cwd(cwd: object, cache: dict[str, str]) -> str:
     return cache[cwd]
 
 
+class _Packer:
+    """Cuts whole sanitised messages into fragments: at most :data:`CHUNK_CHARS` each, never spanning two scopes."""
+
+    def __init__(self) -> None:
+        self.fragments: list[tuple[str, str, int, int, str]] = []  # (scope, date, first, last, text)
+        self._buf: list[str] = []
+        self._size = 0
+        self._first = self._last = 0
+        self._date = self._scope = ""
+
+    def _flush(self) -> None:
+        if self._buf:
+            self.fragments.append((self._scope, self._date, self._first, self._last, "\n".join(self._buf)))
+        self._buf, self._size = [], 0
+
+    def add(self, role: str, text: str, scope: str, date: str, line: int) -> None:
+        if self._buf and scope != self._scope:
+            self._flush()
+        for piece in _pieces(text):
+            entry = f"{role}: {piece}"
+            if self._buf and self._size + len(entry) > CHUNK_CHARS:
+                self._flush()
+            if not self._buf:
+                self._first, self._date, self._scope = line, date, scope
+            self._buf.append(entry)
+            self._last = line
+            self._size += len(entry)
+
+    def done(self) -> list[tuple[str, str, int, int, str]]:
+        self._flush()
+        return self.fragments
+
+
+class _Dialect(NamedTuple):
+    """How one append-only JSONL source says who spoke, what, and in which workspace."""
+
+    automated: Callable[[dict], bool]
+    # (record, per-file state, scope cache) -> (role, sanitised text, scope); text/scope "" = not indexable
+    read: Callable[[dict, dict, dict[str, str]], tuple[str, str, str]]
+
+
+def _claude_read(record: dict, state: dict, scopes: dict[str, str]) -> tuple[str, str, str]:
+    role, text = _message_text(record)
+    return role, text, _scope_for_cwd(record.get("cwd"), scopes) if text else ""
+
+
+@lru_cache(maxsize=1)
+def _conversation_record() -> Callable[..., Any]:
+    # the dreaming capture's Codex normaliser (tool results, memory-tool echoes, role mapping); imported on first use
+    from memorymaster.dreaming.capture import _conversation_record as record
+
+    return record
+
+
+def _codex_read(record: dict, state: dict, scopes: dict[str, str]) -> tuple[str, str, str]:
+    payload = record.get("payload")
+    if record.get("type") in ("session_meta", "turn_context") and isinstance(payload, dict):
+        if payload.get("cwd"):
+            state["scope"] = _scope_for_cwd(payload["cwd"], scopes)  # the scope, never the raw path, is what persists
+        return "", "", ""
+    found = _conversation_record()(record, "codex", state=state.setdefault("mm", {}))
+    if not found:
+        return "", "", ""
+    role, spans = found
+    text = ts.usable_text(role, "\n".join(span.text for span in spans))
+    return role, text, state.get("scope", "") if text else ""
+
+
+def _codex_automated(record: dict) -> bool:
+    payload = record.get("payload")
+    return (record.get("type") == "session_meta" and isinstance(payload, dict)
+            and (payload.get("originator") == "codex_exec" or isinstance(payload.get("source"), dict)
+                 or ts.is_generated_cwd(payload.get("cwd"))))
+
+
+_DIALECTS = {
+    "claude": _Dialect(
+        lambda record: record.get("entrypoint") == AUTOMATED_ENTRYPOINT or ts.is_generated_cwd(record.get("cwd")),
+        _claude_read),
+    "codex": _Dialect(_codex_automated, _codex_read),
+}
+
+
 def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, skip_automated: bool,
-                     hasher, scopes: dict[str, str]):
+                     hasher, scopes: dict[str, str], dialect: _Dialect = _DIALECTS["claude"],
+                     state: dict | None = None):
     """Parse complete lines from ``offset``; return ``(fragments, new_offset, new_lines, automated)``.
 
     ``hasher`` (the sha256 state of the bytes before ``offset``) is advanced over every consumed line.
-    ``automated`` is True (and fragments empty) when ``skip_automated`` and a record
-    carries the headless-session entrypoint; the caller records the file as seen.
+    ``automated`` is True (and fragments empty) when ``skip_automated`` and the ``dialect`` flags a record
+    as a headless session; the caller records the file as seen.  ``state`` carries what a dialect learns from
+    earlier lines (the Codex workspace) in and out.
 
-    Fragments are ``(scope, date, first_line, last_line, text)``; scope comes from each record's own ``cwd``
-    and a fragment never spans two scopes.  An unterminated trailing line is left for the next run.
+    Fragments are ``(scope, date, first_line, last_line, text)``; scope comes from the dialect (Claude: each
+    record's own ``cwd``) and a fragment never spans two scopes.  An unterminated trailing line is left for
+    the next run.
     """
-    fragments: list[tuple[str, str, int, int, str]] = []
-    buf: list[str] = []
-    size = 0
-    first = last = 0
-    date = fallback_date
-    buf_scope = ""
-
-    def flush() -> None:
-        nonlocal buf, size
-        if buf:
-            fragments.append((buf_scope, date, first, last, "\n".join(buf)))
-        buf, size = [], 0
-
+    state = {} if state is None else state
+    packer = _Packer()
     with path.open("rb") as fh:
         fh.seek(offset)
         for raw in fh:
@@ -291,27 +425,13 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, 
             line_no += 1
             if not isinstance(record, dict):
                 continue
-            if skip_automated and record.get("entrypoint") == AUTOMATED_ENTRYPOINT:
+            state["records"] = state.get("records", 0) + 1
+            if skip_automated and dialect.automated(record):
                 return [], offset, line_no, True
-            role, text = _message_text(record)
-            scope = _scope_for_cwd(record.get("cwd"), scopes) if text else ""
-            if not text or not scope:
-                continue
-            if buf and scope != buf_scope:
-                flush()
-            for piece in _pieces(text):
-                entry = f"{role}: {piece}"
-                if buf and size + len(entry) > CHUNK_CHARS:
-                    flush()
-                if not buf:
-                    first = this_line
-                    date = _iso_date(record.get("timestamp"), fallback_date)
-                    buf_scope = scope
-                buf.append(entry)
-                last = this_line
-                size += len(entry)
-    flush()
-    return fragments, offset, line_no, False
+            role, text, scope = dialect.read(record, state, scopes)
+            if text and scope:
+                packer.add(role, text, scope, _iso_date(record.get("timestamp"), fallback_date), this_line)
+    return packer.done(), offset, line_no, False
 
 
 def _delete_session(conn: sqlite3.Connection, session_id: str) -> None:
@@ -323,6 +443,241 @@ def _delete_session(conn: sqlite3.Connection, session_id: str) -> None:
     conn.execute("DELETE FROM fragments WHERE session_id = ?", (session_id,))
 
 
+def _write_session(conn: sqlite3.Connection, source: str, rel: str, sid: str, frags: list, *, replace: bool,
+                   size: int, mtime_ns: int, offset: int = 0, lines: int = 0, prefix_sha: str = "",
+                   automated: bool = False, state: str = "") -> None:
+    with conn:
+        if replace:
+            _delete_session(conn, sid)
+        for scope, date, first, last, text in frags:
+            cur = conn.execute(
+                "INSERT INTO fragments(session_id, source, scope, date, first_line, last_line, text) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (sid, source, scope, date, first, last, text),
+            )
+            conn.execute("INSERT INTO fragments_fts(rowid, text) VALUES (?, ?)", (cur.lastrowid, text))
+        conn.execute(
+            "INSERT OR REPLACE INTO files(rel, source, state, session_id, size, mtime_ns, offset, lines, prefix_sha, "
+            "automated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (rel, source, state, sid, size, mtime_ns, offset, lines, prefix_sha, int(automated)),
+        )
+
+
+def _drop_gone(conn: sqlite3.Connection, stats: dict[str, int], source: str, existing: set[str]) -> None:
+    """A session that no longer exists must stop being searchable.  ``existing`` spans the whole source, so
+    --since-days / --max-files never read as a deletion."""
+    for gone in [r for r in conn.execute("SELECT rel, session_id FROM files WHERE source = ?", (source,)).fetchall()
+                 if r["rel"] not in existing]:
+        with conn:
+            _delete_session(conn, gone["session_id"])
+            conn.execute("DELETE FROM files WHERE rel = ?", (gone["rel"],))
+        stats["files_removed"] += 1
+
+
+_PER_SOURCE = ("files_seen", "files_indexed", "errors")
+
+
+def _tick(stats: dict[str, int], source: str, key: str) -> None:
+    stats[key] += 1
+    if key in _PER_SOURCE:
+        stats[f"{source}_{key}"] += 1
+    elif key.startswith("skipped_"):
+        stats[f"{source}_{key}"] = stats.get(f"{source}_{key}", 0) + 1
+
+
+def _failed(stats: dict[str, int], source: str) -> None:
+    """The source as a whole could not be read this run (as opposed to one session in it)."""
+    stats["sources_failed"] += 1
+    stats[f"{source}_failed"] = 1
+
+
+class _Run(NamedTuple):
+    conn: sqlite3.Connection
+    stats: dict[str, int]
+    cutoff: float | None
+    max_files: int | None
+    include_automated: bool
+    scopes: dict[str, str]
+
+    def full(self, source: str) -> bool:
+        return self.max_files is not None and self.stats[f"{source}_files_indexed"] >= self.max_files
+
+
+def _index_jsonl(run: _Run, source: str, root: Path, paths: list[Path]) -> None:
+    """Incremental scan of an append-only JSONL source (Claude projects, Codex rollouts)."""
+    conn, stats = run.conn, run.stats
+    dialect = _DIALECTS[source]
+    prefix = "" if source == "claude" else f"{source}:"
+    _drop_gone(conn, stats, source, {prefix + path.relative_to(root).as_posix() for path in paths})
+    for path in paths:
+        if run.full(source):
+            break
+        try:
+            st = path.stat()
+        except OSError:
+            _tick(stats, source, "errors")
+            continue
+        if run.cutoff is not None and st.st_mtime < run.cutoff:
+            continue
+        _tick(stats, source, "files_seen")
+        rel = prefix + path.relative_to(root).as_posix()
+        sid = session_id_for(root, path, source)
+        row = conn.execute("SELECT * FROM files WHERE rel = ?", (rel,)).fetchone()
+        # a session skipped as automated stored no fragments: --include-automated must re-parse it, and an
+        # appended one is re-read from the start (its marker is in the head, not the tail)
+        was_automated = bool(row and row["automated"])
+        if (row and row["size"] == st.st_size and row["mtime_ns"] == st.st_mtime_ns
+                and not (was_automated and run.include_automated)):
+            stats["files_skipped"] += 1
+            continue
+        offset, line_no = 0, 0
+        state: dict = {}
+        try:
+            resumable = row and st.st_size >= row["offset"] and not was_automated
+            hasher = _verified_prefix(path, row["offset"], row["prefix_sha"]) if resumable else None
+            if hasher is not None:
+                offset, line_no, state = row["offset"], row["lines"], {"scope": row["state"]}
+            else:
+                hasher = hashlib.sha256()  # new, shrunk or rewritten file: parse from the start
+            frags, new_offset, new_lines, automated = _parse_increment(
+                path, offset, line_no, _mtime_iso(st.st_mtime_ns), not run.include_automated, hasher, run.scopes,
+                dialect, state,
+            )
+        except OSError as exc:
+            logger.warning("transcript_index: cannot read %s: %s", rel, exc)
+            _tick(stats, source, "errors")
+            continue
+        if offset == 0 and new_lines and not state.get("records"):
+            _tick(stats, source, "errors")  # complete lines but not one JSON object: not a transcript of this source
+        _write_session(conn, source, rel, sid, frags, replace=bool(row) and offset == 0, size=st.st_size,
+                       mtime_ns=st.st_mtime_ns, offset=new_offset, lines=new_lines, prefix_sha=hasher.hexdigest(),
+                       automated=automated, state=state.get("scope", ""))
+        if automated:
+            stats["files_automated"] += 1
+            continue
+        if source != "claude" and not state.get("scope"):
+            _tick(stats, source, "skipped_no_workspace")  # not attributable: stored nothing
+            continue
+        _tick(stats, source, "files_indexed")
+        stats["fragments_added"] += len(frags)
+
+
+def _pack(messages: list[ts.Msg], scope: str, fallback_date: str) -> list[tuple[str, str, int, int, str]]:
+    packer = _Packer()
+    for message in messages if scope else ():  # a session without a resolvable workspace is not attributable
+        packer.add(message.role, message.text, scope, _iso_date(message.timestamp, fallback_date), message.ordinal)
+    return packer.done()
+
+
+def _index_agy(run: _Run, root: Path) -> None:
+    """Antigravity: a session is re-read whole when its transcript (or its workspace companion db) changed."""
+    conn, stats = run.conn, run.stats
+    found = ts.agy_sessions(root)
+    _drop_gone(conn, stats, "agy", {f"agy:{uuid}" for uuid in found})
+    for uuid, session in sorted(found.items()):
+        if run.full("agy"):
+            break
+        try:
+            size, mtime_ns = ts.agy_stamp(session)
+        except OSError:
+            _tick(stats, "agy", "errors")
+            continue
+        if run.cutoff is not None and mtime_ns / 1e9 < run.cutoff:
+            continue
+        _tick(stats, "agy", "files_seen")
+        rel = f"agy:{uuid}"
+        row = conn.execute("SELECT size, mtime_ns, automated FROM files WHERE rel = ?", (rel,)).fetchone()
+        if row and row["size"] == size and row["mtime_ns"] == mtime_ns and not (row["automated"] and run.include_automated):
+            stats["files_skipped"] += 1
+            continue
+        try:
+            read = ts.agy_session(session, lambda cwd: _scope_for_cwd(cwd, run.scopes), run.include_automated)
+        except (OSError, ValueError, UnicodeError) as exc:  # AgySourceError is a ValueError
+            logger.warning("transcript_index: cannot read an agy session: %s", type(exc).__name__)
+            _tick(stats, "agy", "errors")
+            continue
+        frags = _pack(read.messages, read.scope, _mtime_iso(mtime_ns))
+        _write_session(conn, "agy", rel, _opaque_id("agy", uuid), frags, replace=bool(row), size=size, mtime_ns=mtime_ns,
+                       automated=read.automated)
+        if read.automated:
+            stats["files_automated"] += 1
+        elif not read.scope:
+            _tick(stats, "agy", "skipped_no_workspace")
+        else:
+            _tick(stats, "agy", "files_indexed")
+            stats["fragments_added"] += len(frags)
+
+
+def _index_opencode(run: _Run, root: Path) -> None:
+    """OpenCode: the incremental key of a session is its message/part change stamp (there is no append-only file)."""
+    conn, stats = run.conn, run.stats
+    try:
+        found = ts.opencode_sessions(root)  # a locked/unreadable database skips the whole round
+    except sqlite3.Error as exc:
+        logger.warning("transcript_index: opencode database unavailable: %s", type(exc).__name__)
+        _tick(stats, "opencode", "errors")
+        _failed(stats, "opencode")
+        return
+    _drop_gone(conn, stats, "opencode", {f"opencode:{sid}" for sid, info in found.items() if not info.child})
+    for sid, info in sorted(found.items()):
+        if info.child:
+            continue
+        if run.full("opencode"):
+            break
+        if run.cutoff is not None and info.mtime_ms / 1000 < run.cutoff:
+            continue
+        _tick(stats, "opencode", "files_seen")
+        rel = f"opencode:{sid}"
+        row = conn.execute("SELECT state, automated FROM files WHERE rel = ?", (rel,)).fetchone()
+        if row and row["state"] == info.key and not (row["automated"] and run.include_automated):
+            stats["files_skipped"] += 1
+            continue
+        automated = ts.is_generated_cwd(info.directory) and not run.include_automated
+        scope = _scope_for_cwd(info.directory, run.scopes)
+        messages: list[ts.Msg] = []
+        oversized = False
+        if automated or (info.directory and not scope):
+            pass  # decided from the listing: nothing to read
+        else:
+            try:
+                directory, messages = ts.opencode_session(root, sid)
+            except (sqlite3.Error, OSError, ValueError, TypeError, OverflowError) as exc:
+                if ts.is_oversized(exc):
+                    oversized = True  # a property of the data: recorded with its key, re-read only when it changes
+                else:
+                    logger.warning("transcript_index: cannot read an opencode session: %s", type(exc).__name__)
+                    _tick(stats, "opencode", "errors")
+                    if isinstance(exc, sqlite3.Error) and ts.is_locked(exc):
+                        return  # the producer is writing: try the rest next round
+                    continue
+            else:
+                scope = scope or _scope_for_cwd(directory, run.scopes)  # the legacy layout reports it only here
+                automated = ts.is_generated_cwd(directory) and not run.include_automated
+        frags = _pack([] if automated else messages, scope, _mtime_iso(info.mtime_ms * 1_000_000))
+        _write_session(conn, "opencode", rel, _opaque_id("opencode", sid), frags, replace=bool(row), size=info.size,
+                       mtime_ns=info.mtime_ms, state=info.key, automated=automated)
+        if automated:
+            stats["files_automated"] += 1
+        elif oversized:
+            _tick(stats, "opencode", "skipped_oversized")
+        elif not scope:
+            _tick(stats, "opencode", "skipped_no_workspace")
+        else:
+            _tick(stats, "opencode", "files_indexed")
+            stats["fragments_added"] += len(frags)
+
+
+def _plan(root: Path | None) -> tuple[list[tuple[str, Path]], list[str]]:
+    """``(sources to scan with their existing roots, sources switched off)``.  An explicit ``root`` is the Claude
+    root alone: the other sources are neither scanned nor touched."""
+    if root is not None:
+        root = root.expanduser()
+        return ([("claude", root)] if root.is_dir() else []), []
+    roots = {name: source_root(name) for name in SOURCES}
+    return ([(n, r) for n, r in roots.items() if r is not None and r.is_dir()],
+            [n for n, r in roots.items() if r is None])
+
+
 def index_transcripts(
     root: Path | None = None,
     index_path: Path | None = None,
@@ -331,88 +686,44 @@ def index_transcripts(
     max_files: int | None = None,
     include_automated: bool = False,
 ) -> dict[str, int]:
-    """Index new/changed transcripts under ``root`` (read-only scan) into the sidecar.
+    """Index new/changed transcripts (read-only scan) into the sidecar.
 
-    ``since_days`` skips files not modified inside that window (a cheap cap for
-    first runs on very large histories).  Returns counters.
+    ``root`` is the Claude projects root; given, only it is scanned.  Without it every source in
+    :data:`SOURCES` is scanned at its default or ``MEMORYMASTER_TRANSCRIPT_ROOT[_<SOURCE>]`` location (a
+    missing root is skipped; ``off`` switches a source off and drops what it had indexed).  One source failing
+    never stops the others: it is counted in ``errors`` / ``<source>_errors``.  ``since_days`` skips sessions not
+    modified inside that window and ``max_files`` stops each source after that many sessions (cheap caps for first
+    runs on very large histories).  Returns counters.
     """
-    root = (root or default_root()).expanduser()
     index_path = index_path or default_index_path()
+    plan, switched_off = _plan(root)
     stats = {"files_seen": 0, "files_indexed": 0, "files_skipped": 0, "fragments_added": 0, "files_automated": 0,
-             "files_removed": 0, "rebuilt": 0, "errors": 0}
-    if not root.is_dir():
+             "files_removed": 0, "rebuilt": 0, "errors": 0, "skipped_no_workspace": 0, "skipped_oversized": 0,
+             "sources_failed": 0}
+    for name, _ in plan:
+        stats.update({f"{name}_{key}": 0 for key in _PER_SOURCE})
+    if not plan:
         return stats
-    cutoff = time.time() - since_days * 86400 if since_days else None
-    scopes: dict[str, str] = {}
-    paths = sorted(root.glob("*/*.jsonl"))
-    existing = {path.relative_to(root).as_posix() for path in paths}
     conn, rebuilt = _connect(index_path)
     stats["rebuilt"] = int(rebuilt)
+    run = _Run(conn, stats, time.time() - since_days * 86400 if since_days else None, max_files,
+               include_automated, {})
     with closing(conn):
-        # a transcript that no longer exists must stop being searchable (existence is judged over the whole
-        # root, so --since-days / --max-files never read as a deletion)
-        for gone in [r for r in conn.execute("SELECT rel, session_id FROM files").fetchall() if r["rel"] not in existing]:
-            with conn:
-                _delete_session(conn, gone["session_id"])
-                conn.execute("DELETE FROM files WHERE rel = ?", (gone["rel"],))
-            stats["files_removed"] += 1
-        for path in paths:
-            if max_files is not None and stats["files_indexed"] >= max_files:
-                break
+        for name in switched_off:
+            _drop_gone(conn, stats, name, set())
+        for name, source_dir in plan:
             try:
-                st = path.stat()
-            except OSError:
-                stats["errors"] += 1
-                continue
-            if cutoff is not None and st.st_mtime < cutoff:
-                continue
-            stats["files_seen"] += 1
-            rel = path.relative_to(root).as_posix()
-            sid = session_id_for(root, path)
-            row = conn.execute("SELECT * FROM files WHERE rel = ?", (rel,)).fetchone()
-            # a session skipped as automated stored no fragments: --include-automated must re-parse it, and an
-            # appended one is re-read from the start (its marker is in the head, not the tail)
-            was_automated = bool(row and row["automated"])
-            if (row and row["size"] == st.st_size and row["mtime_ns"] == st.st_mtime_ns
-                    and not (was_automated and include_automated)):
-                stats["files_skipped"] += 1
-                continue
-            offset, line_no = 0, 0
-            try:
-                resumable = row and st.st_size >= row["offset"] and not was_automated
-                hasher = _verified_prefix(path, row["offset"], row["prefix_sha"]) if resumable else None
-                if hasher is not None:
-                    offset, line_no = row["offset"], row["lines"]
+                if name == "agy":
+                    _index_agy(run, source_dir)
+                elif name == "opencode":
+                    _index_opencode(run, source_dir)
                 else:
-                    hasher = hashlib.sha256()  # new, shrunk or rewritten file: parse from the start
-                frags, new_offset, new_lines, automated = _parse_increment(
-                    path, offset, line_no, _mtime_iso(st.st_mtime_ns), not include_automated, hasher, scopes
-                )
-            except OSError as exc:
-                logger.warning("transcript_index: cannot read %s: %s", rel, exc)
-                stats["errors"] += 1
-                continue
-            with conn:
-                if row and offset == 0:
-                    _delete_session(conn, sid)  # file shrank/rewritten: rebuild
-                for scope, date, first, last, text in frags:
-                    cur = conn.execute(
-                        "INSERT INTO fragments(session_id, scope, date, first_line, last_line, text) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                        (sid, scope, date, first, last, text),
-                    )
-                    conn.execute("INSERT INTO fragments_fts(rowid, text) VALUES (?, ?)", (cur.lastrowid, text))
-                conn.execute(
-                    "INSERT OR REPLACE INTO files(rel, session_id, size, mtime_ns, offset, lines, prefix_sha, automated) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (rel, sid, st.st_size, st.st_mtime_ns, new_offset, new_lines, hasher.hexdigest(),
-                     int(automated)),
-                )
-            if automated:
-                stats["files_automated"] += 1
-                continue
-            stats["files_indexed"] += 1
-            stats["fragments_added"] += len(frags)
+                    pattern = "*/*.jsonl" if name == "claude" else "*/*/*/rollout-*.jsonl"
+                    _index_jsonl(run, name, source_dir, sorted(source_dir.glob(pattern)))
+            except Exception as exc:  # noqa: BLE001 - one CLI's unreadable store never aborts the others
+                logger.warning("transcript_index: source %s failed: %s", name, type(exc).__name__)
+                _tick(stats, name, "errors")
+                _failed(stats, name)
     return stats
 
 
@@ -469,7 +780,7 @@ def search(
     if not match or not index_path.exists():
         return []
     sql = (
-        "SELECT f.date, f.session_id, f.scope, f.first_line, f.last_line, f.text, x.rank "
+        "SELECT f.date, f.session_id, {source} AS source, f.scope, f.first_line, f.last_line, f.text, x.rank "
         "FROM fragments_fts x JOIN fragments f ON f.id = x.rowid WHERE fragments_fts MATCH ?"
     )
     args: list[object] = [match]
@@ -491,6 +802,8 @@ def search(
                 logger.warning("transcript_index: index was built by an older format and is not served; "
                                "rebuild it with `memorymaster transcript-index`")
                 return []
+            # an index the next `transcript-index` has not migrated yet has no source column: all rows are Claude's
+            sql = sql.format(source="f.source" if "source" in _columns(conn, "fragments") else "'claude'")
             if expires is not None:
                 conn.set_progress_handler(lambda: 1 if time.perf_counter() > expires else 0, 5000)
             rows = conn.execute(sql, args).fetchall()
@@ -508,7 +821,7 @@ def search(
             TranscriptHit(
                 date=row["date"], session_id=row["session_id"], scope=row["scope"],
                 first_line=row["first_line"], last_line=row["last_line"],
-                score=round(-row["rank"], 4), excerpt=excerpt,
+                score=round(-row["rank"], 4), excerpt=excerpt, source=row["source"],
             )
         )
     return hits

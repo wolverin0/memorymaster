@@ -77,9 +77,13 @@ def _deadline_ms() -> float:
         return DEFAULT_DEADLINE_MS
 
 
+_UNIT = {"agy": "steps", "opencode": "messages"}  # these sources have no JSONL lines: the range is step/message ordinals
+
+
 def _label(hit: ti.TranscriptHit) -> str:
-    """Date, project, opaque session id and line range: enough to tell two same-day sessions apart and cite."""
-    return f"[{hit.date[:10]} {hit.scope} session={hit.session_id} lines {hit.first_line}-{hit.last_line}]"
+    """Date, project, (non-Claude) CLI, opaque session id and range: enough to tell two same-day sessions apart and cite."""
+    via = "" if hit.source == "claude" else f" {hit.source}"
+    return f"[{hit.date[:10]} {hit.scope}{via} session={hit.session_id} {_UNIT.get(hit.source, 'lines')} {hit.first_line}-{hit.last_line}]"
 
 
 def _quote(text: str) -> str:

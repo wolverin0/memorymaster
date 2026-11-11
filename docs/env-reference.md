@@ -5,7 +5,7 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 349 variables.
+Total: 355 variables.
 
 | Variable | Referenced in |
 |---|---|
@@ -27,6 +27,8 @@ Total: 349 variables.
 | `MEMORYMASTER_BEAT_GUARD_WINDOW_MINUTES` | `memorymaster/dreaming/latency_guard.py` |
 | `MEMORYMASTER_BEAT_HOOK_HARD_MS` | `memorymaster/dreaming/latency_guard.py` |
 | `MEMORYMASTER_BEAT_HOOK_SOFT_MS` | `memorymaster/dreaming/latency_guard.py` |
+| `MEMORYMASTER_BEAT_MAX_CONSOLIDATE_CAPTURES` | `memorymaster/surfaces/scheduled_task.py` |
+| `MEMORYMASTER_BEAT_MAX_SESSIONS` | `memorymaster/surfaces/scheduled_task.py` |
 | `MEMORYMASTER_BM25_` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_BM25_B` | `memorymaster/recall/context_hook.py` |
 | `MEMORYMASTER_BM25_K1` | `memorymaster/recall/context_hook.py` |
@@ -272,6 +274,7 @@ Total: 349 variables.
 | `MEMORYMASTER_RECALL_HOOK_MIN_TERMS` | `memorymaster/recall/hook_lexical.py` |
 | `MEMORYMASTER_RECALL_LEXICAL_MIN_RELEVANCE` | `memorymaster/recall/hook_policy.py` |
 | `MEMORYMASTER_RECALL_MACHINE_FILTER_` | `memorymaster/recall/machine_traffic.py` |
+| `MEMORYMASTER_RECALL_MACHINE_FILTER_CODEX` | `memorymaster/config_templates/hooks/memorymaster-codex-recall.py` |
 | `MEMORYMASTER_RECALL_QUERY_EXPANSION` | `memorymaster/recall/context_hook.py`, `memorymaster/recall/query_expansion.py` |
 | `MEMORYMASTER_RECALL_RERANK_LOCAL` | `memorymaster/recall/context_hook.py`, `memorymaster/recall/local_rerank.py` |
 | `MEMORYMASTER_RECALL_RERANK_LOCAL_MAX_PAIRS` | `memorymaster/recall/local_rerank.py` |
@@ -335,7 +338,10 @@ Total: 349 variables.
 | `MEMORYMASTER_TOKENIZER_WARM_SECONDS` | `memorymaster/surfaces/mcp_http.py` |
 | `MEMORYMASTER_TRANSCRIPTION_PROVIDER` | `memorymaster/capture/worker.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_TRANSCRIPT_INDEX` | `memorymaster/recall/transcript_index.py` |
-| `MEMORYMASTER_TRANSCRIPT_ROOT` | `memorymaster/recall/transcript_index.py` |
+| `MEMORYMASTER_TRANSCRIPT_ROOT` | `memorymaster/recall/transcript_index.py`, `memorymaster/surfaces/cli_handlers_transcripts.py` |
+| `MEMORYMASTER_TRANSCRIPT_ROOT_AGY` | `memorymaster/recall/transcript_index.py` |
+| `MEMORYMASTER_TRANSCRIPT_ROOT_CODEX` | `memorymaster/recall/transcript_index.py` |
+| `MEMORYMASTER_TRANSCRIPT_ROOT_OPENCODE` | `memorymaster/recall/transcript_index.py` |
 | `MEMORYMASTER_UNKNOWN_ARGS_DISABLED` | `memorymaster/surfaces/unknown_args.py` |
 | `MEMORYMASTER_UNKNOWN_ARGS_LOG` | `memorymaster/surfaces/unknown_args.py` |
 | `MEMORYMASTER_USAGE_LEDGER_DB` | `memorymaster/core/usage_ledger.py` |

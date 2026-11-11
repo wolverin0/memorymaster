@@ -271,7 +271,10 @@ def _run_transcript_index(args: argparse.Namespace) -> int:
 
     stats = transcript_index.index_transcripts(since_days=TRANSCRIPT_INDEX_SINCE_DAYS)
     log_event(_JOB_LOG, "transcript_index_result", surface="job", job="transcript-index", **stats)
-    return 1 if stats.get("errors") else 0
+    # A failed RUN, not a skipped session: the Claude source could not be read, or nothing at all could be.  Per-source
+    # and per-session counts stay in the logged stats; a side source being down must not fail the task forever.
+    nothing_done = not (stats.get("files_indexed") or stats.get("files_skipped"))
+    return 1 if stats.get("claude_failed") or (stats.get("errors") and nothing_done) else 0
 
 
 def _run_steward(args: argparse.Namespace) -> int:

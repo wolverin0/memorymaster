@@ -18,16 +18,19 @@ TRANSCRIPT_COMMANDS = ("transcript-index", "transcript-search")
 def register_transcript_parsers(sub: Any) -> None:
     index = sub.add_parser(
         "transcript-index",
-        help="Index local Claude Code transcripts into a sidecar FTS5 file (opt-in raw fallback; no claims)",
+        help="Index local Claude Code, Codex, Antigravity and OpenCode transcripts into a sidecar FTS5 file (opt-in raw fallback; no claims)",
     )
-    index.add_argument("--root", default=None, help="Transcript root (default: ~/.claude/projects)")
+    index.add_argument("--root", default=None,
+                       help="Claude transcript root; given, ONLY it is indexed. Default: ~/.claude/projects plus Codex, "
+                            "Antigravity and OpenCode (MEMORYMASTER_TRANSCRIPT_ROOT[_CODEX|_AGY|_OPENCODE]; a value of "
+                            "`off` disables a source)")
     index.add_argument("--index", dest="index_path", default=None,
                        help="Sidecar index file (default: ~/.memorymaster/transcripts.db)")
     index.add_argument("--since-days", type=float, default=None,
                        help="Only scan files modified in the last N days (cap for a first run)")
     index.add_argument("--include-automated", action="store_true",
                        help="Also index headless `claude -p` / SDK sessions (skipped by default: they quote prompts and pollute results)")
-    index.add_argument("--max-files", type=int, default=None, help="Stop after indexing N files")
+    index.add_argument("--max-files", type=int, default=None, help="Stop each source after indexing N files")
 
     search = sub.add_parser(
         "transcript-search",

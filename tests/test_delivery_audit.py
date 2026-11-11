@@ -170,8 +170,6 @@ def test_control_codex_receives_the_decision_taken_in_claude(hooked, tmp_path) -
     assert CLAUDE_DECISION in hooked.codex(CLAUDE_ASK, "codex-1")
 
 
-@pytest.mark.xfail(strict=True, reason="T-2277: recall/transcript_index.py indexes only ~/.claude/projects "
-                   "(Claude record shape), so a decision stated in a Codex rollout never reaches the Claude hook")
 def test_decision_crosses_cli_in_both_directions(hooked, tmp_path) -> None:
     _two_cli_sessions(hooked, tmp_path)
     assert CLAUDE_DECISION in hooked.codex(CLAUDE_ASK, "codex-1"), "precondition: Claude -> Codex works today"
