@@ -503,3 +503,75 @@ def test_structured_skill_payloads_and_json_numbers_are_not_rewritten() -> None:
         "created 2026-11-10T10:00:00Z cuit_count=27 total 30712345671abc",
     ):
         assert redact_text(text) == (text, []), redact_text(text)[1]
+
+
+# --- verifier round: punctuation false positives, prose_password regression, linear time ---------------------
+
+PUNCTUATION_NEGATIVES = [
+    "la clave es correcta?",
+    "¿la contraseña es obligatoria?",
+    "la contraseña es incorrecta!",
+    "La clave de dedupe es scope+subject",
+    "la clave es tenant_id+scope",
+    "La clave de la caché es scope#subject",
+    "La clave de partición es user_id%16",
+    "la clave es user@example.com",
+    "password file: ~/.pgpass",
+    "the password reset link is https://app.example.com/reset?x=1",
+    "Password reset email goes to: admin@example.com",
+]
+
+
+@pytest.mark.parametrize("text", PUNCTUATION_NEGATIVES)
+def test_punctuation_and_operators_are_not_password_evidence(text: str) -> None:
+    result = sanitize_claim_input(text=text, object_value=None, citations=[CitationInput("audit://x", "x")])
+    assert result.text == text and result.findings == [], (text, result.findings)
+
+
+@pytest.mark.parametrize("text, secret", [
+    ("the passphrase is Abc=123def4567", "Abc=123def4567"),
+    ("the secret is Abc=123def4567", "Abc=123def4567"),
+    ("the pin is Abc=123def4567", "Abc=123def4567"),
+    ("the api_key is Abc=123def4567", "Abc=123def4567"),
+    ("password reset to Abc=Def123456 now", "Abc=Def123456"),
+    ("password reset to Abc=Def123456 now", "Abc="),
+])
+def test_prose_password_with_an_equals_sign_in_the_value_is_still_redacted(text: str, secret: str) -> None:
+    redacted, findings = redact_text(text)
+    assert findings and secret not in redacted, redacted
+
+
+@pytest.mark.parametrize("text", [
+    "the password policy requires min_length=12",
+    "password hashing=bcrypt2",
+])
+def test_lowercase_config_shapes_after_password_stay_readable(text: str) -> None:
+    assert redact_text(text) == (text, [])
+
+
+def _timed(blob: str) -> None:
+    for call in (
+        lambda: redact_text(blob),
+        lambda: sanitize_claim_input(text=blob, object_value=None, citations=[CitationInput("audit://x", "x")]),
+    ):
+        start = time.perf_counter()
+        call()
+        elapsed = time.perf_counter() - start
+        assert elapsed < 3.0, (blob[:16], len(blob), elapsed)  # ~0.3 s alone; quadratic was seconds to minutes
+
+
+@pytest.mark.parametrize("keyword", ["pin", "OTP", "clave", "contraseña", "password", "código de verificación"])
+def test_keyword_followed_by_100k_spaces_is_linear(keyword: str) -> None:
+    _timed(keyword + " " * 100_000 + "x")
+
+
+@pytest.mark.parametrize("unit", ["clave:", "password=", "pin:", "OTP=", "contraseña es ", "pass​word="])
+def test_keyword_repeated_to_300kb_is_linear(unit: str) -> None:
+    _timed(unit * (300_000 // len(unit)))
+
+
+def test_aws_shaped_tokens_300kb_with_and_without_a_key_id_are_linear() -> None:
+    token = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+    body = (token + " ") * (300_000 // (len(token) + 1))
+    _timed(body)
+    _timed("AKIA" + "ZQ7LMN4PRS6TUV2W " + body)

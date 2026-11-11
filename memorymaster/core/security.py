@@ -23,7 +23,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # only counts with AWS context (_aws_secret_has_context). It runs BEFORE aws_access_key so the key id that
     # supplies the context is still in the text.
     ("aws_secret_key", re.compile(
-        r"(?<![A-Za-z0-9/+=])(?=[A-Za-z0-9/+]*[A-Z])(?=[A-Za-z0-9/+]*[a-z])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])"
+        r"(?<![A-Za-z0-9/+=])(?=[A-Za-z0-9/+]{0,40}[A-Z])(?=[A-Za-z0-9/+]{0,40}[a-z])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])"
     )),
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("aws_sts_key", re.compile(r"\bASIA[0-9A-Z]{16}\b")),
@@ -70,7 +70,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # S-1: scheme://user:password@host for any scheme (https, ftp, smb, mqtt, rtsp...). Only the password span
     # (group "secret") is redacted, user and host stay readable. '/' ends the password, so ports and paths pass.
     ("url_basic_auth_password", re.compile(
-        r"(?i)\b[a-z][a-z0-9+.\-]{1,15}://(?!\[REDACTED)[^:\s/@]*:(?!\[REDACTED)(?P<secret>[^\s/]+)@"
+        r"(?i)\b[a-z][a-z0-9+.\-]{1,15}://(?!\[REDACTED)[^:\s/@]{0,64}:(?!\[REDACTED)(?P<secret>[^\s/]{1,256})@"
     )),
     # Key=value assignments in plain text
     ("password_assignment", re.compile(r"(?i)\b(password|passwd|pwd)\s*[:=]\s*([^\s,;]+)")),
@@ -110,7 +110,11 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("prose_password", re.compile(
         r"(?i)(?:password|passwd|passphrase|sshpw|\bpin\b|\bsecret\b|api[_-]?key)"
         r"[^\n]{0,80}?"
-        r"(?<![A-Za-z0-9_])(?![A-Za-z_][A-Za-z0-9_.\-]*=[^=\s])("  # a key=value config shape is not a password
+        r"(?<![A-Za-z0-9_])"
+        # Exempt only a lowercase config shape (min_length=12, hashing=bcrypt2) that does not follow a
+        # connector: "the secret is Abc=123def4567" / "reset to Abc=Def123456" are still passwords.
+        r"(?:(?<=\bis )|(?<=\bto )|(?<=\bes )|(?<=:)|(?<=: )|(?<=\n)"
+        r"|(?![a-z_][a-z_.]{0,30}=[a-z0-9_.\-]{1,16}(?![A-Za-z0-9])))("
         r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[A-Z])"
         r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[0-9])"
         r"[A-Za-z][A-Za-z0-9_!@#$%^&*.\-+=]{9,})"
@@ -119,32 +123,29 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # S-1: Spanish password prose ("la contraseña del servidor es X", "clave: X", "usuario admin clave X").
     # Keyword: contraseña/clave (a connector es/son/era/fue/:/= after up to 4 plain words, or the value directly)
     # or English password/passwd/pwd (connector REQUIRED; English prose is prose_password's job). The bare verb
-    # "pass" is not a keyword. Compounds (clave primaria/foránea/pública/privada/única/compuesta/de api/de cache)
-    # are not passwords. The value is one token that is NOT config-like (no leading - / =) and has evidence:
-    # a symbol from !@#$%^&*+~? with a letter (6-64 chars), or upper+lower+2 digits (8-64 chars), or a quoted /
-    # backticked token with a letter and a digit. Plain lowercase letters+digits ("utf8mb4", "python3", "admin1234")
-    # stay readable on purpose: a false positive rewrites a technical fact. Only the value is redacted.
+    # "pass" is not a keyword. Compounds (clave primaria/foránea/pública/privada/única/compuesta/de api/de
+    # cache/caché) are not passwords. The value is one whole token of 6-64 chars (quoted or not) and is judged
+    # by _prose_secret_is_credible. Every run is bounded so nothing here is quadratic. Only the value is redacted.
     ("password_prose_es", re.compile(
         r"(?i)\b(?:"
         r"(?:contrase[ñn]as?|claves?)\b"
-        r"(?!\s+(?:primaria|for[aá]nea|p[uú]blica|privada|[uú]nica|compuesta|de\s+(?:la\s+)?(?:api|cache)|del\s+cache)\b)"
-        r"(?:(?:\s+[\w.\-]+){0,4}?(?:\s+(?:es|son|era|fue)\b|\s*[:=])|\s+)"
-        r"|(?:password|passwd|pwd)\b(?:\s+[\w.\-]+){0,4}?(?:\s+(?:is|es|son|era|fue)\b|\s*[:=])"
+        r"(?!\s{1,8}(?:primaria|for[aá]nea|p[uú]blica|privada|[uú]nica|compuesta"
+        r"|de\s{1,8}(?:la\s{1,8})?(?:api|cach[eé])|del\s{1,8}cach[eé])\b)"
+        r"(?:(?:\s{1,8}[\w.\-]{1,40}){0,4}?(?:\s{1,8}(?:es|son|era|fue)\b|\s{0,8}[:=])|\s{1,8})"
+        r"|(?:password|passwd|pwd)\b"
+        r"(?:(?:\s{1,8}[\w.\-]{1,40}){0,4}?(?:\s{1,8}(?:is|es|son|era|fue)\b|\s{0,8}[:=]))"
         r")"
-        r"[ \t]*(?!\[REDACTED)"
-        r"(?:(?P<q>[`'\"])(?=[^\s`'\"]*[A-Za-z])(?=[^\s`'\"]*[0-9])|)"
-        r"(?P<secret>(?(q)[^\s`'\"]{6,64}|(?![\-/=])(?:"
-        r"(?=[^\s`'\",;]*[A-Za-z])(?=[^\s`'\",;]*[!@#$%^&*+~?])[^\s`'\",;]{6,64}"
-        r"|(?-i:(?=[^\s`'\",;]*[A-Z])(?=[^\s`'\",;]*[a-z]))(?=(?:[^\s`'\",;]*[0-9]){2})[^\s`'\",;]{8,64}"
-        r")))"
+        r"[ \t]{0,8}(?!\[REDACTED)"
+        r"(?P<q>[`'\"])?"
+        r"(?P<secret>[^\s`'\",;]{6,64})(?![^\s`'\",;])"
     )),
     # S-1: one-time code / PIN, only with an explicit keyword right before 4-8 digits ("OTP 493021",
     # "código de verificación: 493021", "el pin es 4821"). Bare numbers never match. Only the digits are redacted.
     ("otp_pin", re.compile(
-        r"(?i)\b(?:otp|pin|c[oó]digo\s+(?:de\s+)?(?:verificaci[oó]n|seguridad)"
-        r"|(?:verification|security|one[- ]time)\s+(?:code|password))\b"
-        r"(?:\s+(?:is|es|code|c[oó]digo|n[uú]mero|number|was|ser[aá])){0,2}"
-        r"\s*[:=]?\s*[`'\"]?(?<![\d.])(?P<secret>\d{4,8})(?!\d|[.,]\d)"
+        r"(?i)\b(?:otp|pin|c[oó]digo\s{1,8}(?:de\s{1,8})?(?:verificaci[oó]n|seguridad)"
+        r"|(?:verification|security|one[- ]time)\s{1,8}(?:code|password))\b"
+        r"(?:\s{1,8}(?:is|es|code|c[oó]digo|n[uú]mero|number|was|ser[aá])){0,2}"
+        r"(?:\s{0,8}[:=])?\s{0,8}[`'\"]?(?<![\d.])(?P<secret>\d{4,8})(?!\d|[.,]\d)"
     )),
     # v2-refresh (private_ip_port_prose): private IPv4 paired with ':<port>'
     # in prose leaks internal topology. Bare private IPs are still allowed
@@ -429,12 +430,45 @@ _AWS_CONTEXT_RE = re.compile(r"(?i)(?<![a-z])aws|secret[_ \-]?access[_ \-]?key")
 _CUIT_WEIGHTS = (5, 4, 3, 2, 7, 6, 5, 4, 3, 2)
 
 
+_aws_id_seen: tuple[str, bool] = ("", False)
+
+
+def _text_has_aws_key_id(text: str) -> bool:
+    """Search once per text object (a 300 KB text with thousands of candidates must not rescan per match)."""
+    global _aws_id_seen
+    if _aws_id_seen[0] is not text:
+        _aws_id_seen = (text, bool(_AWS_KEY_ID_RE.search(text)))
+    return _aws_id_seen[1]
+
+
 def _aws_secret_has_context(match: re.Match[str]) -> bool:
     """An AWS key id anywhere in the text, or aws / secret access key within 60 chars before the token."""
-    return bool(
-        _AWS_KEY_ID_RE.search(match.string)
-        or _AWS_CONTEXT_RE.search(match.string[max(0, match.start() - 60):match.start()])
+    return _text_has_aws_key_id(match.string) or bool(
+        _AWS_CONTEXT_RE.search(match.string[max(0, match.start() - 60):match.start()])
     )
+
+
+_EMAIL_RE = re.compile(r"[^\s@]+@[^\s@]+\.[A-Za-z]{2,}")
+_IDENT_JOIN_RE = re.compile(r"[a-z_][a-z_.]*[+#%@*&^~$!\-]+(?:[a-z_][a-z_.]*|\d{1,3})")
+_PROSE_SYMBOLS = frozenset("!@#$%^&*+~")
+
+
+def _prose_secret_is_credible(value: str, quoted: bool) -> bool:
+    """Judge a password_prose_es value: a symbol alone is not evidence, emails/URLs/paths/identifier joins are not."""
+    v = value.rstrip(".,;:?)")
+    if len(v) < 6 or v[0] in "-/=~" or v.startswith(("./", "../")) or "://" in v or v.startswith("www."):
+        return False
+    if (len(v) > 2 and v[1] == ":" and v[2] in "\\/") or _EMAIL_RE.fullmatch(v) or _IDENT_JOIN_RE.fullmatch(v):
+        return False
+    has_digit = any(c.isdigit() for c in v)
+    if not (any(c.isalpha() for c in v) and has_digit):
+        return False
+    if quoted:
+        return True
+    if any(c in _PROSE_SYMBOLS for c in value):
+        return True
+    digits = sum(c.isdigit() for c in v)
+    return digits >= 2 and len(v) >= 8 and any(c.isupper() for c in v) and any(c.islower() for c in v)
 
 
 def _cuit_check_digit_ok(raw: str) -> bool:
@@ -451,6 +485,8 @@ def _match_is_suppressed(name: str, match: re.Match[str]) -> bool:
         return not _aws_secret_has_context(match)
     if name == "argentine_cuit_cuil":
         return not _cuit_check_digit_ok(match.group(0))
+    if name == "password_prose_es":
+        return not _prose_secret_is_credible(match.group("secret"), bool(match.group("q")))
     if name == "base64_secret":
         # A bare sha256 (44 chars, one '=') or sha512 (88 chars, '==') base64 digest named as such
         # right before it is a checksum, not a secret.
@@ -619,7 +655,10 @@ def expand_secret_scan_variants(text: str) -> Iterator[str]:
         current = queue.pop(0)
         yield current
 
-        normalized = _ZERO_WIDTH_RE.sub("", unicodedata.normalize("NFKC", current)).translate(_CONFUSABLE_ASCII_MAP)
+        normalized = unicodedata.normalize("NFKC", current)
+        if _ZERO_WIDTH_RE.search(normalized):
+            normalized = _ZERO_WIDTH_RE.sub("", normalized)
+        normalized = normalized.translate(_CONFUSABLE_ASCII_MAP)
         _add_scan_variant(queue, seen, normalized)
 
         for match in _HEX_ESCAPE_SEQUENCE_RE.finditer(current):
