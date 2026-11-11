@@ -28,6 +28,7 @@ MAX_SUPERSEDES = 5  # per call; no caller needs more (checkpoint items carry the
 # bounds what a junk or compromised caller can queue; further ones are refused, nothing written.
 MAX_DECLARED_PER_AGENT_PER_DAY = 25
 INACTIVE_STATUSES = frozenset({"archived", "superseded"})
+MAX_LIVE_PROPOSALS_PER_TARGET = 3
 # Proposal ``source`` values. Text-inferred proposals are operator-only (govern.steward.OPERATOR_ONLY_SOURCES):
 # the curation drain must not apply a guess made from prose.
 SOURCE_DIRECT_INGEST = "direct-ingest"
@@ -247,7 +248,9 @@ def has_live_proposal(store: Any, target_id: int, replacement_id: int | None = N
     left it a candidate (too short, held author). Such a replacement may never become deliverable, and it used to
     block the next, honest correction of the same target for good, leaving old and new both served. A replacement
     nobody has ruled on yet still holds the slot. A proposal already filed by ``replacement_id`` itself always
-    counts (declared + named in prose is one proposal).
+    counts (declared + named in prose is one proposal). Failed replacements release the slot only up to
+    ``MAX_LIVE_PROPOSALS_PER_TARGET``: each one stays in the queue until someone resolves it, so without the bound
+    a caller whose corrections keep failing could stack proposals on one target without limit.
     """
     resolved: set[int] = set()
     for event in store.list_events(claim_id=target_id, event_type="audit", limit=200):
@@ -262,9 +265,13 @@ def has_live_proposal(store: Any, target_id: int, replacement_id: int | None = N
             continue
         if isinstance(payload.get("proposal_event_id"), int):
             resolved.add(payload["proposal_event_id"])
+    live = 0
     for event in store.list_events(claim_id=target_id, event_type="policy_decision", limit=100):
         if not _is_proposal(event) or int(event.id) in resolved:
             continue
+        live += 1
+        if live >= MAX_LIVE_PROPOSALS_PER_TARGET:
+            return True
         try:
             payload = json.loads(getattr(event, "payload_json", None) or "{}")
         except (ValueError, TypeError):

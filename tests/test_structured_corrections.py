@@ -504,6 +504,15 @@ def test_a_replacement_nobody_ruled_on_still_holds_the_slot(svc) -> None:
     assert len(_proposals(svc, old.id)) == 1
 
 
+def test_failed_replacements_cannot_stack_without_bound_on_one_target(svc) -> None:
+    """Each examined-and-failed replacement releases the slot, but only up to the per-target bound."""
+    old = _claim(svc, "The staging admin panel listens on port 8080")
+    for port in range(9000, 9010):
+        junk = _claim(svc, f"port {port}", supersedes_claim_id=old.id, confirm=False)  # legacy path: no daily cap
+        assert svc.validate_now(junk.id)["status"] == "candidate"
+    assert len(_proposals(svc, old.id)) == 3
+
+
 def test_any_confirmed_replacement_hides_the_target(svc) -> None:
     """Two live proposals on one target: the older replacement failed validation (slot released), a newer one was
     filed, then the OLDER one is confirmed. The target must be hidden whichever replacement is deliverable."""
