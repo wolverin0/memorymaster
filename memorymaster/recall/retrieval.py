@@ -282,7 +282,7 @@ def pending_supersession_ids(
             return cached[1]
 
     ids: set[int] = set()
-    waiting: dict[int, int] = {}  # target id -> replacement id whose state decides (deliverable_only)
+    waiting: dict[int, set[int]] = {}  # target id -> replacement ids; any confirmed one hides it (deliverable_only)
     try:
         # Time-bounded, not row-capped: at limit=2000 an unrelated burst of
         # bookkeeping events could push the oldest pending proposals out of the
@@ -325,13 +325,13 @@ def pending_supersession_ids(
                     proposal = {}
                 replacement_id = proposal.get("replaced_by_claim_id") if isinstance(proposal, dict) else None
                 if isinstance(replacement_id, int):
-                    waiting.setdefault(claim_id, replacement_id)
+                    waiting.setdefault(claim_id, set()).add(replacement_id)
                     continue
             # no replacement named (a retraction, a Jev/fuzzy verdict): nothing to wait for
             ids.add(claim_id)
         if waiting:
-            deliverable = confirmed_claim_ids(service, set(waiting.values()))
-            ids.update(target for target, replacement_id in waiting.items() if replacement_id in deliverable)
+            deliverable = confirmed_claim_ids(service, set().union(*waiting.values()))
+            ids.update(target for target, replacements in waiting.items() if replacements & deliverable)
     except Exception as exc:  # noqa: BLE001 - retrieval must survive a bookkeeping fault
         if strict:
             raise PendingSupersessionScanError("pending supersession scan failed") from exc

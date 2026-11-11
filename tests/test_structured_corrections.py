@@ -495,6 +495,25 @@ def test_a_correction_that_never_confirms_does_not_block_the_next_one(svc) -> No
     assert _get(svc, good.id).status == "confirmed" and _get(svc, stuck.id).status == "candidate"
 
 
+def test_a_replacement_nobody_ruled_on_still_holds_the_slot(svc) -> None:
+    """One live proposal per target is the flood bound: only a replacement that already failed releases it."""
+    old = _claim(svc, "The staging admin panel listens on port 8080")
+    for port in (9001, 9002, 9003):  # never validated: plain ingest, no cycle in between
+        _claim(svc, f"The staging admin panel listens on port {port} since the 2026 migration",
+               supersedes=[old.human_id], confirm=False)
+    assert len(_proposals(svc, old.id)) == 1
+
+
+def test_any_confirmed_replacement_hides_the_target(svc) -> None:
+    old = _claim(svc, "The staging admin panel listens on port 8080", source_agent="agent-a")
+    first = _claim(svc, "The staging admin panel listens on port 9443 since the 2026 migration",
+                   source_agent="agent-b", supersedes=[old.human_id], confirm=False)
+    assert svc.validate_now(first.id)["status"] == "confirmed"  # cross-agent: confirmed, never applied
+    stuck = _claim(svc, "port 7", source_agent="agent-a", confirm=False)
+    queue_prose_corrections(svc.store, dataclasses.replace(stuck, text=f"port 7, corrects {old.human_id}"), 0.5)
+    assert old.id in pending_supersession_ids(svc, use_cache=False)
+
+
 def test_the_drain_rejects_a_proposal_whose_replacement_is_retired(svc) -> None:
     old = _claim(svc, "Retention is 30 days")
     dead = _claim(svc, "Retention is 90 days", supersedes=[old.human_id], confirm=False)

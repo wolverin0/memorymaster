@@ -240,11 +240,14 @@ def _is_proposal(event: Any) -> bool:
 def has_live_proposal(store: Any, target_id: int, replacement_id: int | None = None) -> bool:
     """An unresolved supersession proposal exists for the target (resolved or rejected ones do not count).
 
-    Mirrors ``recall.retrieval.pending_supersession_ids``: an approval that failed to apply does not resolve, and
-    a proposal whose replacement is not ``confirmed`` does not hold the slot against ANOTHER replacement. Such a
-    replacement may never become deliverable (too short for the validator, archived), and it used to block the
-    next, honest correction of the same target for good, leaving old and new both served. A proposal already filed
-    by ``replacement_id`` itself always counts (declared + named in prose is one proposal).
+    Mirrors ``recall.retrieval.pending_supersession_ids``: an approval that failed to apply does not resolve.
+
+    One live proposal per target is the queue-flood bound, so a proposal holds the slot against ANOTHER
+    replacement unless its own replacement has already failed: it is retired, or the validator examined it and
+    left it a candidate (too short, held author). Such a replacement may never become deliverable, and it used to
+    block the next, honest correction of the same target for good, leaving old and new both served. A replacement
+    nobody has ruled on yet still holds the slot. A proposal already filed by ``replacement_id`` itself always
+    counts (declared + named in prose is one proposal).
     """
     resolved: set[int] = set()
     for event in store.list_events(claim_id=target_id, event_type="audit", limit=200):
@@ -270,8 +273,11 @@ def has_live_proposal(store: Any, target_id: int, replacement_id: int | None = N
         if not isinstance(filed_by, int) or filed_by == replacement_id:
             return True
         replacement = store.get_claim(filed_by, include_citations=False)
-        if replacement is not None and replacement.status == "confirmed":
-            return True
+        if replacement is None or replacement.status in INACTIVE_STATUSES or replacement.status == "conflicted":
+            continue
+        if replacement.status == "candidate" and store.list_events(claim_id=filed_by, event_type="validator", limit=1):
+            continue
+        return True
     return False
 
 
