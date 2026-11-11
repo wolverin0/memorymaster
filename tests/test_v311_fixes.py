@@ -12,7 +12,6 @@ from memorymaster.recall.claim_edges import (
     rebuild_edges,
 )
 from memorymaster.knowledge.closets import (
-    ensure_closets_schema,
     rebuild_closets,
     search_closets,
 )

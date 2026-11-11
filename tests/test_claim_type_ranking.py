@@ -7,7 +7,6 @@ into a known claim_type, rows whose claim.claim_type matches get a
 """
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock
 
 import pytest

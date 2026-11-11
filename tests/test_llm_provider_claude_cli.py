@@ -15,7 +15,6 @@ branches that the production user is most likely to hit:
 from __future__ import annotations
 
 import subprocess
-from unittest.mock import patch
 
 import pytest
 

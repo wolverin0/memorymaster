@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from memorymaster.core.models import CitationInput
 from memorymaster.core.service import MemoryService

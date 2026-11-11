@@ -24,7 +24,6 @@ archivo entero seria decorativo.
 """
 from __future__ import annotations
 
-import pathlib
 
 import pytest
 

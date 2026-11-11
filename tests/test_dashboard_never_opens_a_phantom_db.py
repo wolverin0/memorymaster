@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import pytest
 
 from memorymaster.surfaces.cli_handlers_basic import _handle_run_dashboard
 

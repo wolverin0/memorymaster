@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import json
 import re
+
+import pytest
 from dataclasses import replace
 from pathlib import Path
 

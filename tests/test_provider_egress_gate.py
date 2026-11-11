@@ -296,10 +296,10 @@ def test_a_gate_exception_withholds_that_message_only(tmp_path, monkeypatch):
 
     real = gate.prepare_transcript_egress
 
-    def flaky(text):
+    def flaky(text, **kwargs):
         if "poison" in text:
             raise ValueError("synthetic gate fault")
-        return real(text)
+        return real(text, **kwargs)
 
     monkeypatch.setattr(gate, "prepare_transcript_egress", flaky)
     summary, extractor, ledger, capture_id = _run(tmp_path, ["poison pill text", BENIGN])
