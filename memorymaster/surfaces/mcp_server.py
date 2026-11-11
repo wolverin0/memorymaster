@@ -1626,6 +1626,11 @@ if FastMCP is not None:
                 f"supersession NOT queued for {supersession_report['not_filed']}: a pending proposal already "
                 "exists for each; resolve it first"
             )
+        if supersession_report.get("bound_hit"):
+            warnings.append(
+                f"supersession NOT queued for {supersession_report['bound_hit']}: the daily supersession bound was "
+                "reached; the claim itself was stored"
+            )
         response = {"ok": True, "claim": _claim_to_dict(claim)}
         if warnings:
             response["warnings"] = warnings

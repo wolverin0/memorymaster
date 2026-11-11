@@ -76,3 +76,21 @@ def test_a_prose_correction_stopped_by_the_bound_is_reported(svc, monkeypatch):
                source_agent="p", supersession_report=second)
     assert first["bound_hit"] == [] and first["prose_filed"] == [v[0].id]
     assert second["bound_hit"] == [v[1].id] and second["prose_filed"] == []
+
+
+def test_the_mcp_tool_says_when_the_bound_kept_a_prose_correction_out(tmp_path, monkeypatch):
+    try:
+        from memorymaster.surfaces.mcp_server import ingest_claim, init_db
+    except ImportError:
+        pytest.skip("MCP not installed")
+    monkeypatch.setattr(ig, "MAX_DECLARED_PER_AGENT_PER_DAY", 1)
+    db, workspace = str(tmp_path / "mcp.db"), str(tmp_path)
+    init_db(db=db, workspace=workspace)
+    base = {"db": db, "workspace": workspace, "scope": SCOPE, "source_agent": "p"}
+    olds = [ingest_claim(text=f"The service number {i} of the fleet listens on its documented port", **base)["claim"]
+            for i in range(2)]
+    first = ingest_claim(text=f"Correction a: this supersedes {olds[0]['human_id']} because it changed", **base)
+    second = ingest_claim(text=f"Correction b: this supersedes {olds[1]['human_id']} because it changed", **base)
+    assert not any("daily supersession bound" in w for w in first.get("warnings", []))
+    assert any("daily supersession bound" in w for w in second.get("warnings", [])), second
+
