@@ -555,7 +555,8 @@ def read_manifest(config: ProjectProjectionConfig) -> dict | None:
                 "cards_changed", "context_withdrawn",
             )),
         }
-        if (any(not isinstance(value, str) or value not in allowed_diagnostics
+        if (any(not isinstance(value, str)
+                or (value not in allowed_diagnostics and not re.fullmatch(r"ledger_malformed:\d{1,5}", value))
                 for value in manifest["diagnostics"])
                 or any(key not in {"purpose", "constraints", "decisions", "open_cards", "gotchas", "pinned_constraints"}
                        or type(value) is not int or value < 0

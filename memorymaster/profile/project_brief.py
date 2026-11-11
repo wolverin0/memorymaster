@@ -25,7 +25,7 @@ RUNNING_CARDS = DECISIONS = FAILURES = 3
 _RANK = {"running": 0, "review": 0, "ready": 1, "queued": 1}
 _FAIL_STATES = ("failed", "blocked")
 NL = chr(10)
-TITLES = ("RUNNING", "NEXT", "DECISIONS", "FAILURES")
+TITLES = ("RUNNING", "NEXT", "FAILURES", "DECISIONS")  # required elements first: a cut drops DECISIONS before FAILURES
 EMPTY = "empty"  # readable source with nothing in it, distinct from unavailable (None)
 
 
@@ -49,6 +49,8 @@ class BriefInputs:
     failures: tuple[Entry, ...] = ()
     # name -> last-update instant | None (unavailable) | EMPTY. Order is the header order.
     sources: Mapping[str, datetime | None | str] | None = None
+    # section title -> short reason it could not be read. Rendered instead of "none", which would claim an empty source.
+    unavailable: Mapping[str, str] | None = None
 
 
 def when(value: Any) -> datetime | None:
@@ -140,11 +142,17 @@ def render_brief_cut(inputs: BriefInputs) -> tuple[str, bool]:
     else:
         nxt = ["- none: no roadmap [ROADMAP.md]" if inputs.roadmap_missing else "- none: no open item [ROADMAP.md]"]
     failures = _newest([*_card_failures(inputs.cards), *inputs.failures])[:FAILURES]
+    down = inputs.unavailable or {}
+
+    def empty(title: str, tag: str) -> list[str]:
+        return [f"- unavailable: {_cell(down[title], 80)} [{tag}]" if title in down else f"- none [{tag}]"]
+
     blocks = [
-        ("RUNNING", _running(inputs.cards) or ["- none [ledger]"]),
+        ("RUNNING", _running(inputs.cards) or empty("RUNNING", "ledger")),
         ("NEXT", nxt),
-        ("DECISIONS", [_entry_line(e, dated=True) for e in _newest(list(inputs.decisions))[:DECISIONS]] or ["- none [claims]"]),
-        ("FAILURES", [_entry_line(e, dated=False) for e in failures] or ["- none [claims]"]),
+        ("FAILURES", [_entry_line(e, dated=False) for e in failures] or empty("FAILURES", "claims")),
+        ("DECISIONS", [_entry_line(e, dated=True) for e in _newest(list(inputs.decisions))[:DECISIONS]]
+         or empty("DECISIONS", "claims")),
     ]
     text = NL.join([header, *(line for title, body in blocks for line in (title, *body))])
     cut = False
@@ -163,14 +171,30 @@ def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], di
     )
     stamps = [t for t in (when(c["updated_at"]) for c in cards) if t]
     claims, claims_ok = load_brief_claims(config, now=now)
-    decisions = tuple(Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["decision"])
-    failures = [Entry(r["when"], r["text"], f"mm-{r['id']}") for r in claims["failure"]]
+    decisions = tuple(Entry(r["when"], r["text"], r["label"]) for r in claims["decision"] or ())
+    failures = [Entry(r["when"], r["text"], r["label"]) for r in claims["failure"] or ()]
     seen = [e.when for e in (*decisions, *failures) if e.when]
+    unavailable: dict[str, str] = {}
+    for title, kind in (("DECISIONS", "decision"), ("FAILURES", "failure")):
+        if claims[kind] is None:
+            unavailable[title] = "claims read failed or timed out"
+        elif kind in claims["partial"]:
+            unavailable[title] = "claims scan limit hit, list may be incomplete"
+    if "ledger_unavailable" in diagnostics:
+        # The same test load_ledger applies: all three settings must be present before it reads anything.
+        configured = config.ledger_root and config.ledger_repo and config.ledger_filtered
+        unavailable["RUNNING"] = ("ledger source unreadable" if configured else
+                                  "ledger source not configured (mapping ledger_filtered + tasks dir)")
     next_item, roadmap_mtime = roadmap_next_item(config.roadmap_root or config.project_root)
+    # None = both reads failed; "partial" = one failed or a scan limit hid rows; else the newest claim date.
+    if claims["decision"] is None and claims["failure"] is None:
+        claims_state = None
+    else:
+        claims_state = "partial" if not claims_ok or claims["partial"] else max(seen, default=EMPTY)
     sources: dict[str, datetime | None | str] = {
         "ledger": None if "ledger_unavailable" in diagnostics else max(stamps, default=EMPTY),
         "roadmap": roadmap_mtime,
-        "claims": max(seen, default=EMPTY) if claims_ok else None,
+        "claims": claims_state,
     }
     if config.slug in DUE_SLUGS:
         rows, mtime = load_due_failures(config.due_measurements) if config.due_measurements else (None, None)
@@ -179,4 +203,4 @@ def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], di
         sources["due"] = mtime
     return BriefInputs(project=config.slug, as_of=now, cards=cards, next_item=next_item,
                        roadmap_missing=roadmap_mtime is None, decisions=decisions,
-                       failures=tuple(failures), sources=sources)
+                       failures=tuple(failures), sources=sources, unavailable=unavailable)

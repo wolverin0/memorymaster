@@ -67,13 +67,13 @@ def test_golden_brief_ordering_tags_and_stamps():
         "- T-2 running: Run old [T-2]",
         "NEXT",
         "- Ship the thing [ROADMAP.md#L155]",
+        "FAILURES",
+        "- FAIL: drift [due:x]",
+        "- bug: leak [mm-90]",
         "DECISIONS",
         "- 2026-11-07 Decision 7 [mm-7]",
         "- 2026-11-05 Decision 5 [mm-5]",
         "- 2026-11-03 Decision 3 [mm-3]",
-        "FAILURES",
-        "- FAIL: drift [due:x]",
-        "- bug: leak [mm-90]",
     ]
 
 
@@ -86,7 +86,7 @@ def test_running_order_is_exact():
 
 def test_decisions_newest_first_capped_at_three():
     lines = render_brief(inputs()).split("\n")
-    body = lines[lines.index("DECISIONS") + 1 : lines.index("FAILURES")]
+    body = lines[lines.index("DECISIONS") + 1 :]
     assert [line.rsplit(" [", 1)[1] for line in body] == ["mm-7]", "mm-5]", "mm-3]"]
 
 
@@ -95,7 +95,7 @@ def test_failures_merge_cards_claims_and_due_newest_first():
              card("T-9", "failed", "Broke", "2026-11-02T01:00:00Z"),
              card("T-7", "blocked", "no blocker text", "2026-11-09T05:00:00Z"))
     lines = render_brief(inputs(cards=cards)).split("\n")
-    body = lines[lines.index("FAILURES") + 1 :]
+    body = lines[lines.index("FAILURES") + 1 : lines.index("DECISIONS")]
     assert [line.rsplit(" [", 1)[1] for line in body] == ["T-8]", "due:x]", "mm-90]"]
     assert "T-7" not in "\n".join(body)  # blocked without blocker text is not a failure
     assert body[0] == "- T-8 blocked: needs key [T-8]"
@@ -116,7 +116,7 @@ def test_empty_brief_names_every_absence():
     brief = render_brief(BriefInputs(project="demo", as_of=NOW))
     assert brief.split("\n") == [
         "Brief demo as_of 2026-11-09", "RUNNING", "- none [ledger]", "NEXT",
-        "- none: no roadmap [ROADMAP.md]", "DECISIONS", "- none [claims]", "FAILURES", "- none [claims]",
+        "- none: no roadmap [ROADMAP.md]", "FAILURES", "- none [claims]", "DECISIONS", "- none [claims]",
     ]
     assert "none: no open item" in render_brief(BriefInputs(project="d", as_of=NOW, roadmap_missing=False))
 
@@ -139,7 +139,7 @@ def test_cap_cuts_whole_lines_from_the_bottom_with_multibyte_text():
     lines = brief.split("\n")
     assert lines[0].startswith("Brief demo")
     assert lines[-1].endswith("]"), "a cut never orphans a section title or half a line"
-    assert "FAILURES" not in lines and "RUNNING" in lines
+    assert "DECISIONS" not in lines and "RUNNING" in lines  # a cut drops DECISIONS first, FAILURES are required
 
 
 def test_hostile_text_cannot_forge_a_tag_or_marker():
