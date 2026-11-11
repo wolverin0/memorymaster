@@ -43,8 +43,11 @@ import logging
 import os
 import re
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Literal
+
+from memorymaster.stores._storage_shared import ConcurrentModificationError
 
 DedupeAction = Literal["archive", "passthrough"]
 
@@ -61,6 +64,10 @@ _DEFAULT_JACCARD_HIGH = 0.85
 _TRUTHY = {"1", "true", "yes", "on", "y"}
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]{2,}")
 _FTS_TOP_K = 5
+# Tokens that carry a value (port, version, count, date, id, hex): any digit. Unlike _TOKEN_RE this keeps
+# single digits and dotted/dashed runs ("9.4.1", "2026-11-10") whole, so "port 8" vs "port 9" differ.
+_VALUE_TOKEN_RE = re.compile(r"[a-z0-9_]*\d[a-z0-9_]*(?:[.:/-][a-z0-9_]*\d[a-z0-9_]*)*")
+_PROPOSAL_DETAILS = "steward_proposal:superseded_candidate"
 
 
 def is_enabled() -> bool:
@@ -92,6 +99,51 @@ def jaccard_tokens(a: str, b: str) -> float:
     intersection = len(set_a & set_b)
     union = len(set_a | set_b)
     return intersection / union if union else 0.0
+
+
+def _value_tokens(text: str) -> Counter[str]:
+    return Counter(_VALUE_TOKEN_RE.findall(text.lower()))
+
+
+def _correction_block_reason(conn: sqlite3.Connection, candidate_id: int, canonical_id: int) -> str | None:
+    """Why archiving ``candidate_id`` as a duplicate of ``canonical_id`` would destroy a correction or leak.
+
+    A candidate that replaces something (``supersedes_claim_id``, a non-rejected supersession proposal naming it as
+    the replacement, or a ``supersedes`` link to/from the canonical) is a correction, not a duplicate; so is a pair
+    whose tenant or visibility differ (dedupe compares scope and text only otherwise).
+    """
+    row = conn.execute(
+        "SELECT supersedes_claim_id, tenant_id, COALESCE(visibility, 'public') FROM claims WHERE id = ?",
+        (candidate_id,),
+    ).fetchone()
+    other = conn.execute(
+        "SELECT tenant_id, COALESCE(visibility, 'public') FROM claims WHERE id = ?", (canonical_id,)
+    ).fetchone()
+    if row is None or other is None:
+        return "claim-missing"
+    if row[0] is not None:
+        return "candidate-supersedes"
+    if row[1] != other[0] or row[2] != other[1]:
+        return "tenant-or-visibility-differs"
+    link = conn.execute(
+        "SELECT 1 FROM claim_links WHERE link_type = 'supersedes' AND "
+        "((source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?)) LIMIT 1",
+        (candidate_id, canonical_id, canonical_id, candidate_id),
+    ).fetchone()
+    if link is not None:
+        return "supersedes-link"
+    # Proposals are filed on the TARGET claim; the replacement is in the payload. Rejected ones do not count.
+    proposal = conn.execute(
+        "SELECT 1 FROM events p WHERE p.event_type = 'policy_decision' AND p.details = ? "
+        "AND json_extract(p.payload_json, '$.replaced_by_claim_id') = ? "
+        "AND NOT EXISTS (SELECT 1 FROM events r WHERE r.event_type = 'audit' "
+        "AND r.details = 'steward_proposal_rejected' "
+        "AND json_extract(r.payload_json, '$.proposal_event_id') = p.id) LIMIT 1",
+        (_PROPOSAL_DETAILS, candidate_id),
+    ).fetchone()
+    if proposal is not None:
+        return "supersession-proposal"
+    return None
 
 
 def _escape_fts5_query(text: str) -> str:
@@ -212,6 +264,22 @@ def find_near_duplicate(
             best_status = cstatus
 
     if best_score >= threshold and best_id is not None:
+        best_text = next(t for cid, t, _s in matches if cid == best_id)
+        if _value_tokens(candidate_text) != _value_tokens(best_text):
+            return DedupeResult(
+                action="passthrough",
+                canonical_claim_id=best_id,
+                jaccard_score=best_score,
+                reason="value-tokens-differ",
+            )
+        blocked = _correction_block_reason(conn, candidate_id, best_id)
+        if blocked is not None:
+            return DedupeResult(
+                action="passthrough",
+                canonical_claim_id=best_id,
+                jaccard_score=best_score,
+                reason=f"correction-guard:{blocked}",
+            )
         return DedupeResult(
             action="archive",
             canonical_claim_id=best_id,
@@ -290,24 +358,22 @@ def run(store, *, limit: int = 200) -> dict[str, object]:
                 would_archive += 1
                 continue
 
-            conn.execute(
-                "UPDATE claims SET status = 'archived', "
-                "replaced_by_claim_id = ?, updated_at = datetime('now') "
-                "WHERE id = ?",
-                (decision.canonical_claim_id, claim.id),
-            )
-            conn.execute(
-                "UPDATE claims SET access_count = COALESCE(access_count, 0) + 1, "
-                "updated_at = datetime('now') WHERE id = ?",
-                (decision.canonical_claim_id,),
-            )
-            conn.execute(
-                "INSERT INTO events (claim_id, event_type, details, created_at) "
-                "VALUES (?, 'transition', ?, datetime('now'))",
-                (claim.id, f"dedupe-archived: {decision.reason}"),
-            )
+            # Sanctioned lifecycle path: version-CAS on the snapshot (a claim that left 'candidate' since the
+            # read raises), archived_at, from/to status and the hash-chained event.
+            try:
+                store.apply_status_transition(
+                    claim,
+                    to_status="archived",
+                    reason=f"dedupe-archived: {decision.reason}",
+                    event_type="transition",
+                    replaced_by_claim_id=decision.canonical_claim_id,
+                )
+            except ConcurrentModificationError:
+                results.pop()
+                passthrough += 1
+                continue
+            store.record_access(decision.canonical_claim_id)
             archived += 1
-        conn.commit()
 
     avg_jaccard = score_sum / score_count if score_count > 0 else None
     return {
