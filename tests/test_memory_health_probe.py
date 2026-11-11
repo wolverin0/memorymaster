@@ -725,7 +725,7 @@ def test_an_allowlisted_hook_is_reported_as_customised_not_failed(hooks):
     assert drift(hooks)["status"] == probe.FAIL
     hooks["allow"].write_text("# deliberate\nmemorymaster-x.py  # trailing note\n", encoding="utf-8")
     check = drift(hooks)
-    assert check["status"] == probe.PASS and "customised by the operator: claude/memorymaster-x.py" in check["detail"], check
+    assert check["status"] == probe.PASS and "customised by the operator" in check["detail"] and "claude/memorymaster-x.py (+" in check["detail"], check
     assert check["data"]["drifted"] == 0 and check["data"]["customised"] == 1
 
 
