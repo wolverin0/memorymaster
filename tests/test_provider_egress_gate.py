@@ -259,18 +259,18 @@ def test_raw_transcript_text_keeps_the_original_redacted_refusal():
     assert export_text(BENIGN) == BENIGN
 
 
-def test_a_huge_unbroken_token_is_withheld_fast_and_a_long_prose_message_still_goes_out():
+def test_a_huge_unbroken_token_is_replaced_fast_and_a_long_prose_message_still_goes_out():
     import time
 
-    from memorymaster.core.provider_egress import MAX_CHUNK, export_messages, export_text
+    from memorymaster.core.provider_egress import LONG_TOKEN, export_messages, export_text
 
     blob = "A1" * 10_000
     started = time.monotonic()
-    assert export_text(blob) is None
-    prose = "The service retries three times. " * 2_000  # ~66k chars, several chunks
+    assert export_text(blob) == LONG_TOKEN
+    prose = "The service retries three times. " * 2_000  # ~66k chars
     safe, withheld = export_messages([{"message_id": "a", "text": blob}, {"message_id": "b", "text": prose}])
     assert time.monotonic() - started < 3
-    assert withheld == 1 and safe[1]["text"] == prose and len(prose) > MAX_CHUNK
+    assert withheld == 0 and safe[0]["text"] == LONG_TOKEN and safe[1]["text"] == prose
 
 
 @pytest.mark.parametrize("loader", [_script_module, _packaged_module], ids=["script", "package"])
@@ -288,7 +288,7 @@ def test_session_end_huge_blob_message_is_withheld_quickly_and_the_rest_goes_out
     started = time.monotonic()
     mod.run(str(db), str(transcript), source_agent="t-agent", cwd=str(tmp_path))
     assert time.monotonic() - started < 5
-    assert len(sent) == 1 and BENIGN in sent[0] and "ZqZq" not in sent[0]
+    assert len(sent) == 1 and BENIGN in sent[0] and "ZqZq" not in sent[0] and "long_token" in sent[0]
 
 
 def test_a_gate_exception_withholds_that_message_only(tmp_path, monkeypatch):

@@ -20,7 +20,7 @@ from typing import Any, Callable, Protocol
 from memorymaster.core.antigravity_client import AntigravityError
 from memorymaster.core.models import CitationInput
 from memorymaster.core.provider_egress import export_messages, export_stored
-from memorymaster.dreaming.consolidation_egress import gate_consolidation, with_ignored
+from memorymaster.dreaming.consolidation_egress import WITHHELD_RATIONALE, gate_consolidation, with_ignored
 from memorymaster.core.service import MemoryService
 from memorymaster.dreaming import held
 from memorymaster.dreaming.extraction_window import PIECE_CHARS, extraction_complete, next_window
@@ -301,8 +301,9 @@ class DreamWorker:
             return
         try:
             notes = held.triage_notes(self.ledger.get_capture(capture_id).get("extraction"))
+            # A candidate the egress gate withheld was never judged by the model: no reward label.
             verdicts = [(notes[str(d.get("candidate_id"))], d.get("action")) for d in decisions
-                        if str(d.get("candidate_id")) in notes]
+                        if str(d.get("candidate_id")) in notes and d.get("rationale") != WITHHELD_RATIONALE]
             if verdicts:
                 held.record_verdicts(self._decisions_ledger(), capture_id, verdicts,
                                      observed_at=self.now().isoformat())

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from memorymaster.dreaming.models import ConsolidationResult, DreamCandidate, DreamDecision, ProviderUsage
 from test_dreaming_worker import NOW, _capture, _service
-from test_provider_egress_gate import BENIGN, BLOCKED, IP, MAIL, WIN_PATH, B64, _assert_clean
+from test_provider_egress_gate import TOKEN, BENIGN, BLOCKED, IP, MAIL, WIN_PATH, B64, _assert_clean
 
 ROOT = Path(__file__).resolve().parents[1]
 USAGE = ProviderUsage("stub", "stub", 200, 1, 10, 2, True)
@@ -192,17 +192,28 @@ def test_contradiction_probe_gates_both_claims(monkeypatch):
     )
     assert len(seen) == 1
     _assert_clean(seen[0])
+    # the same value gets the same pseudonym in both claims
+    assert seen[0].count("[REDACTED:private_ipv4#1]") == 2 and seen[0].count("[REDACTED:email#2]") == 2
 
 
-def test_contradiction_probe_skips_a_pair_the_gate_blocks_or_that_redaction_could_make_equal(monkeypatch):
+def test_contradiction_probe_pseudonyms_keep_swapped_values_distinguishable(monkeypatch):
+    from memorymaster.govern import contradiction_probe as probe
+
+    seen: list[str] = []
+    monkeypatch.setattr(probe.llm_provider, "call_llm", lambda prompt, body: seen.append(body) or "[]")
+    probe._judge_llm(_claim("The primary lives at 10.1.2.3"), _claim("The primary lives at 10.9.8.7"))
+    assert seen == [
+        "Claim A: The primary lives at [REDACTED:private_ipv4#1]\nClaim B: The primary lives at [REDACTED:private_ipv4#2]"
+    ]
+
+
+def test_contradiction_probe_skips_a_blocked_pair_and_a_pair_with_a_literal_credential(monkeypatch):
     from memorymaster.govern import contradiction_probe as probe
 
     seen: list[str] = []
     monkeypatch.setattr(probe.llm_provider, "call_llm", lambda prompt, body: seen.append(body) or "[]")
     assert probe._judge_llm(_claim("deploy " + BLOCKED), _claim(BENIGN)) is None
-    # two DIFFERENT private IPs would both read [REDACTED:private_ipv4]: no verdict is asked for
-    assert probe._judge_llm(_claim("The primary lives at 10.1.2.3"), _claim("The primary lives at 10.9.8.7")) is None
-    assert probe._judge_llm(_claim(f"The primary lives at {IP}"), _claim("The primary lives at the old rack")) is None
+    assert probe._judge_llm(_claim("the key is " + TOKEN), _claim("the key is another")) is None
     assert seen == []
 
 
@@ -304,3 +315,104 @@ def test_no_new_ungated_call_llm_call_site():
     )
     for rel in GATED:
         assert "egress import" in (ROOT / rel).read_text(encoding="utf-8"), rel + " lost its egress gate"
+
+
+# ---- consolidation: trusted candidate markers, gate faults, reward ledger -------------------
+
+
+def test_a_candidate_quoting_gated_text_with_a_glued_marker_is_not_withheld_again():
+    from memorymaster.core.provider_egress import export_text
+    from memorymaster.dreaming.consolidation_egress import gate_consolidation
+
+    first_pass = export_text("The config at /home/jdoe/proj/app.yml was updated")
+    assert first_pass is not None and "[REDACTED:" in first_pass and "jdoe" not in first_pass
+    sent, ignored, _refs, _n = gate_consolidation([_candidate("c", first_pass)], [])
+    assert [c.candidate_id for c in sent] == ["c"] and ignored == []
+
+
+def test_a_gate_fault_is_not_a_verdict_the_capture_is_retried(tmp_path, monkeypatch):
+    import memorymaster.core.provider_egress as gate
+    from memorymaster.dreaming.ledger import DreamLedger
+    from memorymaster.dreaming.worker import DreamConfig, DreamWorker
+
+    real = gate._gate
+
+    def flaky(text, **kwargs):
+        if "poison" in text:
+            raise ValueError("synthetic gate fault")
+        return real(text, **kwargs)
+
+    monkeypatch.setattr(gate, "_gate", flaky)
+    service = _service(tmp_path)
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+    ledger.set_extraction(capture_id, [_candidate("p", "poison pill fact").to_dict()], "fixture")
+    consolidator = _Recorder()
+    summary = DreamWorker(ledger, service, None, consolidator, config=DreamConfig(), now=lambda: NOW).run(
+        apply_candidates=False
+    )
+    assert summary["errors"] >= 1 and consolidator.calls == []
+    row = ledger.get_capture(capture_id)
+    assert row["state"] == "retryable" and not row.get("decisions")
+
+
+def test_a_withheld_candidate_is_not_written_to_the_reward_ledger_as_a_model_rejection(tmp_path, monkeypatch):
+    from memorymaster.dreaming import held
+    from memorymaster.dreaming.consolidation_egress import WITHHELD_RATIONALE
+    from memorymaster.dreaming.ledger import DreamLedger
+    from memorymaster.dreaming.worker import DreamConfig, DreamWorker
+
+    ledger = DreamLedger(tmp_path / "capture.db")
+    capture_id = _capture(ledger)
+    recorded: list = []
+    monkeypatch.setattr(held, "triage_notes", lambda extraction: {"a": {"decision_id": "d"}, "b": {"decision_id": "d"}})
+    monkeypatch.setattr(held, "record_verdicts", lambda decisions, cid, verdicts, **kw: recorded.extend(verdicts))
+    worker = DreamWorker(
+        ledger, _service(tmp_path), None, _Recorder(), config=DreamConfig(jev_triage_enabled=True), now=lambda: NOW
+    )
+    worker._record_verdicts(
+        capture_id,
+        [
+            {"candidate_id": "a", "action": "ignore", "rationale": "model said no"},
+            {"candidate_id": "b", "action": "ignore", "rationale": WITHHELD_RATIONALE},
+        ],
+    )
+    assert [action for _note, action in recorded] == ["ignore"]  # only the model's own verdict
+
+
+# ---- the gate itself: long runs, seams ------------------------------------------------------
+
+
+def test_a_long_unbroken_run_is_replaced_but_the_rest_of_the_message_is_gated_normally():
+    from memorymaster.core.provider_egress import LONG_TOKEN, export_text
+
+    out = export_text("start " + "A" * 16_100 + f" tail fact {IP} end")
+    assert out == f"start {LONG_TOKEN} tail fact [REDACTED:private_ipv4] end"
+
+
+def test_timing_on_ordinary_prose_and_on_tokens_just_under_the_cap():
+    import random
+    import time
+
+    from memorymaster.core.provider_egress import MAX_TOKEN, export_text
+
+    rng = random.Random(3)
+    prose = " ".join(rng.choice(["service", "retries", "deploy", "config", "host"]) for _ in range(30_000))[:200_000]
+    tokens = " ".join("".join(rng.choice("abcdefghij0123456789") for _ in range(MAX_TOKEN - 1)) for _ in range(100))
+    for text in (prose, tokens):
+        started = time.monotonic()
+        export_text(text)
+        assert time.monotonic() - started < 3
+
+
+@pytest.mark.parametrize("stored", [False, True], ids=["raw", "stored"])
+def test_a_context_secret_is_never_cut_from_its_value_at_any_offset(stored):
+    from memorymaster.core.provider_egress import export_messages, export_text
+
+    value = "Tr0ub4dor77" + "Zx93Qv"
+    shapes = [f"password: {value}", f"Authorization: Bearer {value}", f"secret token: {value}"]
+    for offset in range(19_900, 20_101):
+        for shape in shapes:
+            text = ("lorem ipsum " * 2_000)[:offset] + " " + shape + " trailing words"
+            out = export_messages([{"text": text}])[0][0]["text"] if stored else export_text(text)
+            assert out is None or value not in out, (offset, shape)

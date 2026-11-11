@@ -30,7 +30,7 @@ def _sensitive(claim: dict[str, Any]) -> bool:
 
 
 def _assistant_text(transcript_path: str, *, start_offset: int = 0, end_offset: int | None = None) -> str:
-    from memorymaster.core.provider_egress import MAX_CHUNK, export_text  # fail-closed: no filter, no call
+    from memorymaster.core.provider_egress import MAX_INPUT, export_text  # fail-closed: no filter, no call
     from memorymaster.dreaming.capture import _conversation_record
 
     path = Path(transcript_path)
@@ -70,7 +70,7 @@ def _assistant_text(transcript_path: str, *, start_offset: int = 0, end_offset: 
         if index < len(lines) - 200:
             break
         if len(content.strip()) > 30:
-            safe = export_text(content[:MAX_CHUNK])  # before the 500 cut (bounded: the gate is quadratic on blobs): truncating first could hide a secret's prefix
+            safe = export_text(content[:MAX_INPUT])  # before the 500 cut (bounded: the gate is quadratic on blobs): truncating first could hide a secret's prefix
             if safe is None:  # one credential-grade message is withheld, the rest still goes out
                 continue
             messages.append(safe[:500])

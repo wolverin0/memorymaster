@@ -28,45 +28,28 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from memorymaster.profile.egress import ClaimEgress, prepare_claim_egress, prepare_transcript_egress
+from memorymaster.profile.egress import (
+    ClaimEgress,
+    prepare_claim_egress,
+    prepare_indexed_egress,
+    prepare_transcript_egress,
+)
 
 WITHHELD = "[WITHHELD:credential_grade]"
 GATE_ERROR = "[WITHHELD:gate_error]"
-# The patterns are quadratic on an unbroken run: bound both the chunk and the longest token.
-MAX_CHUNK = 20_000
-MAX_TOKEN = 4_000
+LONG_TOKEN = "[WITHHELD:long_token]"
+# The patterns are quadratic on an unbroken run (200 KB of 2,000-char tokens: ~2.2 s): such a run is
+# a blob, not prose, and is replaced by a marker while the rest of the text is gated normally.
+MAX_TOKEN = 2_000
+MAX_INPUT = 20_000  # callers that cut to a few hundred characters anyway bound the gate's input
 _LONG_TOKEN = re.compile(r"\S{%d,}" % (MAX_TOKEN + 1))
-_PIECE = re.compile(r"\S+\s*")
 
 
-def _chunks(text: str) -> list[str]:
-    pieces: list[str] = []
-    current: list[str] = []
-    size = 0
-    for match in _PIECE.finditer(text):
-        piece = match.group(0)
-        if size + len(piece) > MAX_CHUNK and current:
-            pieces.append("".join(current))
-            current, size = [], 0
-        current.append(piece)
-        size += len(piece)
-    pieces.append("".join(current))
-    return pieces
-
-
-def _gate(text: str, *, stored: bool) -> str | None:
+def _gate(text: str, *, stored: bool, trusted: bool = False) -> str | None:
     """Provider-safe ``text`` or ``None`` when blocked; may raise (callers contain it per text)."""
-    if _LONG_TOKEN.search(text):  # a blob, not prose: also the quadratic worst case
-        return None
-    prepare = prepare_transcript_egress if stored else prepare_claim_egress
-    parts = _chunks(text) if len(text) > MAX_CHUNK else [text]
-    safe: list[str] = []
-    for part in parts:
-        egress: ClaimEgress = prepare(part)
-        if egress.blocked:
-            return None
-        safe.append(egress.text)
-    return "".join(safe)
+    text = _LONG_TOKEN.sub(LONG_TOKEN, text)
+    egress: ClaimEgress = prepare_transcript_egress(text, trusted=trusted) if stored else prepare_claim_egress(text)
+    return None if egress.blocked else egress.text
 
 
 def export_text(text: str) -> str | None:
@@ -77,38 +60,37 @@ def export_text(text: str) -> str | None:
         return None
 
 
-def export_stored(text: str) -> str | None:
-    """Like ``export_text`` for STORED text that may carry our own ``[REDACTED:<name>]`` markers."""
+def gate_stored(text: str, *, trusted: bool = False) -> str | None:
+    """``export_stored`` that RAISES on a gate fault, for callers that must tell a fault from a block."""
+    return _gate(text, stored=True, trusted=trusted)
+
+
+def export_stored(text: str, *, trusted: bool = False) -> str | None:
+    """Like ``export_text`` for STORED text that may carry our own ``[REDACTED:<name>]`` markers.
+
+    ``trusted``: the text was built from output of this gate (a model-derived candidate), so every
+    well-formed marker is neutralised even when letters touch it (the gate itself can leave
+    ``at[REDACTED:home_path_unix]proj`` behind).
+    """
     try:
-        return _gate(text, stored=True)
+        return _gate(text, stored=True, trusted=trusted)
     except Exception:  # noqa: BLE001 - a gate fault withholds this text, never sends it
         return None
 
 
-def redacted_spans(original: str, gated: str) -> frozenset[str]:
-    """The substrings of ``original`` that the gate replaced to produce ``gated``."""
-    from difflib import SequenceMatcher
-
-    ops = SequenceMatcher(None, original, gated, autojunk=False).get_opcodes()
-    return frozenset(original[i1:i2] for tag, i1, i2, _j1, _j2 in ops if tag in {"replace", "delete"})
-
-
 def export_pair(first: str, second: str) -> tuple[str, str] | None:
-    """Gate two claims to be compared by a model; ``None`` when the pair must not be sent.
+    """Gate two stored claims a model will compare; ``None`` when the pair must not be sent.
 
-    A redaction marker can make two different values look equal, so a pair is sent only when the gate
-    changed neither text, or replaced the very same spans in both.
+    Redacted values get stable pseudonyms across both texts (``[REDACTED:private_ipv4#1]``: the same
+    value the same index, another value another), so the model can still tell them apart.
     """
-    safe_first, safe_second = export_stored(first), export_stored(second)
-    if safe_first is None or safe_second is None:
+    try:
+        pair = prepare_indexed_egress([_LONG_TOKEN.sub(LONG_TOKEN, first), _LONG_TOKEN.sub(LONG_TOKEN, second)])
+    except Exception:  # noqa: BLE001 - a gate fault withholds the pair
         return None
-    if safe_first == first and safe_second == second:
-        return safe_first, safe_second
-    if max(len(first), len(second)) > 4_000:  # the span diff is quadratic: not worth it for a blob
+    if any(item.blocked for item in pair):
         return None
-    if redacted_spans(first, safe_first) != redacted_spans(second, safe_second):
-        return None
-    return safe_first, safe_second
+    return pair[0].text, pair[1].text
 
 
 def export_lines(text: str) -> tuple[str, int]:
