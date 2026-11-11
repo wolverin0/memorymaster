@@ -573,7 +573,7 @@ def test_skills_review_gates_the_evidence_and_a_withheld_one_is_a_blocked_review
     _assert_clean(seen[0])
     seen.clear()
     skills._review_one_input(None, {"claim_id": 2, "scope": "project:x", "text": "deploy " + BLOCKED}, stats)
-    assert seen == [] and stats["blocked"] == 1
+    assert seen == [] and stats["blocked"] == 0 and stats["egress_withheld"] == 1
 
 
 def test_vault_curator_gates_each_claim_and_skips_an_all_withheld_batch(monkeypatch):
@@ -611,8 +611,8 @@ def test_wiki_engine_wrapper_gates_prompt_and_text_for_every_call_site(monkeypat
     assert we._call_llm("Rewrite this article:\n" + LEAK, LEAK_B) == "answer"
     _assert_clean(seen[0])
     seen.clear()
-    assert we._call_llm("Rewrite:\n" + BLOCKED, "") == "" and seen == []
-    assert we._call_llm("Rewrite", BLOCKED) == "" and seen == []
+    assert we._call_llm("Rewrite:\n" + BLOCKED, "") is None and seen == []
+    assert we._call_llm("Rewrite", BLOCKED) is None and seen == []
     for template in (we.ABSORB_PROMPT, we.CLEANUP_PROMPT, we.BREAKDOWN_PROMPT):
         assert export_stored(template) == template  # the instruction templates are not over-withheld
 
@@ -672,5 +672,5 @@ def test_workflow_classification_gates_the_request_excerpt(tmp_path, monkeypatch
         result = classification.classify_pending(store, limit=5)
     finally:
         store.close()
-    assert len(seen) == 1 and result["classified"] == 1 and result["failures"] == 1
+    assert len(seen) == 1 and result["classified"] == 1 and result["failures"] == 0 and result["withheld"] == 1
     _assert_clean(seen[0])

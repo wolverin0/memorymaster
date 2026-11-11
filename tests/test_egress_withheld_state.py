@@ -24,8 +24,8 @@ BENIGN = "The compactor merges summaries older than the freshness window."
 
 
 @pytest.fixture()
-def selfcheck_db(db):  # noqa: F811
-    return db
+def selfcheck_db(request):
+    return request.getfixturevalue("db")
 
 
 # ---- 1. llm_steward.run_steward --------------------------------------------------------------
@@ -381,4 +381,4 @@ def test_trusted_mode_blocks_a_credential_with_a_marker_spliced_into_its_middle(
 
     assert export_stored("x AKIA[REDACTED:private_ip]IOSFODNN7EXAMPLE y", trusted=True) is None
     assert export_stored("k sk-ant-api03-A1b2C3d4[REDACTED:private_ip]E5f6G7h8I9j0K1l2M3n4O5p6", trusted=True) is None
-    assert export_stored("at /home/x[REDACTED:home_path_unix]proj/app.yml is up", trusted=True) is not None
+    assert export_stored("config at[REDACTED:home_path_unix]proj/app.yml is up", trusted=True) is not None

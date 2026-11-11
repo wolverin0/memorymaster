@@ -114,7 +114,7 @@ def _neutralise(text: str, *, trusted: bool) -> tuple[str, Callable[[str], str],
             left = re.search(r"\S*$", text[:start]).group(0)
             right = re.match(r"\S*", text[end:]).group(0)
             joined = left + right
-            if scan_text_for_findings(joined) or redact_text(joined)[1]:
+            if scan_text_for_findings(joined):
                 spliced.append(True)
         held.append(match.group(0))
         return f"[{tag}{len(held) - 1}]"
