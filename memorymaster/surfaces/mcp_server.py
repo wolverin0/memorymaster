@@ -146,6 +146,11 @@ class QueryMetaDecisionsInput(_ToolInput):
     workspace: str = "."
 
 
+def _operator_opt_in() -> bool:
+    """The server's operator started it with MEMORYMASTER_MCP_OPERATOR_RESOLVE=1 (default off)."""
+    return os.environ.get("MEMORYMASTER_MCP_OPERATOR_RESOLVE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _structured_error(error: str, code: str, field: str | None = None, **extra: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {"ok": False, "error": error, "code": code}
     if field is not None:
@@ -837,6 +842,7 @@ def _checkpoint_batch(
                 require_source_agent=True,
             )
             claim_ids.append(claim.id)
+            svc.validate_now(claim.id)
             mutable_state = classify_mutable_state(
                 text=text,
                 claim_type=_empty_to_none(str(item.get("claim_type", "") or "")),
@@ -1569,6 +1575,9 @@ if FastMCP is not None:
             )
         except ValueError as exc:
             return _structured_error(str(exc), "VALIDATION_ERROR", "text")
+        # Fast path: an agent stated this on purpose, so it is validated now and not at the next steward cycle.
+        fast_path = svc.validate_now(claim.id)
+        claim = svc.store.get_claim(claim.id) or claim
         # The Obsidian projection is optional. MCP ingest must never create a
         # cwd-relative vault unless the operator explicitly enables it.
         if _wiki_absorb_enabled():
@@ -1607,12 +1616,20 @@ if FastMCP is not None:
             warnings.append(
                 "mutable state forced to high volatility; supply valid_until"
             )
-        if supersession_report.get("filed"):
+        applied = [i for i in supersession_report.get("filed") or [] if i in (fast_path.get("superseded") or [])]
+        if applied:
+            warnings.append(f"supersession applied: {applied} retired, replaced by this claim")
+        if [i for i in supersession_report.get("filed") or [] if i not in applied]:
             warnings.append("supersession queued for steward review")
         if supersession_report.get("not_filed"):
             warnings.append(
                 f"supersession NOT queued for {supersession_report['not_filed']}: a pending proposal already "
                 "exists for each; resolve it first"
+            )
+        if supersession_report.get("bound_hit"):
+            warnings.append(
+                f"supersession NOT queued for {supersession_report['bound_hit']}: the daily supersession bound was "
+                "reached; the claim itself was stored"
             )
         response = {"ok": True, "claim": _claim_to_dict(claim)}
         if warnings:
@@ -1674,12 +1691,19 @@ if FastMCP is not None:
         Lifecycle-safe cleanup for eval/backfill pollution: matched claims move
         to status `archived` (MemoryMaster has no hard delete; claims terminate
         at archived). `dry_run=True` (default) only REPORTS what would be archived
-        — call again with `dry_run=False` to apply. `limit=0` means no cap; when a
+        — applying (`dry_run=False`) needs the server's operator opt-in (MEMORYMASTER_MCP_OPERATOR_RESOLVE=1). `limit=0` means no cap; when a
         cap truncates the match set the result carries `truncated=True`.
         Returns matched/archived counts + claim_ids.
         """
         if not source_agent or not source_agent.strip():
             return _structured_error("source_agent is required", "VALIDATION_ERROR", "source_agent")
+        if not dry_run and not _operator_opt_in():
+            # bulk destructive: any session is admin in local-trusted mode, so applying is an operator opt-in
+            return _structured_error(
+                "archiving by source is an operator action: dry_run=True reports the match; to apply, run "
+                "MemoryService.store.archive_by_source(source_agent, dry_run=False) from the operator's shell "
+                "(no CLI command exists) or start the MCP server with MEMORYMASTER_MCP_OPERATOR_RESOLVE=1",
+                "OPERATOR_ONLY", "dry_run")
         eff_limit = limit if limit and limit > 0 else None
         svc = _service(db, workspace)
         result = svc.store.archive_by_source(source_agent.strip(), dry_run=dry_run, limit=eff_limit)
@@ -2991,12 +3015,16 @@ if FastMCP is not None:
         """Approve or reject a steward proposal by proposal_event_id or claim_id.
 
         Jev (``source: jev``) proposals are refused: only the operator resolves
-        them, through the dashboard or the CLI with ``--actor operator``.
+        them, through the dashboard or the CLI with ``--actor operator``. Approving any
+        operator-only proposal (cross-identity, fuzzy, prose-correction) is refused too
+        unless the server runs with MEMORYMASTER_MCP_OPERATOR_RESOLVE=1; reject is allowed.
         """
-        from memorymaster.govern.steward import JevProposalOperatorOnly
+        from memorymaster.govern.steward import JevProposalOperatorOnly, OperatorOnlyProposalRefused
         from memorymaster.govern.steward import resolve_steward_proposal as _resolve_steward_proposal
 
         svc = _service(db, workspace)
+        # Local-trusted MCP makes every session admin, so the channel is an agent unless the server's operator opted in.
+        operator = _operator_opt_in()
         try:
             result = _resolve_steward_proposal(
                 svc,
@@ -3004,8 +3032,11 @@ if FastMCP is not None:
                 proposal_event_id=proposal_event_id,
                 claim_id=claim_id,
                 apply_on_approve=apply_on_approve,
+                actor="operator" if operator else "agent",
                 allow_jev=False,
             )
+        except OperatorOnlyProposalRefused as exc:
+            return _structured_error(str(exc), "PROPOSAL_OPERATOR_ONLY")
         except JevProposalOperatorOnly as exc:
             return _structured_error(str(exc), "JEV_PROPOSAL_OPERATOR_ONLY")
         return {"ok": True, "result": result}

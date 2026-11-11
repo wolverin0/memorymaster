@@ -19,6 +19,12 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("openai_key", re.compile(r"\bsk-[A-Za-z0-9_\-]{12,}\b")),
     ("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_\-]{20,}\b")),
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+    # S-1: 40-char AWS secret access key. A bare 40-char token is too common (git SHAs are 40 hex), so a match
+    # only counts with AWS context (_aws_secret_has_context). It runs BEFORE aws_access_key so the key id that
+    # supplies the context is still in the text.
+    ("aws_secret_key", re.compile(
+        r"(?<![A-Za-z0-9/+=])(?=[A-Za-z0-9/+]{0,40}[A-Z])(?=[A-Za-z0-9/+]{0,40}[a-z])[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+=])"
+    )),
     ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("aws_sts_key", re.compile(r"\bASIA[0-9A-Z]{16}\b")),
     # Stripe keys (sk/rk/pk + live/test).
@@ -61,6 +67,11 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         r"\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|amqp|amqps)://"
         r"[^:\s/@]*:[^@\s]+@[^\s]+"
     )),
+    # S-1: scheme://user:password@host for any scheme (https, ftp, smb, mqtt, rtsp...). Only the password span
+    # (group "secret") is redacted, user and host stay readable. '/' ends the password, so ports and paths pass.
+    ("url_basic_auth_password", re.compile(
+        r"(?i)\b[a-z][a-z0-9+.\-]{1,15}://(?!\[REDACTED)[^:\s/@]{0,256}:(?!\[REDACTED)(?P<secret>[^\s/]{1,256})@"
+    )),
     # Key=value assignments in plain text
     ("password_assignment", re.compile(r"(?i)\b(password|passwd|pwd)\s*[:=]\s*([^\s,;]+)")),
     ("token_assignment", re.compile(r"(?i)\b(token|api[_-]?key|secret)\s*[:=]\s*([^\s,;]+)")),
@@ -79,9 +90,11 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # fails on these because `_` is a regex word-char; this pattern matches
     # an optional prefix + credential core + optional suffix + value.
     ("compound_credential", re.compile(
-        r"(?i)(?:[A-Z][A-Z0-9]*_)?"
+        # Linear time: the prefix only starts at a word start and the suffix is bounded, so a long
+        # alphanumeric run or "tokentokentoken..." cannot make it quadratic.
+        r"(?i)(?:(?<![A-Za-z0-9])[A-Z][A-Z0-9]*_)?"
         r"(?:password|passwd|pwd|secret|token|api[_-]?key|client_secret|auth_token)"
-        r"[A-Z0-9_]*\s*[:=]\s*['\"`]?([^\s'\"`,;]+)"
+        r"[A-Z0-9_]{0,64}\s*[:=]\s*['\"`]?([^\s'\"`,;]+)"
     )),
     # Abbreviated password keys: MYPW, UPW, ADMINPW, DBPW (all-caps + PW tail).
     # Requires explicit assignment, won't match PWA/PWS/SPWN.
@@ -97,11 +110,42 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("prose_password", re.compile(
         r"(?i)(?:password|passwd|passphrase|sshpw|\bpin\b|\bsecret\b|api[_-]?key)"
         r"[^\n]{0,80}?"
-        r"(?<![A-Za-z0-9_])("
+        r"(?<![A-Za-z0-9_])"
+        # Exempt only a lowercase config shape (min_length=12, hashing=bcrypt2) that does not follow a
+        # connector: "the secret is Abc=123def4567" / "reset to Abc=Def123456" are still passwords.
+        r"(?:(?<=\bis )|(?<=\bto )|(?<=\bes )|(?<=\bwas )|(?<=\bera )|(?<=:)|(?<=: )|(?<=\n)"
+        r"|(?![a-z_][a-z_.]{0,30}=[a-z0-9_.\-]{1,16}(?![A-Za-z0-9])))("
         r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[A-Z])"
         r"(?=[A-Za-z0-9_!@#$%^&*.\-+=]*[0-9])"
         r"[A-Za-z][A-Za-z0-9_!@#$%^&*.\-+=]{9,})"
         r"(?![A-Za-z0-9_])"
+    )),
+    # S-1: Spanish password prose ("la contraseña del servidor es X", "clave: X", "usuario admin clave X").
+    # Keyword: contraseña/clave (a connector es/son/era/fue/:/= after up to 4 plain words, or the value directly)
+    # or English password/passwd/pwd (connector REQUIRED; English prose is prose_password's job). The bare verb
+    # "pass" is not a keyword. Compounds (clave primaria/foránea/pública/privada/única/compuesta/de api/de
+    # cache/caché) are not passwords. The value is one whole token of 6-64 chars (quoted or not) and is judged
+    # by _prose_secret_is_credible. Every run is bounded so nothing here is quadratic. Only the value is redacted.
+    ("password_prose_es", re.compile(
+        r"(?i)\b(?:"
+        r"(?:contrase[ñn]as?|claves?)\b"
+        r"(?!\s{1,8}(?:primaria|for[aá]nea|p[uú]blica|privada|[uú]nica|compuesta"
+        r"|de\s{1,8}(?:la\s{1,8})?(?:api|cach[eé])|del\s{1,8}cach[eé])\b)"
+        r"(?:(?:\s{1,8}[\w.\-]{1,40}){0,4}?(?:\s{1,8}(?:es|son|era|fue)\b|\s{0,8}[:=])|\s{1,8})"
+        r"|(?:password|passwd|pwd)\b"
+        r"(?:(?:\s{1,8}[\w.\-]{1,40}){0,4}?(?:\s{1,8}(?:is|es|son|era|fue)\b|\s{0,8}[:=]))"
+        r")"
+        r"[ \t]{0,8}(?!\[REDACTED)"
+        r"(?P<q>[`'\"])?"
+        r"(?=[^\s`'\",;]{6})(?=(?P<secret>[^\s`'\",;]{0,257}))(?P=secret)"  # atomic: no 250-step backtrack per keyword
+    )),
+    # S-1: one-time code / PIN, only with an explicit keyword right before 4-8 digits ("OTP 493021",
+    # "código de verificación: 493021", "el pin es 4821"). Bare numbers never match. Only the digits are redacted.
+    ("otp_pin", re.compile(
+        r"(?i)\b(?:otp|pin|c[oó]digo\s{1,8}(?:de\s{1,8})?(?:verificaci[oó]n|seguridad)"
+        r"|(?:verification|security|one[- ]time)\s{1,8}(?:code|password))\b"
+        r"(?:\s{1,8}(?:is|es|code|c[oó]digo|n[uú]mero|number|was|ser[aá])){0,2}"
+        r"(?:\s{0,8}[:=])?\s{0,8}[`'\"]?(?<![\d.])(?P<secret>\d{4,8})(?!\d|[.,]\d)"
     )),
     # v2-refresh (private_ip_port_prose): private IPv4 paired with ':<port>'
     # in prose leaks internal topology. Bare private IPs are still allowed
@@ -117,12 +161,16 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # v2-refresh (home_path_windows): C:\Users\<name>\... reveals the user's
     # Windows account name. We match the first path segment (1-40 chars) and
     # redact it; downstream paths beyond the username are not re-redacted.
-    ("home_path_windows", re.compile(r"[Cc]:\\Users\\([A-Za-z][A-Za-z0-9._\-]{1,40})")),
+    # S-8: both slash styles, and the Git Bash spelling /c/Users/<name>. "Users" stays case-sensitive: the lowercase
+    # spellings are the egress absolute-path rules' job (they redact the whole path, this one only the prefix).
+    ("home_path_windows", re.compile(
+        r"(?:[Cc]:(?:\\\\|[\\/])|(?<![\w/])/[Cc]/)Users(?:\\\\|[\\/])(?!(?:Public|Shared|Default)\b)([A-Za-z][A-Za-z0-9._\-]{1,40})"
+    )),
     # v2-refresh (home_path_unix): /home/<name>/ or /Users/<name>/ likewise
     # exposes usernames. Anchored to start-of-string, whitespace, or a few
     # common surrounding chars so we don't match arbitrary substrings.
     ("home_path_unix", re.compile(
-        r"(?:^|[\s=(\"'])((?:/home|/Users)/[a-z][a-z0-9._\-]{1,40}/)"
+        r"(?:^|[\s=(\"'])((?:/home|/Users)/(?!Shared/)[A-Za-z][A-Za-z0-9._\-]{1,40}/)"
     )),
     # v2-refresh (card_number_prose): PAN-shaped runs (Visa/MC/Amex BIN +
     # 12-15 more digits, optionally group-separated). Synthetic test values
@@ -130,12 +178,18 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("card_number_pan", re.compile(
         r"\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2})[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"
     )),
+    # S-7: CUIT/CUIL, dashed (NN-NNNNNNNN-N) or an 11-digit run (not glued to letters: hex digests carry digit runs), prefix 20/23/24/27/30/33/34, and only when the
+    # mod-11 check digit validates (_cuit_check_digit_ok), so phones, timestamps and ids stay readable.
+    ("argentine_cuit_cuil", re.compile(
+        r"(?<![A-Za-z0-9\-.])(?:(?:20|23|24|27|30|33|34)-\d{8}-\d|(?:20|23|24|27|30|33|34)\d{9})(?![A-Za-z0-9]|-\d|\.\d)"
+    )),
     # T-2274 argentine_dni: Argentine national id, only with a document keyword in front
     # (DNI / D.N.I. / Documento [Nacional de Identidad] [N° / nro]) and 7-8 digits, dotted or not.
     # shortcut: a bare 12.345.678 stays readable (it is indistinguishable from an ARS amount);
     # upgrade only with a context-free signal.
     ("argentine_dni", re.compile(
         r"(?i)\b(?:d\.?\s?n\.?\s?i\.?|documento(?:\s+nacional\s+de\s+identidad)?)"
+        r"(?:\s+(?:del\s+(?:cliente|titular|usuario)\s+)?(?:es|is))?"
         r"(?:\s*(?:n[°º]|nro\.?|n[úu]mero|n\.?))?\s*[:#\-]?\s*"
         r"\d{1,2}[. ]?\d{3}[. ]?\d{3}\b"
     )),
@@ -148,6 +202,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("base64_secret", re.compile(
         r"(?<!ssh-ed25519 )(?<!ssh-rsa )(?<!ssh-dss )"
         r"(?<!ecdsa-sha2-nistp256 )(?<!ecdsa-sha2-nistp384 )(?<!ecdsa-sha2-nistp521 )"
+        r"(?<!SHA256:)(?<!sha256:)"  # an OpenSSH key fingerprint (SHA256:<43 b64>) is public
         r"(?<![A-Za-z0-9+/=_\-])"
         r"(?=[A-Za-z0-9+/]*[A-Z])(?=[A-Za-z0-9+/]*[a-z])(?=[A-Za-z0-9+/]*[0-9])"
         r"(?:[A-Za-z0-9+/]{24,}={1,2}|[A-Za-z0-9+]{40,})"
@@ -370,10 +425,77 @@ def _is_low_entropy_value(value: str) -> bool:
 _SHA_DIGEST_CONTEXT = re.compile(r"(?i)\bsha[-_ ]?(?:256|512)\s*[:=]?\s*$")
 
 
+_AWS_KEY_ID_RE = re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")
+_AWS_CONTEXT_RE = re.compile(r"(?i)(?<![a-z])aws|secret[_ \-]?access[_ \-]?key")
+_CUIT_WEIGHTS = (5, 4, 3, 2, 7, 6, 5, 4, 3, 2)
+
+
+_aws_id_seen: tuple[str, bool] = ("", False)
+
+
+def _text_has_aws_key_id(text: str) -> bool:
+    """Search once per text object (a 300 KB text with thousands of candidates must not rescan per match)."""
+    global _aws_id_seen
+    seen = _aws_id_seen  # one read: another thread may replace the module tuple between check and use
+    if seen[0] is not text:
+        seen = (text, bool(_AWS_KEY_ID_RE.search(text)))
+        _aws_id_seen = seen
+    return seen[1]
+
+
+def _aws_secret_has_context(match: re.Match[str]) -> bool:
+    """An AWS key id anywhere in the text, or aws / secret access key within 60 chars before the token."""
+    return _text_has_aws_key_id(match.string) or bool(
+        _AWS_CONTEXT_RE.search(match.string[max(0, match.start() - 60):match.start()])
+    )
+
+
+# Plain address: local part without digits/symbols typical of passwords, real domain with a letters-only TLD.
+# "j0hn@acme.io" / "admin@123" are judged on evidence instead (email-shaped passwords exist).
+_EMAIL_RE = re.compile(r"[A-Za-z][A-Za-z._\-]*@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*\.[A-Za-z]{2,}")
+# Two identifier words joined by an operator: lowercase words of 2+ letters (no digits), "_" / "." allowed inside;
+# a short number on the right is allowed only after a "_"/"." identifier (user_id%16, not hunter!2 / admin#123).
+_WORD = r"[a-z]{2,}(?:[_.][a-z]{2,})*"
+_IDENT_JOIN_RE = re.compile(rf"{_WORD}[+#%@*&^~$!\-]+{_WORD}|[a-z]{{2,}}(?:[_.][a-z]{{2,}})+[+#%@*&^~$!\-]+\d{{1,3}}")
+_PROSE_SYMBOLS = frozenset("!@#$%^&*+~")
+
+
+def _prose_secret_is_credible(value: str, quoted: bool) -> bool:
+    """Judge a password_prose_es value: a symbol alone is not evidence, emails/URLs/paths/identifier joins are not."""
+    if len(value) > 256:  # the regex captures up to 257 chars: longer means too long, not truncated
+        return False
+    v = value.rstrip(".,;:?)")
+    if len(v) < 6 or v[0] in "-/=~" or v.startswith(("./", "../")) or "://" in v or v.startswith("www."):
+        return False
+    if (len(v) > 2 and v[1] == ":" and v[2] in "\\/") or _EMAIL_RE.fullmatch(v) or _IDENT_JOIN_RE.fullmatch(v):
+        return False
+    has_digit = any(c.isdigit() for c in v)
+    if not (any(c.isalpha() for c in v) and has_digit):
+        return False
+    if quoted:
+        return True
+    if any(c in _PROSE_SYMBOLS for c in value):
+        return True
+    digits = sum(c.isdigit() for c in v)
+    return digits >= 2 and len(v) >= 8 and any(c.isupper() for c in v) and any(c.islower() for c in v)
+
+
+def _cuit_check_digit_ok(raw: str) -> bool:
+    digits = raw.replace("-", "")
+    check = 11 - sum(int(d) * w for d, w in zip(digits, _CUIT_WEIGHTS)) % 11
+    return int(digits[10]) == (0 if check == 11 else check)
+
+
 def _match_is_suppressed(name: str, match: re.Match[str]) -> bool:
     """Return True if a match should be ignored (placeholder / low-entropy)."""
     if _is_placeholder_match(match.group(0)):
         return True
+    if name == "aws_secret_key":
+        return not _aws_secret_has_context(match)
+    if name == "argentine_cuit_cuil":
+        return not _cuit_check_digit_ok(match.group(0))
+    if name == "password_prose_es":
+        return not _prose_secret_is_credible(match.group("secret"), bool(match.group("q")))
     if name == "base64_secret":
         # A bare sha256 (44 chars, one '=') or sha512 (88 chars, '==') base64 digest named as such
         # right before it is a checksum, not a secret.
@@ -410,7 +532,13 @@ def _redact(text: str) -> tuple[str, list[str]]:
         # Preserve non-suppressed matches only: substitute match-by-match so
         # a placeholder-only occurrence isn't overwritten by [REDACTED:*].
         def _sub(m: re.Match[str]) -> str:
-            return m.group(0) if _match_is_suppressed(name, m) else f"[REDACTED:{name}]"
+            if _match_is_suppressed(name, m):
+                return m.group(0)
+            marker = f"[REDACTED:{name}]"
+            if "secret" in (m.re.groupindex or {}):  # redact only the secret span, keep the surrounding words
+                whole, start = m.group(0), m.start()
+                return whole[:m.start("secret") - start] + marker + whole[m.end("secret") - start:]
+            return marker
         out = pattern.sub(_sub, out)
     return out, findings
 
@@ -449,6 +577,9 @@ _CONFUSABLE_ASCII_MAP = str.maketrans({
     "І": "I",
 })
 _MAX_SECRET_SCAN_VARIANTS = 64
+# Zero-width characters split a secret so the regexes miss it; scanned as an extra variant (never stripped from
+# stored text: U+200D joins emoji sequences). A hit neutralizes the whole field via sanitize_persisted_text.
+_ZERO_WIDTH_RE = re.compile("[\u200b\u200c\u200d\ufeff]")
 
 
 def _add_scan_variant(queue: list[str], seen: set[str], value: str) -> None:
@@ -533,7 +664,10 @@ def expand_secret_scan_variants(text: str) -> Iterator[str]:
         current = queue.pop(0)
         yield current
 
-        normalized = unicodedata.normalize("NFKC", current).translate(_CONFUSABLE_ASCII_MAP)
+        normalized = unicodedata.normalize("NFKC", current)
+        if _ZERO_WIDTH_RE.search(normalized):
+            normalized = _ZERO_WIDTH_RE.sub("", normalized)
+        normalized = normalized.translate(_CONFUSABLE_ASCII_MAP)
         _add_scan_variant(queue, seen, normalized)
 
         for match in _HEX_ESCAPE_SEQUENCE_RE.finditer(current):
@@ -600,9 +734,20 @@ def validate_persisted_metadata(fields: Mapping[str, object]) -> None:
             raise SensitiveMetadataError(field, findings)
 
 
+# Persisted content (transcripts, claims) only: any-case "users" and drive letter, single/double backslash or
+# slash, MSYS /c/. Not in _SECRET_PATTERNS because the export/egress redactors treat the lowercase spellings as
+# whole absolute paths (tests/test_home_path_egress_spellings.py).
+_PERSISTED_HOME_PATH_RE = re.compile(
+    r"(?i)(?:\b[a-z]:(?:\\\\|[\\/])|(?<![\w/])/[a-z]/)users(?:\\\\|[\\/])(?!(?:public|shared|default)\b)[a-z][a-z0-9._\-]{1,40}"
+)
+
+
 def sanitize_persisted_text(text: str) -> tuple[str, list[str]]:
     """Redact literal secrets and neutralize encoded secrets in content fields."""
     redacted, literal_findings = _redact(text)
+    if _PERSISTED_HOME_PATH_RE.search(redacted):
+        redacted = _PERSISTED_HOME_PATH_RE.sub("[REDACTED:home_path_windows]", redacted)
+        literal_findings = [*literal_findings, "home_path_windows"]
     findings = sorted(set(literal_findings + scan_text_for_findings(text)))
     if findings and scan_text_for_findings(redacted):
         redacted = "[REDACTED:encoded_secret]"

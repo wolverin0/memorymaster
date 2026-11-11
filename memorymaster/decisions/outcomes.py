@@ -12,7 +12,7 @@
     count: a same-status bookkeeping event (a confidence write) or a proposal
     (``policy_decision``/``action_proposal``) is not an outcome.  ``label_source``
     comes from the event's actor (review F-21): an explicit ``actor`` of
-    ``operator`` or ``automation`` wins; a ``steward_automation:`` details prefix
+    ``operator``, ``automation`` or ``agent`` (an MCP session; never human ground truth) wins; a ``steward_automation:`` details prefix
     is ``automation``; a ``steward_human_override:`` prefix with no payload actor
     predates F-21 (automation wrote it too) and is ``unknown_actor`` (ruling R5,
     never ``operator``); a legacy ``human_override`` resolution with neither is
@@ -87,7 +87,7 @@ PRUNE_WATERMARK = "prune_job:last_run"
 #: to the S3 INGEST decision of its candidate; details carry ``dream_ref`` and ``released``.
 CLAIM_LINK_KIND = "dream_claim_created"
 PRUNE_INTERVAL = timedelta(days=1)
-_ACTORS = frozenset({"operator", "automation"})
+_ACTORS = frozenset({"operator", "automation", "agent"})
 
 ClaimLookup = Callable[[str], "tuple[str | None, str] | None"]
 

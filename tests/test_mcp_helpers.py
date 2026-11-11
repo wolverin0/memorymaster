@@ -402,10 +402,12 @@ class TestMcpToolsIntegration:
 
         assert result["ok"] is True
         assert result["claim"]["volatility"] == "high"
+        # same agent, so the fast path applies it at once (MemoryService.validate_now) instead of queueing it
         assert result["warnings"] == [
             "mutable state forced to high volatility; supply valid_until",
-            "supersession queued for steward review",
+            f"supersession applied: [{old.id}] retired, replaced by this claim",
         ]
+        assert svc.store.get_claim(old.id).status == "superseded"
 
     def test_ingest_does_not_create_obsidian_vault_by_default(self, tmp_path, monkeypatch):
         from memorymaster.surfaces.mcp_server import ingest_claim, init_db

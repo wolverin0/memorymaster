@@ -9,6 +9,8 @@ tool, grouped by purpose. For the MCP server config block see the
 > Every write tool passes through the sensitivity filter and auto-citation fallback, and
 > tags `source_agent`. See [`.claude/rules/mcp-server.md`](../.claude/rules/mcp-server.md).
 
+> Trust model (local-trusted mode): every session on the shared server is admin and `source_agent` is self-declared, so the operator-only checks (`resolve_steward_proposal` approve needs `MEMORYMASTER_MCP_OPERATOR_RESOLVE=1`; `archive_by_source` with `dry_run=False` likewise) are hygiene against accidents and injected text, not a security boundary. An agent that declares the target author's name makes a supersession same-identity (drain-applicable, and the corrections fast path applies it at ingest), and `forget(apply=True)` or `redact_claim_payload` can still retire or blank another agent's claim in one call. The real fix is authenticated per-client principals; that is not done.
+
 ## Setup & lifecycle
 
 | Tool | Purpose |

@@ -31,6 +31,18 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
 }
 
 
+# The one sanctioned exit from ``archived``: ``MemoryService._revive_archived_dedup_match`` (same-author re-ingest).
+REVIVAL_REASON_PREFIX = "reingest_revival:"
+
+
+def is_reingest_revival(event_type: str, from_status: str, to_status: str, details: str | None) -> bool:
+    """True for the event that revival writes; integrity checks accept it, no other ``archived -> *``."""
+    return (
+        (event_type, from_status, to_status) == ("transition", "archived", "candidate")
+        and str(details or "").startswith(REVIVAL_REASON_PREFIX)
+    )
+
+
 def can_transition(current: str, target: str) -> bool:
     return target in ALLOWED_TRANSITIONS.get(current, set())
 

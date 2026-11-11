@@ -1,7 +1,8 @@
 """Install agy hooks into an explicitly supplied .gemini directory only.
 
 Run ``python -m memorymaster.surfaces.setup_agy_hooks --help`` for lane usage.
-No Gemini settings.json, per-prompt hooks, or default home target is used.
+No Gemini settings.json or default home target is used. Registers SessionStart, PreInvocation
+(per-prompt recall) and Stop under the "memorymaster" entry only.
 """
 
 from __future__ import annotations
@@ -31,6 +32,15 @@ def _python_command(executable: str) -> str:
     return executable
 
 
+def _foreign_recall_owner(config: dict) -> str | None:
+    """Key of another hook group whose PreInvocation handler already references memorymaster (a second one
+    would inject recall twice per prompt)."""
+    for key, group in config.items():
+        if key != "memorymaster" and isinstance(group, dict) and "memorymaster" in json.dumps(group.get("PreInvocation", [])).lower():
+            return key
+    return None
+
+
 def install_agy_hooks(*, gemini_config_dir: str | Path, project_root: str | Path,
                       db_path: str | Path, python_executable: str = sys.executable) -> dict[str, str]:
     """Idempotently add our named hooks under <gemini_config_dir>/config/hooks.json."""
@@ -43,12 +53,17 @@ def install_agy_hooks(*, gemini_config_dir: str | Path, project_root: str | Path
     if not isinstance(managed, dict):
         raise ValueError("memorymaster hook must be an object; existing file was preserved")
     python = _python_command(python_executable)
-    for event in ("SessionStart", "Stop"):
+    owner = _foreign_recall_owner(config)
+    for event in ("SessionStart", "PreInvocation", "Stop"):
         entries = managed.get(event, [])
         if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
             raise ValueError(f"{event} must be an array of handlers; existing file was preserved")
         managed[event] = [entry for entry in entries
                           if str(entry.get("command", "")).split()[1:] != [SCRIPT_NAME, event]]
+        if event == "PreInvocation" and owner:
+            if not managed[event]:
+                del managed[event]
+            continue  # the other hook already recalls per prompt
         managed[event].append({"type": "command", "command": f"{python} {SCRIPT_NAME} {event}", "timeout": 10})
     managed["enabled"] = True
     template = Path(__file__).parents[1] / "config_templates" / "hooks" / SCRIPT_NAME
@@ -67,7 +82,9 @@ def install_agy_hooks(*, gemini_config_dir: str | Path, project_root: str | Path
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-    return {"hooks": str(hooks_path), "adapter": str(destination)}
+    return {"hooks": str(hooks_path), "adapter": str(destination),
+            "pre_invocation": f"skipped: hook group '{owner}' already runs memorymaster recall on PreInvocation"
+            if owner else "registered"}
 
 
 def main() -> int:
@@ -77,8 +94,10 @@ def main() -> int:
     parser.add_argument("--db", required=True, help="Authoritative recall database (not opened by installer)")
     parser.add_argument("--python", default=sys.executable, dest="python_executable")
     args = parser.parse_args()
-    install_agy_hooks(gemini_config_dir=args.gemini_config_dir, project_root=args.project_root,
-                      db_path=args.db, python_executable=args.python_executable)
+    result = install_agy_hooks(gemini_config_dir=args.gemini_config_dir, project_root=args.project_root,
+                               db_path=args.db, python_executable=args.python_executable)
+    if result["pre_invocation"] != "registered":
+        print(result["pre_invocation"], file=sys.stderr)
     return 0
 
 

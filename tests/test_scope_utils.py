@@ -358,3 +358,15 @@ def test_the_first_root_keeps_the_plain_scope_and_a_second_gets_a_derived_one(tm
     assert scope_from_cwd(a) == "project:api"
     assert resolve_transcript_workspace_scope(a) == "project:api"
     assert sorted(entry["scope"] for entry in _scope_registry().values()) == sorted(["project:api", b_scope])
+
+
+def test_strict_resolver_honours_a_canonical_slug_alias_like_the_relaxed_one(tmp_path, monkeypatch):
+    from memorymaster.core.scope_utils import resolve_workspace_scope
+
+    aliases = tmp_path / "scope-aliases.json"
+    aliases.write_text(json.dumps({"aliases": {"whatsappbot": "project:logical"}}), encoding="utf-8")
+    monkeypatch.setenv("MEMORYMASTER_SCOPE_ALIASES", str(aliases))
+    cwd = tmp_path / "whatsappbot-prod - Copy"  # no alias on the folder name; its canonical slug is aliased
+    (cwd / ".git").mkdir(parents=True)
+    for strict in (False, True):
+        assert resolve_workspace_scope(cwd, strict=strict) == "project:logical", strict

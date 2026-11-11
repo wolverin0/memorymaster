@@ -4,7 +4,7 @@ Each row carries the question versions and full answer distributions, the
 action taken vs Jev's and legacy actions, the logging propensity, exposure and
 delivery, every joined outcome with its ``label_source``, and a time-split flag
 (``train`` before ``split_at``, ``test`` after).  Redacted state is included only
-on request.  Consumers must not treat ``jev``, ``unknown_actor`` or
+on request.  Consumers must not treat ``jev``, ``agent``, ``unknown_actor`` or
 ``unattributed_override`` labels as ground truth.  An unreadable ledger raises
 ``LedgerReadError`` instead of looking empty.
 """

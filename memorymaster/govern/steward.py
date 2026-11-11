@@ -1410,8 +1410,14 @@ def _find_target_proposal(
 # Who resolved a steward proposal (review F-21). Automatic approvals used to be
 # written as human overrides, which made operator corrections indistinguishable
 # from automation in the audit trail and in any label derived from it.
-STEWARD_ACTORS = ("operator", "automation")
-_ACTOR_SOURCE = {"operator": "human_override", "automation": "automation"}
+# ``agent`` is the MCP tool's default: an agent session is not the operator, so its resolutions are
+# labelled as such, and it may not approve an operator-only proposal (G-3b).
+STEWARD_ACTORS = ("operator", "automation", "agent")
+_ACTOR_SOURCE = {"operator": "human_override", "automation": "automation", "agent": "agent"}
+
+
+class OperatorOnlyProposalRefused(ValueError):
+    """An agent (MCP) tried to approve an operator-only proposal (cross-identity, fuzzy, prose-correction)."""
 
 
 class JevProposalOperatorOnly(ValueError):
@@ -1515,7 +1521,7 @@ def resolve_steward_proposal(
     proposal_event_id: int | None = None,
     claim_id: int | None = None,
     apply_on_approve: bool = True,
-    actor: Literal["operator", "automation"] = "operator",
+    actor: Literal["operator", "automation", "agent"] = "operator",
     allow_jev: bool = True,
 ) -> dict[str, Any]:
     """Approve or reject one steward proposal.
@@ -1528,7 +1534,7 @@ def resolve_steward_proposal(
     if action not in {"approve", "reject"}:
         raise ValueError("action must be approve or reject")
     if actor not in STEWARD_ACTORS:
-        raise ValueError("actor must be operator or automation")
+        raise ValueError("actor must be operator, automation or agent")
     if proposal_event_id is None and claim_id is None:
         raise ValueError("proposal_event_id or claim_id is required")
 
@@ -1550,6 +1556,20 @@ def resolve_steward_proposal(
         raise ValueError("Selected proposal has invalid claim_id.")
 
     payload = target.get("payload") if isinstance(target.get("payload"), dict) else {}
+    if actor == "agent" and action == "approve" and is_operator_only_proposal(payload) and not is_jev_proposal(payload):
+        # An agent cannot authenticate who filed a cross-identity supersession, so it must not approve one
+        # (reject stays allowed: it restores the status quo). Jev proposals fall through to the check below.
+        # recorded so repeated attempts are visible; not a resolution: every consumer matches the exact
+        # ``steward_proposal_approved``/``_rejected`` details, so the proposal stays pending
+        service.store.record_event(
+            claim_id=target_claim_id,
+            event_type="audit",
+            details="steward_proposal_refused",
+            payload={"source": _ACTOR_SOURCE[actor], "actor": actor,
+                     "proposal_event_id": int(target["proposal_event_id"]), "reason": "operator_only"},
+        )
+        raise OperatorOnlyProposalRefused(
+            "this proposal requires operator approval (dashboard, or the CLI with --actor operator)")
     if (actor == "automation" and is_operator_only_proposal(payload)) or (not allow_jev and is_jev_proposal(payload)):
         # Jev proposals are model judgments awaiting a human verdict; letting
         # automation or an agent resolve them would turn a proposal into a live action.

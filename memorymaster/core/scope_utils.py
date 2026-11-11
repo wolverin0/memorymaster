@@ -316,9 +316,9 @@ def resolve_workspace_scope(
     if strict:
         if _EPHEMERAL_WORKSPACE.fullmatch(name) and folder_slug not in aliases:
             return None
-        if folder_slug in aliases:
-            return aliases[folder_slug]
-    elif folder_slug in aliases or slug in aliases:
+    # Both modes honour an alias on the exact folder name or on its canonical slug
+    # (an alias for "whatsappbot" also covers "whatsappbot-prod - Copy").
+    if folder_slug in aliases or slug in aliases:
         return aliases.get(folder_slug, aliases.get(slug))
     plain = f"project:{slug}"
     return _registered_scope(roots[1], plain) if roots is not None else plain

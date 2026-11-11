@@ -386,7 +386,7 @@ def test_a_claim_declared_outdated_is_neither_asked_nor_reconfirmed(env):
     service, ledger = env
     outdated = _stale(service, "The fstrim timer runs weekly on the backup NAS")
     _declare_outdated(service, outdated)
-    assert outdated.id in pending_supersession_ids(service.store, use_cache=False)
+    assert outdated.id in pending_supersession_ids(service.store, use_cache=False, deliverable_only=False)
     transport = ScriptedTransport(CONFIRM)
 
     summary = revalidation.run(service, engine=make_engine(ledger, transport))

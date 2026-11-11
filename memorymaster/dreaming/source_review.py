@@ -13,6 +13,7 @@ import sqlite3
 from dataclasses import dataclass, replace
 from typing import Any
 
+from memorymaster.core.provider_egress import quote_in_sent_text
 from memorymaster.core.security import _sanitize_memory_claim_text
 from memorymaster.dreaming.models import DreamCandidate, DreamDecision
 
@@ -96,7 +97,9 @@ def bind_source(candidate: DreamCandidate, row: dict, *, max_chars: int = MAX_SO
                         break
                     safe = window
     evidence = next((m for m in messages if m["message_id"] == candidate.evidence_message_id), None)
-    exact = bool(evidence and candidate.evidence_quote and candidate.evidence_quote in evidence["text"])
+    # The provider saw the gated text of the message: a quote spanning a redacted span binds to it.
+    exact = bool(evidence and candidate.evidence_quote and (
+        candidate.evidence_quote in evidence["text"] or quote_in_sent_text(candidate.evidence_quote, evidence["text"])))
     return SourceCandidate(**candidate.to_dict(), source_context={
         **safe, "source_hash": source_hash, "complete": complete, "exact_quote": exact,
         "candidate_safe": safe_context(candidate.to_dict()) == candidate.to_dict(),

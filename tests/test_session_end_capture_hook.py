@@ -44,6 +44,7 @@ def run(db_path, transcript_path, *, source_agent, cwd, **kwargs):
         {
             "MEMORYMASTER_CAPTURE_STATE_DB": str(tmp_path / "capture.db"),
             "MEMORYMASTER_LLM_PROVIDER": "fake",
+            "MEMORYMASTER_SESSION_END_CAPTURE": "1",  # opt-in: the distillation sends transcript text to a provider
             "PYTHONPATH": os.pathsep.join((str(project), str(ROOT))),
         }
     )
@@ -172,3 +173,21 @@ def test_lifecycle_receipt_unexpected_programming_error_is_not_swallowed(monkeyp
     monkeypatch.setattr(sys, "stdin", io.StringIO("{}"))
     with pytest.raises(TypeError):
         hook.main()
+
+
+def test_distillation_is_off_unless_opted_in(monkeypatch):
+    import importlib.util
+    import io
+
+    from memorymaster.profile import project_runtime
+
+    spec = importlib.util.spec_from_file_location("default_off_end_hook", TEMPLATE)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    monkeypatch.delenv("MEMORYMASTER_SESSION_END_CAPTURE", raising=False)
+    recorded = []
+    monkeypatch.setattr(project_runtime, "record_session_end", lambda data: recorded.append(data))
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"session_id": "s", "transcript_path": "x.jsonl"})))
+    monkeypatch.setattr("memorymaster.core.capture_control.CaptureLedger", lambda *a, **k: pytest.fail("distillation ran"))
+    module.main()
+    assert recorded  # the lifecycle receipt is not part of the opt-in

@@ -84,8 +84,9 @@ over sources that are not wired to memory:
   reader;
 - `read_active_tasks` reads a `vault/active_tasks.md` that does not exist and has no
   caller; `query_for_task` and `volunteer_context` have no caller either;
-- no CLI gets the roadmap or current task injected; agy has no MemoryMaster hook, and
-  the Codex recall hook is installed but missing from `config_templates/hooks`;
+- no CLI gets the roadmap or current task injected: agy has SessionStart and Stop hooks
+  (`config_templates/hooks/memorymaster-agy.py`) and the Codex recall hook ships in
+  `config_templates/hooks/memorymaster-codex-recall.py`, but neither carries project state;
 - the GOAL.md layer has two files, last edited in July and August;
 - vanilla memories (`~/.claude/projects/*/memory`, `~/.codex`, `~/.gemini`) overlap
   with claims by an unmeasured amount.
