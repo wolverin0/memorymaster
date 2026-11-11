@@ -17,6 +17,8 @@ sent) when a credential-grade finding survives redaction:
 from __future__ import annotations
 
 import re
+import secrets
+import string
 from dataclasses import dataclass
 
 from memorymaster.bridges.dream_bridge import _DREAM_EXTRA_PATTERNS
@@ -72,25 +74,35 @@ def prepare_claim_egress(text: str) -> ClaimEgress:
     return ClaimEgress(redacted, tuple(dict.fromkeys(findings)), blocked)
 
 
-def prepare_transcript_egress(text: str) -> ClaimEgress:
-    """``prepare_claim_egress`` for text that already carries OUR redaction markers.
+_TOKEN_CHAR = re.compile(r"[A-Za-z0-9_-]")
 
-    Stored captures were sanitized by an older filter and hold well-formed ``[REDACTED:<name>]``
-    markers; the claim gate refuses any text containing ``[redacted``. Well-formed markers are
-    swapped for a neutral placeholder first and restored after, so only a malformed or foreign
-    marker (or a surviving credential-grade finding) still blocks.
+
+def prepare_transcript_egress(text: str) -> ClaimEgress:
+    """``prepare_claim_egress`` for STORED captures that carry OUR redaction markers.
+
+    A capture sanitizer already substituted ``[REDACTED:<name>]`` markers and the claim gate refuses
+    any text containing ``[redacted``. A marker is well-formed when neither adjacent character is a
+    token character (``[A-Za-z0-9_-]``): it is swapped for a per-call placeholder that cannot occur
+    in ``text`` and restored after the claim gate. A marker spliced into a token
+    (``AKIA[REDACTED:x]IOSFODNN7``) stays in place, so the claim gate blocks it, as does any
+    malformed or foreign marker. Raw transcripts must use ``prepare_claim_egress`` directly.
     """
+    tag = "".join(secrets.choice(string.ascii_letters) for _ in range(12))
+    while tag in text:
+        tag = "".join(secrets.choice(string.ascii_letters) for _ in range(12))
     held: list[str] = []
 
     def hold(match: re.Match[str]) -> str:
+        start, end = match.span()
+        if (start and _TOKEN_CHAR.match(text[start - 1])) or (end < len(text) and _TOKEN_CHAR.match(text[end])):
+            return match.group(0)
         held.append(match.group(0))
-        return f"[MARK{len(held) - 1}x]"
+        return f"[{tag}{len(held) - 1}]"
 
-    neutral = _EGRESS_MARKER.sub(hold, text)
-    egress = prepare_claim_egress(neutral)
-    restored = egress.text
-    for index, marker in enumerate(held):
-        restored = restored.replace(f"[MARK{index}x]", marker)
+    egress = prepare_claim_egress(_EGRESS_MARKER.sub(hold, text))
+    if not held:
+        return egress
+    restored = re.sub(r"\[" + tag + r"(\d+)\]", lambda m: held[int(m.group(1))], egress.text)
     return ClaimEgress(restored, egress.findings, egress.blocked)
 
 

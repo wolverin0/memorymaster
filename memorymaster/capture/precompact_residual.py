@@ -232,6 +232,8 @@ def extract_residual(
     safe_excerpt, withheld = export_lines(excerpt)  # nothing credential-grade leaves toward a provider
     if stats is not None:
         stats["egress_withheld"] = withheld
+    if not safe_excerpt:  # every line withheld: nothing left worth a provider call
+        return []
     with use_call_scoped_env(overrides):
         answer = call(PROMPT, safe_excerpt)
     if not answer:

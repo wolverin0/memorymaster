@@ -226,10 +226,119 @@ def test_a_base64_wrapped_credential_never_reaches_the_provider(tmp_path):
     assert B64 not in seen[0][1] and BENIGN in seen[0][1]
 
 
-def test_our_own_redaction_markers_do_not_block_but_foreign_ones_and_credentials_do():
+def _stored(text: str) -> str:
+    from memorymaster.core.provider_egress import export_messages
+
+    return export_messages([{"message_id": "m", "text": text}])[0][0]["text"]
+
+
+def test_stored_capture_markers_do_not_block_but_foreign_spliced_and_credentials_do():
+    assert _stored("host [REDACTED:private_ipv4] answered, " + BENIGN) == "host [REDACTED:private_ipv4] answered, " + BENIGN
+    assert _stored("password=[REDACTED:secret] (see [REDACTED:email]).") == "password=[REDACTED:secret] (see [REDACTED:email])."
+    assert _stored("[REDACTED:private_ipv4] and " + BLOCKED) == WITHHELD
+    assert _stored("a [redacted] value and a [REDACTED: broken marker") == WITHHELD
+    # a marker spliced into a token leaves its head and tail visible: it must block
+    assert _stored("sk-ant-api03-A1b2C3d4[REDACTED:x]E5f6G7h8I9j0K1l2M3n4O5p6") == WITHHELD
+    assert _stored("AKIA[REDACTED:x]IOSFODNN7EXAMPLE") == WITHHELD
+    # the helper's own placeholder shape in the input is data, never rewritten
+    assert _stored("x [MARK0x] y [REDACTED:ab]") == "x [MARK0x] y [REDACTED:ab]"
+
+
+def test_raw_transcript_text_keeps_the_original_redacted_refusal():
     from memorymaster.core.provider_egress import export_text
 
-    kept = export_text("host [REDACTED:private_ipv4] answered, " + BENIGN)
-    assert kept == "host [REDACTED:private_ipv4] answered, " + BENIGN
-    assert export_text("[REDACTED:private_ipv4] and " + BLOCKED) is None
-    assert export_text("a [redacted] value and a [REDACTED: broken marker") is None
+    assert export_text("host [REDACTED:private_ipv4] answered") is None
+    assert export_text("sk-ant-api03-A1b2C3d4[REDACTED:x]E5f6G7h8I9j0K1l2M3n4O5p6") is None
+    assert export_text("AKIA[REDACTED:x]IOSFODNN7EXAMPLE") is None
+    assert export_text(BENIGN) == BENIGN
+
+
+def test_a_huge_unbroken_token_is_withheld_fast_and_a_long_prose_message_still_goes_out():
+    import time
+
+    from memorymaster.core.provider_egress import MAX_CHUNK, export_messages, export_text
+
+    blob = "A1" * 10_000
+    started = time.monotonic()
+    assert export_text(blob) is None
+    prose = ("The service retries three times. " * 2_000)  # ~66k chars, several chunks
+    safe, withheld = export_messages([{"message_id": "a", "text": blob}, {"message_id": "b", "text": prose}])
+    assert time.monotonic() - started < 3
+    assert withheld == 1 and safe[1]["text"] == prose and len(prose) > MAX_CHUNK
+
+
+@pytest.mark.parametrize("loader", [_script_module, _packaged_module], ids=["script", "package"])
+def test_session_end_huge_blob_message_is_withheld_quickly_and_the_rest_goes_out(tmp_path, monkeypatch, loader):
+    import time
+
+    sent: list[str] = []
+    monkeypatch.setattr("memorymaster.core.llm_provider.call_llm", lambda prompt, text: sent.append(text) or "[]")
+    mod = loader()
+    transcript = _transcript(tmp_path, ["Session notes: " + "Zq" * 10_000, "Session notes: " + BENIGN + " Nothing else."])
+    db = tmp_path / "unused.db"
+    db.touch()
+    started = time.monotonic()
+    mod.run(str(db), str(transcript), source_agent="t-agent", cwd=str(tmp_path))
+    assert time.monotonic() - started < 5
+    assert len(sent) == 1 and BENIGN in sent[0] and "ZqZq" not in sent[0]
+
+
+def test_a_gate_exception_withholds_that_message_only(tmp_path, monkeypatch):
+    import memorymaster.core.provider_egress as gate
+
+    real = gate.prepare_transcript_egress
+
+    def flaky(text):
+        if "poison" in text:
+            raise ValueError("synthetic gate fault")
+        return real(text)
+
+    monkeypatch.setattr(gate, "prepare_transcript_egress", flaky)
+    summary, extractor, ledger, capture_id = _run(tmp_path, ["poison pill text", BENIGN])
+    assert summary["errors"] == 0 and summary["egress_withheld"] == 1
+    texts = {m["message_id"]: m["text"] for m in extractor.calls[0]}
+    assert texts == {"m0": gate.GATE_ERROR, "m1": BENIGN}
+    assert ledger.get_capture(capture_id)["state"] not in {"retryable", "quarantined"}
+    assert gate.export_text("poison") is not None  # raw path uses another entry point
+    monkeypatch.setattr(gate, "prepare_claim_egress", lambda text: (_ for _ in ()).throw(ValueError("x")))
+    assert gate.export_text("anything") is None  # a fault withholds, never raises
+
+
+def test_precompact_excerpt_with_only_withheld_lines_makes_no_provider_call():
+    stats: dict = {}
+    assert _residual("USER: " + BLOCKED + "
+ASSISTANT: " + BLOCKED, stats) == []
+    assert stats["egress_withheld"] == 2
+
+
+def test_a_failed_extraction_does_not_count_withheld_messages(tmp_path):
+    class Broken(_Recorder):
+        def extract(self, messages, *, scope, capture_hash):
+            raise RuntimeError("provider unavailable")
+
+    service = MemoryService(tmp_path / "claims.db", workspace_root=tmp_path)
+    service.init_db()
+    ledger = DreamLedger(tmp_path / "capture.db")
+    _queue(ledger, [BLOCKED, BENIGN])
+    summary = DreamWorker(ledger, service, Broken(), _Consolidator(), config=DreamConfig(), now=lambda: NOW).run(
+        apply_candidates=False)
+    assert summary["errors"] == 1 and summary["egress_withheld"] == 0
+
+
+def test_a_quote_spanning_a_redacted_ip_binds_to_the_text_the_provider_saw(tmp_path):
+    from memorymaster.dreaming.models import DreamCandidate
+    from memorymaster.dreaming.source_review import bind_source
+
+    ledger = DreamLedger(tmp_path / "capture.db")
+    cid = _queue(ledger, ["the primary database lives at " + IP + " in the lab", BENIGN])
+    row = ledger.get_capture(cid)
+
+    def candidate(quote: str) -> DreamCandidate:
+        return DreamCandidate("c1", "The primary database lives in the lab.", "fact", "db", "lives_in", "lab",
+                              "project", "m0", quote, 0.8)
+
+    spanning = bind_source(candidate("database lives at [REDACTED:private_ipv4] in"), row)
+    assert spanning.source_context["exact_quote"] is True
+    assert bind_source(candidate("database lives at " + IP + " in"), row).source_context["exact_quote"] is True
+    assert bind_source(candidate("never said this sentence anywhere"), row).source_context["exact_quote"] is False
+    assert row["messages"][0]["text"].count(IP) == 1  # what is persisted is untouched

@@ -85,7 +85,7 @@ def _extract_assistant_text(transcript_path: str) -> str:
     a ``payload`` envelope). Returns "" when nothing usable is found."""
     if not transcript_path or not os.path.exists(transcript_path):
         return ""
-    from memorymaster.core.provider_egress import export_text  # fail-closed: no filter, no call
+    from memorymaster.core.provider_egress import MAX_CHUNK, export_text  # fail-closed: no filter, no call
 
     messages: list[str] = []
     try:
@@ -123,7 +123,7 @@ def _extract_assistant_text(transcript_path: str) -> str:
                 if isinstance(part, dict) and part.get("type") in (None, "text")
             )
         if text and len(text) > 30:
-            safe = export_text(text)  # before the cut: truncating first could hide a secret's prefix
+            safe = export_text(text[:MAX_CHUNK])  # before the 500 cut (bounded: the gate is quadratic on blobs): truncating first could hide a secret's prefix
             if safe is None:  # one credential-grade message is withheld, the rest still goes out
                 continue
             messages.append(safe[:500])

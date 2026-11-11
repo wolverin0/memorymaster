@@ -548,7 +548,6 @@ class DreamWorker:
                 capture_hash = str(row["content_hash"]) + (f":{cursor}" if cursor else "")
                 # The ledger may hold text sanitized by an older, literal-only filter: gate at call time.
                 messages, withheld = export_messages(messages)
-                summary["egress_withheld"] += withheld
                 candidates = []
                 if withheld < len(messages):  # a window of only withheld messages has nothing to send
                     self._hold_lease()
@@ -559,6 +558,7 @@ class DreamWorker:
                     candidates = [candidate.to_dict() for candidate in result.candidates]
                 self._hold_lease()
                 saved = self.ledger.save_extraction_window(int(row["id"]), candidates, window_end, run_id)
+                summary["egress_withheld"] += withheld  # counted once the window is done, not per retry
             except DreamLeaseLost:
                 raise
             except Exception as exc:

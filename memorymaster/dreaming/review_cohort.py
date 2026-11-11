@@ -10,6 +10,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from memorymaster.core.provider_egress import quote_in_sent_text
 from memorymaster.core.security import _sanitize_memory_claim_text
 from memorymaster.dreaming.sampling import _date, _entry, sample_sources
 
@@ -40,7 +41,9 @@ def _source(conn, entry: dict) -> dict:
     candidates = json.loads(row["extraction_json"] or "[]")
     exact = {candidate["candidate_id"]: any(
         message["message_id"] == candidate.get("evidence_message_id")
-        and bool(candidate.get("evidence_quote")) and candidate["evidence_quote"] in message["text"]
+        and bool(candidate.get("evidence_quote")) and (
+            candidate["evidence_quote"] in message["text"]
+            or quote_in_sent_text(candidate["evidence_quote"], message["text"]))
         for message in messages) for candidate in candidates}
     applications = [dict(item) for item in conn.execute(
         "SELECT candidate_id, action, created_claim_id, target_claim_id, applied_at "
