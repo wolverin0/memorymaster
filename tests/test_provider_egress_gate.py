@@ -238,8 +238,8 @@ def test_stored_capture_markers_do_not_block_but_foreign_spliced_and_credentials
         == "host [REDACTED:private_ipv4] answered, " + BENIGN
     )
     assert (
-        _stored("password=[REDACTED:secret] (see [REDACTED:email]).")
-        == "password=[REDACTED:secret] (see [REDACTED:email])."
+        _stored("the key is [REDACTED:secret], (see [REDACTED:email]).")
+        == "the key is [REDACTED:secret], (see [REDACTED:email])."
     )
     assert _stored("[REDACTED:private_ipv4] and " + BLOCKED) == WITHHELD
     assert _stored("a [redacted] value and a [REDACTED: broken marker") == WITHHELD
