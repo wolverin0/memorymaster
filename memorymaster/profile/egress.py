@@ -17,6 +17,9 @@ sent) when a credential-grade finding survives redaction:
 from __future__ import annotations
 
 import re
+import secrets
+import string
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from memorymaster.bridges.dream_bridge import _DREAM_EXTRA_PATTERNS
@@ -72,4 +75,77 @@ def prepare_claim_egress(text: str) -> ClaimEgress:
     return ClaimEgress(redacted, tuple(dict.fromkeys(findings)), blocked)
 
 
-__all__ = ["ClaimEgress", "prepare_claim_egress"]
+_TOKEN_CHAR = re.compile(r"[A-Za-z0-9_-]")
+_INDEXED_MARKER = re.compile(r"\[REDACTED:[A-Za-z0-9_]+(?:#\d+)?\]")
+
+
+def _neutralise(text: str, *, trusted: bool) -> tuple[str, Callable[[str], str]]:
+    """Swap well-formed ``[REDACTED:<name>]`` markers for a per-call placeholder; return the restorer.
+
+    Untrusted (default): a marker with a token character (``[A-Za-z0-9_-]``) on either side is spliced
+    into a token, so it stays in place and the claim gate blocks it. ``trusted`` (text built from
+    output of this very gate) neutralises every well-formed marker, adjacent letters or not.
+    """
+    tag = "".join(secrets.choice(string.ascii_letters) for _ in range(12))
+    while tag in text:
+        tag = "".join(secrets.choice(string.ascii_letters) for _ in range(12))
+    held: list[str] = []
+
+    def hold(match: re.Match[str]) -> str:
+        start, end = match.span()
+        if not trusted and (
+            (start and _TOKEN_CHAR.match(text[start - 1])) or (end < len(text) and _TOKEN_CHAR.match(text[end]))
+        ):
+            return match.group(0)
+        held.append(match.group(0))
+        return f"[{tag}{len(held) - 1}]"
+
+    neutral = _EGRESS_MARKER.sub(hold, text)
+    pattern = re.compile(r"\[" + tag + r"(\d+)\]")
+    return neutral, (lambda out: pattern.sub(lambda m: held[int(m.group(1))], out)) if held else (lambda out: out)
+
+
+def prepare_transcript_egress(text: str, *, trusted: bool = False) -> ClaimEgress:
+    """``prepare_claim_egress`` for STORED text that carries OUR redaction markers.
+
+    The claim gate refuses any text containing ``[redacted``; well-formed markers are neutralised
+    first and restored after (see ``_neutralise`` for what well-formed means and for ``trusted``).
+    A spliced, malformed or foreign marker still blocks. Raw transcripts must use
+    ``prepare_claim_egress`` directly.
+    """
+    neutral, restore = _neutralise(text, trusted=trusted)
+    egress = prepare_claim_egress(neutral)
+    return ClaimEgress(restore(egress.text), egress.findings, egress.blocked)
+
+
+def prepare_indexed_egress(texts: list[str]) -> list[ClaimEgress]:
+    """Gate several STORED texts that a model will compare, with stable pseudonyms.
+
+    Redacted private IPs, paths and emails become ``[REDACTED:<name>#<k>]`` where the same original
+    value gets the same ``k`` across ALL ``texts`` and a different value a different ``k``, so the
+    model can tell two redacted values apart without seeing them. A text with a literal credential is
+    blocked (masked credentials would read equal).
+    """
+    seen: dict[tuple[str, str], int] = {}
+    out: list[ClaimEgress] = []
+    for text in texts:
+        neutral, restore = _neutralise(text, trusted=False)
+        redacted, literal = redact_text(neutral)
+        findings = list(literal)
+        for name, pattern in _EGRESS_PATTERNS:
+
+            def index(match: re.Match[str], name: str = name) -> str:
+                return f"[REDACTED:{name}#{seen.setdefault((name, match.group(0)), len(seen) + 1)}]"
+
+            redacted, count = pattern.subn(index, redacted)
+            if count:
+                findings.append(name)
+        blocked = bool(literal) or bool(scan_text_for_findings(redacted))
+        if "[redacted" in neutral.lower() or _DREAM_EXTRA_PATTERNS.search(_INDEXED_MARKER.sub(" ", redacted)):
+            findings.append("export_refused")
+            blocked = True
+        out.append(ClaimEgress(restore(redacted), tuple(dict.fromkeys(findings)), blocked))
+    return out
+
+
+__all__ = ["ClaimEgress", "prepare_claim_egress", "prepare_indexed_egress", "prepare_transcript_egress"]

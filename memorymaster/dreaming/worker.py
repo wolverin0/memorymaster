@@ -19,6 +19,8 @@ from typing import Any, Callable, Protocol
 
 from memorymaster.core.antigravity_client import AntigravityError
 from memorymaster.core.models import CitationInput
+from memorymaster.core.provider_egress import export_messages, export_stored
+from memorymaster.dreaming.consolidation_egress import WITHHELD_RATIONALE, gate_consolidation, with_ignored
 from memorymaster.core.service import MemoryService
 from memorymaster.dreaming import held
 from memorymaster.dreaming.extraction_window import PIECE_CHARS, extraction_complete, next_window
@@ -274,6 +276,8 @@ class DreamConfig:
 
 
 class DreamWorker:
+    observations_withheld = 0  # observation prompts the egress gate kept from the provider
+
     def __init__(self, ledger: DreamLedger, service: MemoryService, extractor: Extractor, consolidator: Consolidator, *, config: DreamConfig | None = None, now: Callable[[], datetime] | None = None, decision_engine: Any = None) -> None:
         self.ledger = ledger
         self.service = service
@@ -297,8 +301,9 @@ class DreamWorker:
             return
         try:
             notes = held.triage_notes(self.ledger.get_capture(capture_id).get("extraction"))
+            # A candidate the egress gate withheld was never judged by the model: no reward label.
             verdicts = [(notes[str(d.get("candidate_id"))], d.get("action")) for d in decisions
-                        if str(d.get("candidate_id")) in notes]
+                        if str(d.get("candidate_id")) in notes and d.get("rationale") != WITHHELD_RATIONALE]
             if verdicts:
                 held.record_verdicts(self._decisions_ledger(), capture_id, verdicts,
                                      observed_at=self.now().isoformat())
@@ -347,6 +352,8 @@ class DreamWorker:
             "candidate_writes": 0,
             "proposals": 0,
             "deferred_extract_budget": 0,
+            "egress_withheld": 0,
+            "egress_withheld_consolidation": 0,
             "deferred_consolidate_budget": 0,
             "deferred_consolidate_provider": 0,
             "consolidate_breaker": None,
@@ -450,6 +457,11 @@ class DreamWorker:
         """
         from memorymaster.core.llm_provider import call_llm
 
+        safe = export_stored(prompt)
+        if safe is None:  # the existing no-verdict answer: the job completes, nothing is sent
+            self.observations_withheld += 1
+            return '{"decision":"no_signal"}'
+        prompt = safe
         return call_llm(system, prompt)
 
     def _run_graph_observations(
@@ -498,6 +510,7 @@ class DreamWorker:
                 synthesized = engine.process_synthesis(owner=owner, scope=target_scope)
                 totals["emitted"] += synthesized.emitted
                 totals["failed"] += synthesized.failed
+        totals["egress_withheld"] = self.observations_withheld
         return totals
 
     def _extract(self, run_id: str, scope: str | None, limit: int, summary: dict[str, Any]) -> list[dict[str, Any]]:
@@ -544,14 +557,19 @@ class DreamWorker:
                 cursor = int(row.get("extracted_through") or 0)
                 messages, window_end = next_window(list(row["messages"]), cursor, self.config.max_input_chars)
                 capture_hash = str(row["content_hash"]) + (f":{cursor}" if cursor else "")
-                self._hold_lease()
-                called = True
-                result = self.extractor.extract(messages, scope=str(row["scope"]), capture_hash=capture_hash)
-                called = False
-                self._record_usage(run_id, result.usage, "ok")
-                candidates = [candidate.to_dict() for candidate in result.candidates]
+                # The ledger may hold text sanitized by an older, literal-only filter: gate at call time.
+                messages, withheld = export_messages(messages)
+                candidates = []
+                if withheld < len(messages):  # a window of only withheld messages has nothing to send
+                    self._hold_lease()
+                    called = True
+                    result = self.extractor.extract(messages, scope=str(row["scope"]), capture_hash=capture_hash)
+                    called = False
+                    self._record_usage(run_id, result.usage, "ok")
+                    candidates = [candidate.to_dict() for candidate in result.candidates]
                 self._hold_lease()
                 saved = self.ledger.save_extraction_window(int(row["id"]), candidates, window_end, run_id)
+                summary["egress_withheld"] += withheld  # counted once the window is done, not per retry
             except DreamLeaseLost:
                 raise
             except Exception as exc:
@@ -836,12 +854,17 @@ class DreamWorker:
                     continue
                 references = fitted
                 self._hold_lease()
-                called = True
-                result = consolidator.consolidate(candidates, references, scope=effective_scope)
-                called = False
-                answered += 1
+                sent, ignored, safe_references, withheld = gate_consolidation(candidates, references)
+                result = None
+                if sent:  # a batch of only withheld candidates has nothing to send
+                    called = True
+                    result = consolidator.consolidate(sent, safe_references, scope=effective_scope)
+                    called = False
+                    answered += 1
+                    self._record_usage(run_id, result.usage, "ok")
                 completed.update(capture_ids)
-                self._record_usage(run_id, result.usage, "ok")
+                result = with_ignored(result, ignored)
+                summary["egress_withheld_consolidation"] += withheld
                 owner_by_id = {candidate.candidate_id: int(row["id"]) for row, candidate in pairs}
                 decisions, pending = self._reviewed_batch(result, candidates, effective_scope)
                 for decision in decisions:
