@@ -417,8 +417,7 @@ def test_an_observation_call_is_skipped_when_the_budget_cannot_hold_it_and_guard
 
 # --- the beat drains a backlog even when a third of its extractions fail --------------------------------------
 
-@pytest.fixture(autouse=True)
-def _no_fsync(monkeypatch) -> None:
+def _apply_no_fsync(monkeypatch) -> None:
     """Every test here commits to throwaway databases: an fsync per commit costs about 100 ms on the Windows
     dev disk (a 48 h simulation took 6 min, the file 9 min). Test databases only."""
 
@@ -430,6 +429,11 @@ def _no_fsync(monkeypatch) -> None:
         return conn
 
     monkeypatch.setattr(sqlite3, "connect", connect)
+
+
+@pytest.fixture(autouse=True)
+def _no_fsync(monkeypatch) -> None:
+    _apply_no_fsync(monkeypatch)
 
 
 def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool = False, failure_rate: float = 0.35,
@@ -515,6 +519,7 @@ def test_the_beat_drains_a_backlog_at_35_percent_extraction_failures(tmp_path: P
 def test_exiling_every_retryable_capture_from_the_beat_does_not_drain(tmp_path: Path, monkeypatch) -> None:
     _, with_wait = _simulate(tmp_path / "new", monkeypatch, exile_retryable=False)
     monkeypatch.undo()
+    _apply_no_fsync(monkeypatch)  # undo() also removed the fsync switch
     _, exiled = _simulate(tmp_path / "old", monkeypatch, exile_retryable=True)
     print(f"final unfinished after 48 h at 35% failures: short wait={with_wait} exiled={exiled}")
     assert exiled > with_wait
@@ -551,6 +556,7 @@ def test_the_beat_drains_when_every_failure_is_counted(tmp_path: Path, monkeypat
 def test_exiling_after_one_counted_failure_does_not_drain(tmp_path: Path, monkeypatch) -> None:
     _, second = _simulate(tmp_path / "new", monkeypatch, kind="timeout", dream_runs=True)
     monkeypatch.undo()
+    _apply_no_fsync(monkeypatch)  # undo() also removed the fsync switch
     initial, first = _simulate(tmp_path / "old", monkeypatch, kind="timeout", dream_runs=True, exile_charged=True)
     print(f"counted failures, 48 h at 35%: initial={initial} exile-after-2nd={second} exile-after-1st={first}")
     assert first > second
