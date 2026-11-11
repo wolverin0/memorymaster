@@ -219,3 +219,261 @@ def test_our_headless_claude_calls_carry_the_internal_mark(monkeypatch) -> None:
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert llm_provider._call_claude_cli("p", "t") == "ok"
     assert seen["env"]["MEMORYMASTER_INTERNAL_RUN"] == "1"
+
+
+# --- audit D-6: mixed-prompt rule. (label, prompt, internal env, should_skip) ---------------------------------
+_N = "You have 2 orchestration messages. Run `orca orchestration check --run run_ab12cd34`."
+_Z = "zorblax cache invalidation strategy"
+_TASK = f"<task-notification><task-id>b5k27</task-id><status>completed</status><summary>{_Z} job done</summary></task-notification>"
+MACHINE_TABLE = [
+    ("orca notice pure", _N, False, True),
+    ("orca notice + trailing newline", _N + "\n", False, True),
+    ("orca notice (s) form", "You have 1 orchestration message(s). Run `orca orchestration check --run run_ff00ee11`.", False, True),
+    ("two orca notices stacked", _N + "\n" + _N, False, True),
+    ("orca notice wrapped by terminal header", "──── From: TERM_1A2B-FAN ────\n" + _N, False, True),
+    ("ficha-ping bare", "[ficha-ping 2026-11-10T12:00 lane=memorymaster]", False, True),
+    ("task-notification", _TASK, False, True),
+    ("system notification envelope", f"[SYSTEM NOTIFICATION - not user input]\n<task-notification><summary>{_Z}</summary></task-notification>", False, True),
+    ("agent-message from subagent", f'<agent-message from="a1b2c3">{_Z} check finished, see report</agent-message>', False, True),
+    ("extractor prompt, env mark set", f"Extract at most five durable facts about the {_Z} from this transcript.", True, True),
+    ("extractor prompt, NO env mark", f"Extract at most five stable facts, decisions, preferences, profiles, or constraints about the {_Z}.", False, True),
+    ("judge prompt, NO env mark", f"You are a relevance judge. Given a USER QUERY and a list of CANDIDATE memory claims, return the subset about the {_Z}.", False, True),
+    ("curator prompt, NO env mark", f"You are a memory curator for an AI coding agent system. Given a raw memory text about the {_Z}, extract claims.", False, True),
+    ("human prompt", f"which strategy did we choose for the {_Z}", False, False),
+    ("human quoting orca notice", f"I got this: '{_N}' - which strategy did we choose for the {_Z}?", False, False),
+    ("notice followed by human ask", _N + f"\nBefore that: which strategy did we choose for the {_Z}?", False, False),
+    ("human quoting task-notification", f"what does this mean <task-notification><summary>x</summary></task-notification> for the {_Z}?", False, False),
+    ("human quoting extractor prompt", f"why does the prompt 'Extract at most five durable facts' miss the {_Z}?", False, False),
+    ("coordinator task brief", f"You are working inside Orca. Task: review the {_Z} and report.", False, False),
+    # new machine shapes
+    ("notice with trailing space", _N + " ", False, True),
+    ("three notices and a ping", _N + "\n" + _N + "\n[ficha-ping 3]\n" + _N, False, True),
+    ("teammate message element", '<teammate-message teammate_id="a" summary="s">status: tests green</teammate-message>', False, True),
+    ("cross-session message element", '<cross-session-message from="run:abc">fyi build done</cross-session-message>', False, True),
+    ("task notification then orca notice", _TASK + "\n" + _N, False, True),
+    ("two teammate messages", "<teammate-message>a b</teammate-message>\n<teammate-message>c d</teammate-message>", False, True),
+    ("bare subagent tag with punctuation", '<subagent sessionID="s1"> .', False, True),
+    ("quality evaluator prompt with leading blank lines", "\n\nYou are a memory quality evaluator. Two claims contradict each other. Pick one.", False, True),
+    ("consolidation prompt", "Compare the 4 candidates with governed current claims. Return one verdict each.", False, True),
+    # new human negatives that look similar
+    ("human pastes notice and asks meaning", _N + "\nwhat does this mean?", False, False),
+    ("human asks about notice before pasting", f"what does this mean? {_N}", False, False),
+    ("human asks about task-notification tag", "why is <task-notification> never closed in my transcript", False, False),
+    ("human quotes closed task-notification in a question", f"{_TASK} why did it say completed?", False, False),
+    ("mentions ping", "why does the ping from the dispatcher arrive twice", False, False),
+    ("mentions ficha-ping in a sentence", "how do I stop [ficha-ping 3] from showing up in the status bar", False, False),
+    ("long human prompt then short notice", "Please review the retention migration plan in docs and list the risks, in order of severity. " * 4 + _N, False, False),
+    ("notice then long human prompt", _N + "\n" + "Also explain how the steward decides promotion. " * 5, False, False),
+    ("ping plus request", "[ficha-ping 3] please fix the bug in arr[0]", False, False),
+    ("teammate message plus ask", "<teammate-message>tests green</teammate-message> now update the changelog", False, False),
+    ("human quoting teammate tag", "the <teammate-message> wrapper breaks my parser, how do I strip it", False, False),
+    ("cross-session notice plus question", '<cross-session-message from="x">done</cross-session-message> which branch is it on?', False, False),
+    ("human mentions orchestration messages", "You have 3 orchestration messages waiting, why does the hook fire on them?", False, False),
+    ("human quotes curator mid-sentence", "the prompt You are a memory curator is stored as a claim, is that a bug?", False, False),
+    ("human asks about the system notification header", "[SYSTEM NOTIFICATION - NOT USER INPUT] where does this header come from?", False, False),
+    ("human says continue", "continue", False, False),
+    ("spanish question after notice", _N + " Explicame por que llego dos veces", False, False),
+]
+
+
+@pytest.mark.parametrize("label,prompt,internal,should_skip", MACHINE_TABLE, ids=[row[0] for row in MACHINE_TABLE])
+def test_machine_table(label, prompt, internal, should_skip) -> None:
+    environ = {"MEMORYMASTER_INTERNAL_RUN": "1"} if internal else {}
+    assert (mt.machine_skip(prompt, "claude", environ=environ) is not None) is should_skip, label
+
+
+def test_machine_table_totals() -> None:
+    original = MACHINE_TABLE[:19]
+    machine = [r for r in original if r[3]]
+    human = [r for r in original if not r[3]]
+    assert (len(machine), len(human)) == (13, 6)
+    assert sum(mt.machine_skip(r[1], "claude", environ={"MEMORYMASTER_INTERNAL_RUN": "1"} if r[2] else {}) is not None
+               for r in machine) == 13
+    assert sum(mt.machine_skip(r[1], "claude", environ={}) is None for r in human) == 6
+    assert sum(1 for r in MACHINE_TABLE[19:] if not r[3]) >= 12
+
+
+def test_the_per_adapter_rollback_still_covers_the_new_shapes() -> None:
+    env = {mt.FILTER_ENV_PREFIX + "AGY": "0"}
+    assert mt.machine_skip(_N + "\n" + _N, "agy", environ=env) is None
+    assert mt.machine_skip(_N + "\n" + _N, "claude", environ=env) == "transport_notice"
+
+
+# --- verifier round: bounded scan, agent-message status rule, pinned internal heads, boilerplate residue ---------
+import time  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("unit", [
+    "<subagent sessionID=\"s\">", "<agent-message>", "<teammate-message from=\"a\">", "<cross-session-message>",
+    "<task-notification>", "[SYSTEM NOTIFICATION - x] ", "[ficha-ping ", "You have 1 orchestration message. Run `",
+    "---- From: x ", "─" * 8, "<agent-message<agent-message", "</agent-message>",
+])
+def test_unclosed_or_repeated_shapes_stay_linear_on_a_300kb_prompt(unit) -> None:
+    prompt = unit * (300_000 // len(unit))
+    start = time.perf_counter()
+    mt.machine_skip(prompt, "claude", environ={})
+    assert time.perf_counter() - start < 0.5, unit
+
+
+def test_many_closed_elements_with_one_distant_close_stay_linear() -> None:
+    prompt = "<agent-message>" * 15000 + "</agent-message>"
+    start = time.perf_counter()
+    mt.machine_skip(prompt, "claude", environ={})
+    assert time.perf_counter() - start < 0.5
+
+
+_BRIEF = "Please carry out this task and report back with the evidence. " * 6  # about 360 chars of prose
+_PAD = "x" * 250
+STATUS_TABLE = [
+    ("short teammate text", "<teammate-message>tests green, nothing to do</teammate-message>", True),
+    ("json idle notification, long", '<teammate-message>{"type":"idle_notification","from":"w","note":"' + _PAD + '"}</teammate-message>', True),
+    ("json shutdown request", '<teammate-message>{"type":"shutdown_request","reason":"' + _PAD + '"}</teammate-message>', True),
+    ("json plan approval response", '<teammate-message>{"type":"plan_approval_response","approve":true,"n":"' + _PAD + '"}</teammate-message>', True),
+    ("json other type, long", '<teammate-message>{"type":"task_assignment","text":"' + _PAD + '"}</teammate-message>', False),
+    ("long prose brief, teammate", "<teammate-message teammate_id=\"lead\">" + _BRIEF + "</teammate-message>", False),
+    ("long prose brief, agent-message", "<agent-message from=\"a\">" + _BRIEF + "</agent-message>", False),
+    ("long prose brief, cross-session", "<cross-session-message from=\"run:1\">" + _BRIEF + "</cross-session-message>", False),
+    ("long prose brief, subagent", "<subagent sessionID=\"s\">" + _BRIEF + "</subagent>", False),
+    ("short status, cross-session", "<cross-session-message from=\"run:1\">build done</cross-session-message>", True),
+    ("task-notification is always a notice", "<task-notification><summary>" + _BRIEF + "</summary></task-notification>", True),
+    ("brief after a status notice", "<teammate-message>ok</teammate-message>\n<teammate-message>" + _BRIEF + "</teammate-message>", False),
+    ("unclosed long agent tag is plain text", "<agent-message from=\"a\">" + _BRIEF, False),
+]
+
+
+@pytest.mark.parametrize("label,prompt,should_skip", STATUS_TABLE, ids=[row[0] for row in STATUS_TABLE])
+def test_agent_message_is_a_notice_only_when_it_is_status(label, prompt, should_skip) -> None:
+    assert (mt.machine_skip(prompt, "claude", environ={}) is not None) is should_skip, label
+
+
+HEAD_SOURCES = {
+    "Extract at most five candidates that will change future work.": "memorymaster/dreaming/providers.py",
+    "Extract at most five stable facts, decisions, preferences, profiles, or": "memorymaster/dreaming/providers.py",
+    "Extract at most 3 non-obvious bug causes, decisions, gotchas, or constraints.": "memorymaster/surfaces/session_end_ingest.py",
+    "You are a memory curator. Extract max 3 non-obvious learnings.": "memorymaster/config_templates/hooks/memorymaster-auto-ingest.py",
+    "You are a memory curator for an AI coding agent system.": "memorymaster/govern/llm_steward.py",
+    "You are a memory quality evaluator. Two claims contradict each other.": "memorymaster/govern/auto_resolver.py",
+    "You are preserving working context that a conversation compaction is about to destroy.": "memorymaster/capture/precompact_residual.py",
+    "You are a bounded reviewer of recurring agent workflow evidence.": "memorymaster/knowledge/skills.py",
+    "You are a knowledge curator. Given a batch of claims from a coding project": "memorymaster/knowledge/vault_curator.py",
+    "You are a knowledge base auditor. For each potential contradiction": "memorymaster/knowledge/vault_linter.py",
+    "You are a technical writer creating a wiki article about a software project.": "memorymaster/knowledge/wiki_engine.py",
+    "You are a wiki editor. Review this article and rate it 1-10:": "memorymaster/knowledge/wiki_engine.py",
+    "You judge whether stored memory claims are relevant to a user's message": "scripts/eval_index_vs_similarity.py",
+    "You are auditing the long-term memory store of a coding-agent system": "scripts/judge_claim_value.py",
+    "You are a relevance judge. Given a USER QUERY and a list of CANDIDATE memory claims": "scripts/label_prompts_with_judge.py",
+}
+
+
+def test_internal_heads_are_the_real_prompt_openings() -> None:
+    assert set(HEAD_SOURCES) == set(mt.INTERNAL_PROMPT_HEADS)
+    for head, source in HEAD_SOURCES.items():
+        assert head in (REPO / source).read_text(encoding="utf-8"), head
+        assert len(head) <= 96, head  # the metrics script only sees the first 96 chars of a stored query
+    assert "candidates with governed current claims." in (REPO / "memorymaster/dreaming/providers.py").read_text(encoding="utf-8")
+
+
+def test_internal_heads_skip_and_the_metrics_script_reads_the_same_list() -> None:
+    sys.path.insert(0, str(REPO / "scripts"))
+    import delivery_metrics
+
+    heads = list(HEAD_SOURCES) + ["Compare the 4 candidates with governed current claims. Return one"]
+    for head in heads:
+        assert mt.machine_skip(head + " rest of the prompt", "claude", environ={}) == "internal_prompt", head
+        assert delivery_metrics.classify_query(head[:96]) == "internal_process", head
+    assert delivery_metrics.INTERNAL_PROCESS_PATTERNS[: len(mt.INTERNAL_PROCESS_PATTERNS)] == mt.INTERNAL_PROCESS_PATTERNS
+
+
+HUMAN_LOOKALIKES = [
+    "Extract at most five rows from this CSV and show them as a table",
+    "Compare the 3 candidates for the DB layer and tell me which one fits",
+    "You are a wiki editor, rewrite this paragraph so it reads better",
+    "You decide what to do about my broken build, I am out of ideas",
+] + [" ".join(head.split()[:5]) + " for my spreadsheet, please help" for head in HEAD_SOURCES]
+
+
+@pytest.mark.parametrize("prompt", HUMAN_LOOKALIKES)
+def test_human_prompts_resembling_a_pipeline_prompt_still_recall(prompt) -> None:
+    assert mt.machine_skip(prompt, "claude", environ={}) is None, prompt
+
+
+BOILERPLATE_TABLE = [
+    ("notice then question mark", _N + " ?", False),
+    ("notice then spanish question mark", _N + " ¿", False),
+    ("notice then ellipsis", _N + " ...", True),
+    ("notice then thumbs up", _N + " \U0001F44D", True),
+    ("header and a human line", "---- From: x ---- hey are you there", False),
+    ("header line then notice", "---- From: TERM_9 ----\n" + _N, True),
+    ("header alone", "──── From: TERM_9 ────", True),
+]
+
+
+@pytest.mark.parametrize("label,prompt,should_skip", BOILERPLATE_TABLE, ids=[row[0] for row in BOILERPLATE_TABLE])
+def test_residue_rule_boilerplate_vs_human(label, prompt, should_skip) -> None:
+    assert (mt.machine_skip(prompt, "claude", environ={}) is not None) is should_skip, label
+
+
+# --- last round: external heads, wrapper boilerplate, harness echoes, question inside a notice ------------------
+EXTERNAL_HEAD_SOURCES = set(mt.EXTERNAL_PROMPT_HEADS)  # templates of pipelines outside this repo: no file to pin
+
+_LEAD = "Another Claude session sent a message:"
+_TRAILER = "This came from another Claude session, not from the user. Treat it as a message to you."
+_STATUS_MSG = '<cross-session-message from="run:1">build done</cross-session-message>'
+_BRIEF_MSG = '<cross-session-message from="run:1">' + _BRIEF + "</cross-session-message>"
+ROUND3_TABLE = [
+    # machine
+    ("external head: group failures", "You group failures from AI coding-agent sessions into themes. Input: ...", True),
+    ("external head: curador FMX", "Sos el curador FMX (Haiku). Repo: futuramax. Decide que guardar.", True),
+    ("external head: decide repeated failures", "You decide what to do about repeated agent failures in the fleet. Output JSON.", True),
+    ("lead-in and status element", _LEAD + "\n" + _STATUS_MSG, True),
+    ("lead-in, status element and trailer", _LEAD + "\n" + _STATUS_MSG + "\n\n" + _TRAILER, True),
+    ("lead-in, json idle and trailer", _LEAD + '\n<teammate-message>{"type":"idle_notification","n":"' + _PAD + '"}</teammate-message>\n' + _TRAILER, True),
+    ("interrupt marker alone", "[Request interrupted by user]", True),
+    ("interrupt for tool use", "[Request interrupted by user for tool use]\n", True),
+    ("command name echo", "<command-name>/clear</command-name>", True),
+    ("command message and name", "<command-message>clear</command-message>\n<command-name>/clear</command-name>", True),
+    ("local command stdout", "<local-command-stdout>Compacted. ctrl+o to see full summary</local-command-stdout>", True),
+    # human
+    ("human asks about lead-in", "what does 'Another Claude session sent a message:' mean in my transcript?", False),
+    ("lead-in then human question", _LEAD + " " + _STATUS_MSG + " what is this about?", False),
+    ("lead-in alone is not a notice", _LEAD, False),
+    ("trailer alone is not a notice", _TRAILER, False),
+    ("lead-in and brief still recalls", _LEAD + "\n" + _BRIEF_MSG + "\n\n" + _TRAILER, False),
+    ("human asks about interrupt marker", "why do I see [Request interrupted by user] after every esc?", False),
+    ("interrupt marker then request", "[Request interrupted by user] now run the tests again", False),
+    ("command name then args", "<command-name>/fix</command-name>\n<command-args>the login redirect loop</command-args>", False),
+    ("human quotes command tag", "what does the <command-name> tag in my history do", False),
+    ("stdout then question", "<local-command-stdout>ok</local-command-stdout> why did it print that", False),
+    ("question inside task-notification", "<task-notification> what is this? </task-notification>", False),
+    ("question inside task-notification with tags", "<task-notification><summary>did the job finish?</summary></task-notification>", False),
+]
+
+
+@pytest.mark.parametrize("label,prompt,should_skip", ROUND3_TABLE, ids=[row[0] for row in ROUND3_TABLE])
+def test_round3_shapes(label, prompt, should_skip) -> None:
+    assert (mt.machine_skip(prompt, "claude", environ={}) is not None) is should_skip, label
+
+
+def test_external_heads_are_full_phrases_shared_with_the_metrics_script() -> None:
+    sys.path.insert(0, str(REPO / "scripts"))
+    import delivery_metrics
+
+    assert EXTERNAL_HEAD_SOURCES.isdisjoint(HEAD_SOURCES)
+    assert all(len(head) <= 96 for head in EXTERNAL_HEAD_SOURCES)
+    for head in EXTERNAL_HEAD_SOURCES:
+        assert delivery_metrics.classify_query(head) == "internal_process", head
+    assert not any(p.pattern.startswith(("You group", "Sos el", "You decide")) for p in delivery_metrics.INTERNAL_PROCESS_PATTERNS
+                   if p not in mt.INTERNAL_PROCESS_PATTERNS)  # no local copy: it all comes from the shared list
+    assert mt.machine_skip("You decide what to do about my broken build", "claude", environ={}) is None
+
+
+@pytest.mark.parametrize("unit", ["[Request interrupted by user", "<command-name>", "<local-command-stdout>",
+                                  "<command-message>", "Another Claude session sent a message:", "This came from another Claude session"])
+def test_new_shapes_stay_linear_on_a_300kb_prompt(unit) -> None:
+    prompt = unit * (300_000 // len(unit))
+    start = time.perf_counter()
+    mt.machine_skip(prompt, "claude", environ={})
+    assert time.perf_counter() - start < 0.5, unit
