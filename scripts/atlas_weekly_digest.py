@@ -28,6 +28,7 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # run from a bare checkout too
+from memorymaster.core.provider_egress import export_text  # noqa: E402
 from memorymaster.core.llm_provider import gemini_thinking_fields  # noqa: E402
 
 try:
@@ -78,7 +79,10 @@ def build_prompt(rows, hoy):
     lines = []
     for ct, subj, text, et in rows:
         d = f" [{et}]" if et else ""
-        lines.append(f"- ({ct}) {subj}: {(text or '').strip()}{d}")
+        line = f"- ({ct}) {subj}: {(text or '').strip()}{d}"
+        safe = export_text(line)  # strict gate: a line that cannot be made safe is left out
+        if safe is not None:
+            lines.append(safe)
     corpus = "\n".join(lines)[:14000]
     return (
         f"Sos el asistente personal de Gonzalo. HOY es {hoy}. Abajo hay hechos TIPADOS de su vida "

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from memorymaster.core.provider_egress import export_messages
+from memorymaster.dreaming.consolidation_egress import gate_consolidation, with_ignored
 from memorymaster.dreaming.backfill_guard import PauseLatch, evaluate_backfill_guard
 from memorymaster.dreaming import backfill_consolidate_guards as consolidate_guards
 from memorymaster.dreaming.providers import ProviderCallError, ProviderOutputError
@@ -736,11 +737,15 @@ class BackfillRunner:
                 attempts = rows[0]["metadata"].setdefault("consolidation_attempts", {})
                 if attempts.get(identity, 0) >= 3:
                     raise ValueError("consolidation repair attempts exhausted")
-                reservation = self._reserve(cohort, "consolidate", 30_000, 4000)
-                attempts[identity] = attempts.get(identity, 0) + 1
-                self._save(rows[0])
-                result = self.consolidator.consolidate(candidates, claims, scope=scope)
-                self._usage(reservation, result, run_id)
+                sent, ignored, safe_claims, _withheld = gate_consolidation(candidates, claims)
+                result = None
+                if sent:  # a batch of only withheld candidates has nothing to send
+                    reservation = self._reserve(cohort, "consolidate", 30_000, 4000)
+                    attempts[identity] = attempts.get(identity, 0) + 1
+                    self._save(rows[0])
+                    result = self.consolidator.consolidate(sent, safe_claims, scope=scope)
+                    self._usage(reservation, result, run_id)
+                result = with_ignored(result, ignored)
                 reviewed, _ = worker._reviewed_batch(result, candidates, scope)
                 by_id = {d.candidate_id: d for d in reviewed}
                 for capture, candidate in batch:

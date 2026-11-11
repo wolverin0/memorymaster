@@ -19,7 +19,8 @@ from typing import Any, Callable, Protocol
 
 from memorymaster.core.antigravity_client import AntigravityError
 from memorymaster.core.models import CitationInput
-from memorymaster.core.provider_egress import export_messages
+from memorymaster.core.provider_egress import export_messages, export_stored
+from memorymaster.dreaming.consolidation_egress import gate_consolidation, with_ignored
 from memorymaster.core.service import MemoryService
 from memorymaster.dreaming import held
 from memorymaster.dreaming.extraction_window import PIECE_CHARS, extraction_complete, next_window
@@ -275,6 +276,8 @@ class DreamConfig:
 
 
 class DreamWorker:
+    observations_withheld = 0  # observation prompts the egress gate kept from the provider
+
     def __init__(self, ledger: DreamLedger, service: MemoryService, extractor: Extractor, consolidator: Consolidator, *, config: DreamConfig | None = None, now: Callable[[], datetime] | None = None, decision_engine: Any = None) -> None:
         self.ledger = ledger
         self.service = service
@@ -349,6 +352,7 @@ class DreamWorker:
             "proposals": 0,
             "deferred_extract_budget": 0,
             "egress_withheld": 0,
+            "egress_withheld_consolidation": 0,
             "deferred_consolidate_budget": 0,
             "deferred_consolidate_provider": 0,
             "consolidate_breaker": None,
@@ -452,7 +456,11 @@ class DreamWorker:
         """
         from memorymaster.core.llm_provider import call_llm
 
-        return call_llm(system, prompt)
+        safe = export_stored(prompt)
+        if safe is None:  # the existing no-verdict answer: the job completes, nothing is sent
+            self.observations_withheld += 1
+            return '{"decision":"no_signal"}'
+        return call_llm(system, safe)
 
     def _run_graph_observations(
         self, *, owner: str, scope: str | None, synthesize: bool
@@ -500,6 +508,7 @@ class DreamWorker:
                 synthesized = engine.process_synthesis(owner=owner, scope=target_scope)
                 totals["emitted"] += synthesized.emitted
                 totals["failed"] += synthesized.failed
+        totals["egress_withheld"] = self.observations_withheld
         return totals
 
     def _extract(self, run_id: str, scope: str | None, limit: int, summary: dict[str, Any]) -> list[dict[str, Any]]:
@@ -843,12 +852,17 @@ class DreamWorker:
                     continue
                 references = fitted
                 self._hold_lease()
-                called = True
-                result = consolidator.consolidate(candidates, references, scope=effective_scope)
-                called = False
-                answered += 1
+                sent, ignored, safe_references, withheld = gate_consolidation(candidates, references)
+                result = None
+                if sent:  # a batch of only withheld candidates has nothing to send
+                    called = True
+                    result = consolidator.consolidate(sent, safe_references, scope=effective_scope)
+                    called = False
+                    answered += 1
+                    self._record_usage(run_id, result.usage, "ok")
                 completed.update(capture_ids)
-                self._record_usage(run_id, result.usage, "ok")
+                result = with_ignored(result, ignored)
+                summary["egress_withheld_consolidation"] += withheld
                 owner_by_id = {candidate.candidate_id: int(row["id"]) for row, candidate in pairs}
                 decisions, pending = self._reviewed_batch(result, candidates, effective_scope)
                 for decision in decisions:
