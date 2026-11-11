@@ -43,7 +43,6 @@ import logging
 import os
 import re
 import sqlite3
-from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -65,8 +64,15 @@ _TRUTHY = {"1", "true", "yes", "on", "y"}
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]{2,}")
 _FTS_TOP_K = 5
 # Tokens that carry a value (port, version, count, date, id, hex): any digit. Unlike _TOKEN_RE this keeps
-# single digits and dotted/dashed runs ("9.4.1", "2026-11-10") whole, so "port 8" vs "port 9" differ.
-_VALUE_TOKEN_RE = re.compile(r"[a-z0-9_]*\d[a-z0-9_]*(?:[.:/-][a-z0-9_]*\d[a-z0-9_]*)*")
+# single digits, dotted/dashed runs ("9.4.1", "2026-11-10") whole and a leading minus ("-5"). The
+# (?<![a-z0-9_]) anchors make a long digit-free run fail once, not once per start position (was quadratic).
+_VALUE_TOKEN_RE = re.compile(
+    r"(?<![a-z0-9_])(?:(?<![a-z0-9_-])-)?[a-z0-9_]*\d[a-z0-9_]*(?:[.:/-][a-z0-9_]*\d[a-z0-9_]*)*"
+)
+_WORD_RE = re.compile(r"[a-zà-ÿ]+(?:['’][a-z]+)?")
+_NEGATIONS = frozenset(
+    {"not", "no", "never", "nor", "none", "without", "cannot", "sin", "nunca", "ni", "tampoco", "jamas", "jamás"}
+)
 _PROPOSAL_DETAILS = "steward_proposal:superseded_candidate"
 
 
@@ -101,8 +107,20 @@ def jaccard_tokens(a: str, b: str) -> float:
     return intersection / union if union else 0.0
 
 
-def _value_tokens(text: str) -> Counter[str]:
-    return Counter(_VALUE_TOKEN_RE.findall(text.lower()))
+def _value_tokens(text: str) -> list[str]:
+    """Value tokens IN ORDER: swapped slots ("primary 8010 / replica 9413") are a different fact."""
+    return _VALUE_TOKEN_RE.findall(text.lower())
+
+
+def _negations(text: str) -> set[str]:
+    """Negation/polarity words; "n't" contractions count as "not" so "isn't" vs "is" differ."""
+    found: set[str] = set()
+    for word in _WORD_RE.findall(text.lower().replace("’", "'")):
+        if word in _NEGATIONS:
+            found.add(word)
+        elif word.endswith("n't"):
+            found.add("not")
+    return found
 
 
 def _correction_block_reason(conn: sqlite3.Connection, candidate_id: int, canonical_id: int) -> str | None:
@@ -265,13 +283,17 @@ def find_near_duplicate(
 
     if best_score >= threshold and best_id is not None:
         best_text = next(t for cid, t, _s in matches if cid == best_id)
+
+        def _pass(reason: str) -> DedupeResult:
+            return DedupeResult("passthrough", best_id, best_score, reason)
+
         if _value_tokens(candidate_text) != _value_tokens(best_text):
-            return DedupeResult(
-                action="passthrough",
-                canonical_claim_id=best_id,
-                jaccard_score=best_score,
-                reason="value-tokens-differ",
-            )
+            return _pass("value-tokens-differ")
+        # A real duplicate adds nothing: a candidate-only word is a changed fact ("eight" -> "nine").
+        if not _tokenize(candidate_text) <= _tokenize(best_text):
+            return _pass("candidate-adds-tokens")
+        if _negations(candidate_text) != _negations(best_text):
+            return _pass("negation-differs")
         blocked = _correction_block_reason(conn, candidate_id, best_id)
         if blocked is not None:
             return DedupeResult(

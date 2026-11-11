@@ -128,18 +128,18 @@ def test_paraphrase_detected_as_archive(
     monkeypatch.setenv("MEMORYMASTER_DEDUPE_JACCARD_HIGH", "0.5")
     canonical = _ins(
         conn,
-        text="user prefers vim editor with vim plugins for python development",
+        text="user prefers vim editor with vim plugins for python development tasks",
         status="confirmed",
     )
     candidate = _ins(
         conn,
-        text="user prefers vim editor with vim plugins for python development tasks",
+        text="user prefers vim editor with vim plugins for python development",
         status="candidate",
     )
     result = find_near_duplicate(
         conn,
         candidate_id=candidate,
-        candidate_text="user prefers vim editor with vim plugins for python development tasks",
+        candidate_text="user prefers vim editor with vim plugins for python development",
         candidate_scope="project:memorymaster",
     )
     assert result.action == "archive"
@@ -337,8 +337,8 @@ def test_single_digit_value_difference_blocks_archive(conn: sqlite3.Connection) 
 
 @pytest.mark.parametrize("guard", ["supersedes_claim_id", "link", "proposal", "rejected-proposal"])
 def test_correction_markers_block_archive(conn: sqlite3.Connection, guard: str) -> None:
-    canon = _ins(conn, text=_LONG, status="confirmed")
-    cand = _ins(conn, text=_LONG + " november", status="candidate")
+    canon = _ins(conn, text=_LONG + " november", status="confirmed")
+    cand = _ins(conn, text=_LONG, status="candidate")
     if guard == "supersedes_claim_id":
         conn.execute("UPDATE claims SET supersedes_claim_id = ? WHERE id = ?", (canon, cand))
     elif guard == "link":
@@ -357,7 +357,7 @@ def test_correction_markers_block_archive(conn: sqlite3.Connection, guard: str) 
             )
     conn.commit()
     result = find_near_duplicate(
-        conn, candidate_id=cand, candidate_text=_LONG + " november", candidate_scope="project:memorymaster"
+        conn, candidate_id=cand, candidate_text=_LONG, candidate_scope="project:memorymaster"
     )
     if guard == "rejected-proposal":
         assert result.action == "archive"  # a rejected proposal no longer marks a correction
@@ -366,12 +366,12 @@ def test_correction_markers_block_archive(conn: sqlite3.Connection, guard: str) 
 
 
 def test_tenant_or_visibility_mismatch_blocks_archive(conn: sqlite3.Connection) -> None:
-    _ins(conn, text=_LONG, status="confirmed")
-    cand = _ins(conn, text=_LONG + " november", status="candidate")
+    _ins(conn, text=_LONG + " november", status="confirmed")
+    cand = _ins(conn, text=_LONG, status="candidate")
     conn.execute("UPDATE claims SET visibility = 'private' WHERE id = ?", (cand,))
     conn.commit()
     result = find_near_duplicate(
-        conn, candidate_id=cand, candidate_text=_LONG + " november", candidate_scope="project:memorymaster"
+        conn, candidate_id=cand, candidate_text=_LONG, candidate_scope="project:memorymaster"
     )
     assert result.reason == "correction-guard:tenant-or-visibility-differs"
 
@@ -440,8 +440,8 @@ def test_undeclared_one_value_correction_is_not_archived(live_dedupe) -> None:
 
 def test_true_duplicate_is_archived_through_lifecycle_path(live_dedupe) -> None:
     svc = live_dedupe
-    a = _ingest(svc, _PORT.format(8010), "codex", confirm=True)
-    b = _ingest(svc, _PORT.format(8010) + " today", "bob")
+    a = _ingest(svc, _PORT.format(8010) + " today", "codex", confirm=True)
+    b = _ingest(svc, _PORT.format(8010), "bob")
     before = svc.store.get_claim(b.id, include_citations=False)
     res = svc.run_cycle(batch_limit=200)
     after = svc.store.get_claim(b.id, include_citations=False)
@@ -460,8 +460,65 @@ def test_true_duplicate_is_archived_through_lifecycle_path(live_dedupe) -> None:
 
 def test_tenant_visibility_mismatch_not_archived_end_to_end(live_dedupe) -> None:
     svc = live_dedupe
-    _ingest(svc, _PORT.format(8010), "codex", confirm=True)
-    b = _ingest(svc, _PORT.format(8010) + " today", "bob", visibility="private", holder="bob")
+    _ingest(svc, _PORT.format(8010) + " today", "codex", confirm=True)
+    b = _ingest(svc, _PORT.format(8010), "bob", visibility="private", holder="bob")
     res = svc.run_cycle(batch_limit=200)
     assert res["dedupe"]["archived"] == 0
     assert svc.store.get_claim(b.id, include_citations=False).status != "archived"
+
+
+# Verifier cases: an UNDECLARED correction that changes a word, a sign or a slot, not a digit. Each pair clears
+# Jaccard 0.85 (22+ shared tokens) and must pass through; the reason names the rule that caught it.
+_PAD = "for the zorblax billing exporter service in the staging environment as agreed during the October migration review"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "reason"),
+    [
+        (f"The retry budget is eight attempts {_PAD}", f"The retry budget is nine attempts {_PAD}", "candidate-adds-tokens"),
+        (f"The feature flag is enabled {_PAD}", f"The feature flag is disabled {_PAD}", "candidate-adds-tokens"),
+        (f"The legacy export is used {_PAD}", f"The legacy export is not used {_PAD}", "candidate-adds-tokens"),
+        (f"The legacy export is not used {_PAD}", f"The legacy export is used {_PAD}", "negation-differs"),
+        (f"The legacy export isn't used {_PAD}", f"The legacy export is used {_PAD}", "negation-differs"),
+        (f"The primary host is alpha {_PAD}", f"The primary host is bravo {_PAD}", "candidate-adds-tokens"),
+        (f"The offset is 5 minutes {_PAD}", f"The offset is -5 minutes {_PAD}", "value-tokens-differ"),
+        (
+            f"The primary listens on 8010 and the replica on 9413 {_PAD}",
+            f"The primary listens on 9413 and the replica on 8010 {_PAD}",
+            "value-tokens-differ",
+        ),
+    ],
+)
+def test_undeclared_word_or_slot_corrections_pass_through(conn: sqlite3.Connection, old: str, new: str, reason: str) -> None:
+    _ins(conn, text=old, status="confirmed")
+    cand = _ins(conn, text=new, status="candidate")
+    result = find_near_duplicate(conn, candidate_id=cand, candidate_text=new, candidate_scope="project:memorymaster")
+    assert (result.action, result.reason) == ("passthrough", reason)
+
+
+def test_true_duplicate_controls_still_archive(conn: sqlite3.Connection) -> None:
+    base = f"The retry budget is eight attempts {_PAD}"
+    # same words reordered: nothing added, same values, same polarity
+    _ins(conn, text=base, status="confirmed")
+    reordered = f"Eight attempts is the retry budget {_PAD}"
+    c1 = _ins(conn, text=reordered, status="candidate")
+    r1 = find_near_duplicate(conn, candidate_id=c1, candidate_text=reordered, candidate_scope="project:memorymaster")
+    assert r1.action == "archive", r1
+    # canonical = candidate plus extra words
+    extra = base + " today and tomorrow"
+    _ins(conn, text=extra, status="confirmed")
+    c2 = _ins(conn, text=base, status="candidate")
+    r2 = find_near_duplicate(conn, candidate_id=c2, candidate_text=base, candidate_scope="project:memorymaster")
+    assert r2.action == "archive", r2
+
+
+def test_value_token_regex_is_linear_on_long_digit_free_runs() -> None:
+    import time
+
+    from memorymaster.govern.candidate_dedupe import _value_tokens
+
+    for blob in ("a" * 300_000, "a-" * 150_000, "ab1-" * 75_000 + "z" * 100_000):
+        start = time.perf_counter()
+        _value_tokens(blob)
+        assert time.perf_counter() - start < 1.0
+    assert _value_tokens("port 8010, -5 vs 5, v1.2.3 on 2026-11-10") == ["8010", "-5", "5", "v1.2.3", "2026-11-10"]
