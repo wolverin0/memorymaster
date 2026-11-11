@@ -116,7 +116,12 @@ def llm_question_generator(claim_text: str, n: int) -> list[str]:
     """Questions from the configured provider (``MEMORYMASTER_LLM_PROVIDER``); [] on failure."""
     from memorymaster.core.llm_provider import call_llm, parse_json_response
 
-    raw = call_llm(_PROMPT.format(n=n), claim_text)
+    from memorymaster.core.provider_egress import export_stored
+
+    safe = export_stored(claim_text)
+    if safe is None:  # withheld by the egress gate: no call, no questions
+        return []
+    raw = call_llm(_PROMPT.format(n=n), safe)
     if not raw:
         return []
     return [q for q in parse_json_response(raw) if isinstance(q, str)]

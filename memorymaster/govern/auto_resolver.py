@@ -136,17 +136,24 @@ def resolve_conflict_pair(
 
     The loser is transitioned to 'superseded' with the winner as replaced_by.
     """
+    from memorymaster.core.provider_egress import export_pair, export_stored
+
+    texts = export_pair(claim_a.text[:500], claim_b.text[:500])
+    cites_a, cites_b = export_stored(_cite_summary(claim_a)), export_stored(_cite_summary(claim_b))
+    if texts is None or cites_a is None or cites_b is None:
+        # Withheld by the egress gate: nothing is sent, both claims stay as they are.
+        return {"resolved": False, "reason": "egress_withheld"}
     prompt = RESOLUTION_PROMPT.format(
         id_a=claim_a.id,
-        text_a=claim_a.text[:500],
+        text_a=texts[0],
         conf_a=f"{claim_a.confidence:.2f}",
         updated_a=claim_a.updated_at,
-        cites_a=_cite_summary(claim_a),
+        cites_a=cites_a,
         id_b=claim_b.id,
-        text_b=claim_b.text[:500],
+        text_b=texts[1],
         conf_b=f"{claim_b.confidence:.2f}",
         updated_b=claim_b.updated_at,
-        cites_b=_cite_summary(claim_b),
+        cites_b=cites_b,
     )
 
     decision = _llm_evaluate(prompt)

@@ -214,6 +214,11 @@ def _extract_rule(window: str) -> dict[str, str] | None:
     ``TransientLLMError`` if the provider returned nothing (so the caller can
     avoid advancing the watermark). A non-empty response that simply doesn't
     parse to a rule is a genuine "no correction" (``None``), not transient."""
+    from memorymaster.core.provider_egress import export_text
+
+    window = export_text(window)
+    if window is None:  # withheld by the egress gate: deterministic, so it is no retry either
+        return None
     raw = llm_provider.call_llm(_CORRECTION_PROMPT, window)
     if not raw or not raw.strip():
         raise TransientLLMError("empty LLM response")

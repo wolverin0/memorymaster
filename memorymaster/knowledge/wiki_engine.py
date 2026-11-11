@@ -198,7 +198,12 @@ def _call_llm(prompt: str, text: str) -> str:
 
     try:
         from memorymaster.core.llm_provider import call_llm
-        return call_llm(prompt, text)
+        from memorymaster.core.provider_egress import export_stored
+
+        safe_prompt, safe_text = export_stored(prompt), export_stored(text)
+        if safe_prompt is None or safe_text is None:  # withheld by the egress gate: the existing "no answer"
+            return ""
+        return call_llm(safe_prompt, safe_text)
     except llm_budget.LLMBudgetExceeded:
         # Budget abort MUST propagate so absorb() emits its documented
         # `aborted` metadata instead of silently returning empty bodies that

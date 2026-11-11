@@ -188,8 +188,13 @@ def _review_one_input(service: Any, item: dict[str, Any], stats: dict[str, Any])
         ensure_ascii=False,
         sort_keys=True,
     )
+    from memorymaster.core.provider_egress import export_stored
+
     try:
-        raw = llm_provider.call_llm(_SKILL_REVIEW_PROMPT, body)
+        safe_body = export_stored(body)
+        if safe_body is None:  # withheld by the egress gate: no call, recorded as a blocked review
+            raise SkillValidationError("evidence withheld by the egress gate")
+        raw = llm_provider.call_llm(_SKILL_REVIEW_PROMPT, safe_body)
         stats["llm_calls"] += 1
         output = _parse_reviewer_output(raw)
         result = review_skill_proposal(

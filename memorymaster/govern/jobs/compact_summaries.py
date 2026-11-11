@@ -23,7 +23,6 @@ from memorymaster.govern.llm_steward import (
 )
 from memorymaster.core.models import CitationInput
 from memorymaster.core.promotion_policy import auto_promotion_blocked
-from memorymaster.core.security import redact_text
 from memorymaster.stores.claim_identity import identity_namespace_key
 
 log = logging.getLogger(__name__)
@@ -94,10 +93,16 @@ def _build_claim_text_block(claims: list[Any]) -> str:
         if claim.text:
             parts.append(f"Text: {claim.text[:300]}")
         lines.append(" | ".join(parts))
-    redacted_text, findings = redact_text("\n".join(lines))
-    if findings:
-        log.info("Redacted sensitive compact-summaries prompt fields: %s", ",".join(findings))
-    return redacted_text
+    from memorymaster.core.provider_egress import export_stored
+
+    kept: list[str] = []
+    for line in lines:
+        safe = export_stored(line)  # a line the gate withholds is left out of the prompt
+        if safe is None:
+            log.info("Withheld a compact-summaries prompt line (egress gate)")
+        else:
+            kept.append(safe)
+    return "\n".join(kept)
 
 
 def _partition_by_identity(claims: list[Any]) -> list[list[Any]]:
@@ -349,6 +354,13 @@ def run(
 
             claims_text = _build_claim_text_block(sub_cluster)
             prompt = SUMMARIZE_PROMPT.replace("{claims_text}", claims_text)
+            if not claims_text.strip():  # every line withheld by the egress gate: no call
+                details.append({
+                    "source_claim_ids": [c.id for c in sub_cluster],
+                    "cluster_size": len(sub_cluster),
+                    "action": "egress_withheld",
+                })
+                continue
 
             detail: dict[str, Any] = {
                 "source_claim_ids": [c.id for c in sub_cluster],

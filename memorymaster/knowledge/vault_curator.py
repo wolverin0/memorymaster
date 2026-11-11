@@ -76,10 +76,16 @@ def _batch_categorize(claims: list[dict], batch_size: int = 20) -> dict[int, str
 
     for i in range(0, len(claims), batch_size):
         batch = claims[i:i + batch_size]
-        claims_text = "\n".join(
-            "ID={}: {}".format(c["id"], str(c["text"])[:150].encode("ascii", errors="replace").decode("ascii"))
-            for c in batch
-        )
+        from memorymaster.core.provider_egress import export_stored
+
+        lines = []
+        for c in batch:
+            safe = export_stored(str(c["text"])[:150].encode("ascii", errors="replace").decode("ascii"))
+            if safe is not None:  # a claim the egress gate withholds is left out (it files under "other")
+                lines.append("ID={}: {}".format(c["id"], safe))
+        if not lines:
+            continue
+        claims_text = "\n".join(lines)
 
         response = call_llm(CATEGORIZE_PROMPT, claims_text)
         parsed = parse_json_response(response)

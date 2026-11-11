@@ -384,7 +384,13 @@ def extract_claim(
     including the keyless ``claude_cli`` path) instead of the direct-HTTP
     ``_call_llm``. The prompt + parsing are identical either way.
     """
-    snippet = text[:2000]
+    from memorymaster.core.provider_egress import export_stored
+
+    snippet = export_stored(text[:2000])
+    if snippet is None:  # withheld by the egress gate: no call, and the claim is left untouched
+        return ExtractionResult(
+            claim_id=claim_id, original_text=text, extractions=[], action="skip", raw_response="",
+        )
     if use_llm_provider:
         from memorymaster.core.llm_provider import call_llm as _provider_call_llm
         # call_llm joins as f"{prompt}\n\n{text}"; pass instructions (placeholder

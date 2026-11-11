@@ -62,9 +62,15 @@ def classify_pending(store: WorkflowStore, *, limit: int = 50) -> dict[str, obje
     provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER", "google")
     model = os.environ.get("MEMORYMASTER_LLM_MODEL", "provider-default")
     for row in rows:
+        from memorymaster.core.provider_egress import export_stored
+
+        request = export_stored(public_excerpt(row["initial_request_excerpt"]))
+        if request is None:  # withheld by the egress gate: no call, counted like any failed classification
+            failures += 1
+            continue
         payload = {
-            "provider": row["provider"], "scope": row["project_scope"],
-            "initial_request": public_excerpt(row["initial_request_excerpt"]),
+            "provider": row["provider"], "scope": export_stored(row["project_scope"] or "") or "",
+            "initial_request": request,
             "deterministic_completion_state": row["completion_state"],
             "deterministic_verification_tier": row["verification_tier"],
         }

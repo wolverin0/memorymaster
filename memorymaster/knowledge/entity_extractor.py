@@ -677,6 +677,11 @@ def extract_llm(text: str, *, provider: str | None = None) -> list[Entity]:
     # Truncate defensively — the LLM has its own token limits, but we also
     # want to bound per-claim cost.
     snippet = text if len(text) <= _LLM_MAX_TEXT_CHARS else text[:_LLM_MAX_TEXT_CHARS]
+    from memorymaster.core.provider_egress import export_stored
+
+    snippet = export_stored(snippet)
+    if snippet is None:  # withheld by the egress gate: no call, no entities
+        return []
 
     previous_provider = os.environ.get("MEMORYMASTER_LLM_PROVIDER")
     if provider:
