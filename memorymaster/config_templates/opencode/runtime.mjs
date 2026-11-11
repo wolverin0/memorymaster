@@ -93,7 +93,10 @@ export function createAdapter(cwd) {
     // A failed or silent call yields "" and the prompt proceeds untouched; the receipt follows the actual append.
     if (briefBlock.startsWith(briefPrefix)) {
       inject(system, structured, briefBlock, briefPrefix);
-      void command("memorymaster.surfaces.hook_events", {}, ["--event", "SessionStart", "--count", "1"]);
+      if (!brief.counted) { // tool continuations re-append the brief; the delivery is one
+        brief.counted = true;
+        void command("memorymaster.surfaces.hook_events", {}, ["--event", "SessionStart", "--count", "1"]);
+      }
     }
     if (!block.startsWith(prefix)) return;
     inject(system, structured, block, prefix);
