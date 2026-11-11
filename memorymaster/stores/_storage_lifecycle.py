@@ -409,6 +409,45 @@ class _LifecycleMixin:
             conn.commit()
 
 
+    def clear_replaced_by(
+        self,
+        claim_id: int,
+        *,
+        expected_replaced_by: int,
+        reason: str,
+        event_payload: dict[str, object] | None = None,
+    ) -> None:
+        """Clear a stale ``replaced_by_claim_id`` on a claim that is not superseded.
+
+        ``apply_status_transition`` always carries the pointer forward, so no
+        other helper can clear it. Guarded on the expected value and on the
+        claim not being superseded (a superseded claim must keep its pointer).
+        """
+        now = utc_now()
+        with self.connect() as conn:
+            row = conn.execute("SELECT status FROM claims WHERE id = ?", (claim_id,)).fetchone()
+            cur = conn.execute(
+                "UPDATE claims SET replaced_by_claim_id = NULL, updated_at = ?, version = version + 1 "
+                "WHERE id = ? AND replaced_by_claim_id = ? AND status != 'superseded'",
+                (now, claim_id, expected_replaced_by),
+            )
+            if cur.rowcount == 0:
+                raise ConcurrentModificationError(
+                    f"Claim {claim_id} does not carry replaced_by={expected_replaced_by} or is superseded."
+                )
+            self._insert_event_row(
+                conn,
+                claim_id=claim_id,
+                event_type="audit",
+                from_status=row["status"],
+                to_status=row["status"],
+                details=reason,
+                payload_json=json.dumps({"cleared_replaced_by_claim_id": expected_replaced_by, **(event_payload or {})}),
+                created_at=now,
+            )
+            conn.commit()
+
+
     def delete_old_events(self, retain_days: int) -> int:
         # Events are append-only by contract; retention trim is a no-op.
         return 0
