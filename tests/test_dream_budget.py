@@ -459,7 +459,8 @@ def _simulate(tmp_path: Path, monkeypatch, *, exile_retryable: bool, failure_rat
     for n in range(60):
         arrive(ledger, sim["now"] - timedelta(days=2, minutes=n))
     cfg = replace(DreamConfig(), idle_minutes=0, jev_triage_enabled=False, max_sessions=6, oldest_reserve=2,
-                  max_consolidate_captures_per_run=6, lane=LANE_BEAT)
+                  max_consolidate_captures_per_run=6, lane=LANE_BEAT, max_extract_calls_daily=10**6,
+                  max_consolidate_calls_daily=10**6, max_input_tokens_daily=10**9)
     worker = DreamWorker(ledger, H["_service"](tmp_path), Flaky(), H["_Consolidator"](), config=cfg, now=lambda: sim["now"])
 
     def unfinished() -> int:
