@@ -460,7 +460,8 @@ class DreamWorker:
         if safe is None:  # the existing no-verdict answer: the job completes, nothing is sent
             self.observations_withheld += 1
             return '{"decision":"no_signal"}'
-        return call_llm(system, safe)
+        prompt = safe
+        return call_llm(system, prompt)
 
     def _run_graph_observations(
         self, *, owner: str, scope: str | None, synthesize: bool
