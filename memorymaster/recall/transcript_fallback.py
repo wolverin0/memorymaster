@@ -27,6 +27,7 @@ import re
 import time
 from pathlib import Path
 
+from memorymaster.core.hook_log import log_hook
 from memorymaster.recall import hook_lexical
 from memorymaster.recall import transcript_index as ti
 from memorymaster.recall.recall_tokenizer import _candidate_tokens, identifier_tokens
@@ -93,13 +94,26 @@ def _quote(text: str) -> str:
     return _ROLE_MARKER.sub(lambda m: f"[{m.group(1).lower()} said]", flat)
 
 
+def _log_outcome(outcome: str, started: float, budget_ms: float, returned: int) -> None:
+    """One counted hook-log line per fallback run (never the prompt text): ``scripts/delivery_metrics.py`` reads it."""
+    log_hook("recall", "transcript_fallback", outcome=outcome, elapsed_ms=round((time.perf_counter() - started) * 1000.0, 1),
+             budget_ms=round(budget_ms, 1), returned=returned)
+
+
 def fragments(query: str, scope: str, slots: int) -> list[ti.TranscriptHit]:
-    """Up to ``slots`` (at most :data:`MAX_FRAGMENTS`) relevant fragments of ``scope``; ``[]`` on any problem."""
+    """Up to ``slots`` (at most :data:`MAX_FRAGMENTS`) relevant fragments of ``scope``; ``[]`` on any problem.
+
+    Every run that reaches the index logs ``recall / transcript_fallback`` with ``outcome`` = ``hits`` | ``empty`` |
+    ``deadline`` (the budget was spent: nothing late is injected) | ``error:<type>``.
+    """
     started = time.perf_counter()
     slots = min(slots, MAX_FRAGMENTS)
     if slots <= 0 or not scope or not enabled():
         return []
-    expires = started + _deadline_ms() / 1000.0
+    budget_ms = _deadline_ms()
+    expires = started + budget_ms / 1000.0
+    kept: list[ti.TranscriptHit] = []
+    outcome = "empty"
     try:
         terms = list(dict.fromkeys(_candidate_tokens(query)))[: ti.MAX_QUERY_TOKENS]
         keys = hook_lexical.term_keys(terms)
@@ -109,19 +123,25 @@ def fragments(query: str, scope: str, slots: int) -> list[ti.TranscriptHit]:
             query, index_path(), limit=CANDIDATES, scope=scope,
             excerpt_chars=SNIPPET_CHARS, deadline_ms=max(1.0, (expires - time.perf_counter()) * 1000.0),
         )
-        kept: list[ti.TranscriptHit] = []
         for hit in hits:
             if time.perf_counter() > expires:
-                return []  # the budget is spent: nothing late is injected
+                kept, outcome = [], "deadline"  # the budget is spent: nothing late is injected
+                break
             matched = hook_lexical.matched_terms(keys, hit.excerpt)
             if hook_lexical.covers(matched, len(keys), identifiers):
                 kept.append(hit)
             if len(kept) >= slots:
                 break
-        return kept
+        if outcome != "deadline":
+            # ``ti.search`` itself answers [] when its own deadline expires, so an empty answer after the budget is a deadline
+            outcome = "hits" if kept else ("deadline" if time.perf_counter() > expires else "empty")
     except Exception as exc:  # noqa: BLE001 - the hook must never break on its optional evidence
         logger.debug("transcript fallback skipped: %s", type(exc).__name__)
-        return []
+        kept, outcome = [], f"error:{type(exc).__name__}"
+    if outcome == "deadline":
+        logger.debug("transcript fallback: the %.0f ms budget was spent", budget_ms)
+    _log_outcome(outcome, started, budget_ms, len(kept))
+    return kept
 
 
 def render(found: list[ti.TranscriptHit], max_chars: int | None = None) -> str:

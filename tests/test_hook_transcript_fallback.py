@@ -324,3 +324,40 @@ def test_centered_excerpt_windows_around_the_densest_match() -> None:
 def test_centered_excerpt_keeps_short_text_whole_and_falls_back_to_the_head() -> None:
     assert centered_excerpt("short text", "anything", 200) == "short text"
     assert centered_excerpt("x" * 500, "zebra", 100).startswith("xxxx")
+
+
+def _fallback_lines(log: Path) -> list[str]:
+    return [ln for ln in log.read_text(encoding="utf-8").splitlines() if "event=transcript_fallback" in ln]
+
+
+@pytest.fixture()
+def hook_log_file(tmp_path, monkeypatch) -> Path:
+    from memorymaster.core import hook_log
+
+    monkeypatch.setattr(hook_log, "_STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(hook_log, "_LOG_FILE", tmp_path / "state" / "hook.log")
+    return tmp_path / "state" / "hook.log"
+
+
+def test_t2277_every_fallback_run_leaves_a_counted_log_line_and_a_spent_budget_is_visible(world, monkeypatch, hook_log_file) -> None:
+    """A spent budget used to return [] with only a debug line: silent non-delivery.  Now it is counted (no prompt text)."""
+    import time
+
+    world.transcripts(("assistant", "The router firmware version we chose was 7.18.2", "2026-08-01T00:00:00Z", world.cwd))
+    assert transcript_fallback.fragments(ASK, "project:here", 2)
+    assert transcript_fallback.fragments("quantum zeppelin harmonica", "project:here", 2) == []
+    real = ti.connect_ro
+
+    def slow_connect(*args, **kwargs):
+        time.sleep(0.2)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ti, "connect_ro", slow_connect)
+    monkeypatch.setenv(transcript_fallback.DEADLINE_ENV, "50")
+    assert transcript_fallback.fragments(ASK, "project:here", 2) == []
+    monkeypatch.setattr(ti, "search", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("index exploded")))
+    assert transcript_fallback.fragments(ASK, "project:here", 2) == []
+    lines = _fallback_lines(hook_log_file)
+    assert [ln.split("outcome=")[1].split()[0] for ln in lines] == ["hits", "empty", "deadline", "error:RuntimeError"]
+    assert "budget_ms=50" in lines[2] and "elapsed_ms=" in lines[2] and "returned=0" in lines[2]
+    assert all("firmware" not in ln and "zeppelin" not in ln for ln in lines)  # never the prompt text
