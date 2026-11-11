@@ -170,12 +170,37 @@ def test_control_codex_receives_the_decision_taken_in_claude(hooked, tmp_path) -
     assert CLAUDE_DECISION in hooked.codex(CLAUDE_ASK, "codex-1")
 
 
-@pytest.mark.xfail(strict=True, reason="T-2277: recall/transcript_index.py indexes only ~/.claude/projects "
-                   "(Claude record shape), so a decision stated in a Codex rollout never reaches the Claude hook")
 def test_decision_crosses_cli_in_both_directions(hooked, tmp_path) -> None:
     _two_cli_sessions(hooked, tmp_path)
     assert CLAUDE_DECISION in hooked.codex(CLAUDE_ASK, "codex-1"), "precondition: Claude -> Codex works today"
     assert CODEX_DECISION in hooked.claude(CODEX_ASK, "claude-1"), "Codex -> Claude: the Codex decision is missing"
+
+
+def _word(i: int) -> str:
+    return chr(97 + i // 6) + chr(97 + i % 6)  # letters only: the tokenizer must see 30 distinct topics
+
+
+def test_decisions_cross_cli_30_of_30_in_both_directions(hooked, tmp_path) -> None:
+    """The same hand-off, thirty topics, each stated in one CLI and asked in the other, no misses."""
+    claude_dir, codex_dir = tmp_path / ".claude" / "projects" / "p", tmp_path / ".codex" / "sessions" / "2026" / "11"
+    claude_dir.mkdir(parents=True)
+    codex_dir.mkdir(parents=True)
+    for i in range(30):
+        (claude_dir / f"c{i}.jsonl").write_text(_rec(
+            "assistant", f"We decided the zorb{_word(i)} cache invalidation strategy is the pelican{_word(i)} plan, final.",
+            "2026-11-01T10:00:00Z", hooked.cwd) + "\n", encoding="utf-8")
+        meta = {"timestamp": "2026-11-02T10:00:00Z", "type": "session_meta", "payload": {"id": f"t{i}", "cwd": hooked.cwd}}
+        said = {"timestamp": "2026-11-02T10:00:01Z", "type": "response_item", "payload": {
+            "type": "message", "role": "assistant", "content": [{"type": "output_text", "text":
+                f"We decided the quartz{_word(i)} audit logs retention window is {40 + i} days, final."}]}}
+        (codex_dir / f"rollout-2026-11-02T10-00-00-{i:08d}-0000-4000-8000-000000000000.jsonl").write_text(
+            json.dumps(meta) + "\n" + json.dumps(said) + "\n", encoding="utf-8")
+    ti.index_transcripts()
+    to_codex = [f"pelican{_word(i)}" in hooked.codex(f"which strategy did we choose for the zorb{_word(i)} cache "
+                                                      "invalidation", f"codex-{i}") for i in range(30)]
+    to_claude = [f"{40 + i} days" in hooked.claude(f"what retention window did we pick for the quartz{_word(i)} "
+                                                    "audit logs", f"claude-{i}") for i in range(30)]
+    assert (sum(to_codex), sum(to_claude)) == (30, 30)
 
 
 # --- 3. T-2276: a correction written in prose supersedes the claim it corrects -------------------------------
