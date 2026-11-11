@@ -1261,17 +1261,46 @@ def _content_tokens(text: str) -> set[str]:
     return {t for t in _WORDS.findall(text.lower()) if (len(t) >= 3 or t.isdigit()) and t not in _STOP}
 
 
-def _correction_check(svc, injected: list[int], flagged: bool):
-    """Closure deciding, only if a fragment is about to take the reserved slot, whether a correction is in play.
+def _created_before(fragment_date: object, created_at: object) -> bool:
+    """Whether the fragment is older than the claim; True (suppress) when either date is missing or unparsable."""
+    from datetime import datetime, timezone
 
-    ``flagged`` is what the ranking already saw (a disputed claim withheld, an injected claim with a supersedes
-    pointer either way). On top, an injected claim that is the target of a live proposal counts even when its
-    replacement is not confirmed or not injected (one proposal scan, only on this rare path). Fails closed.
+    try:
+        dates = [datetime.fromisoformat(str(v).replace("Z", "+00:00")) for v in (fragment_date, created_at)]
+        dates = [d if d.tzinfo else d.replace(tzinfo=timezone.utc) for d in dates]
+        return dates[0] < dates[1]
+    except (ValueError, TypeError):
+        return True
+
+
+def _correction_check(svc, injected: list[int], flagged: bool, pointers: list | None = None):
+    """Closure ``check(fragment_date)``: is a correction in play that the fragment may contradict?
+
+    Only asked when a fragment is about to take the reserved slot. ``flagged`` is what the ranking already saw (a
+    disputed claim withheld, an injected claim that was itself replaced). ``pointers`` are the injected claims
+    with a ``supersedes_claim_id``: one counts only if its predecessor sits in the SAME scope and tenant (a
+    ``govern/rescope`` copy, or the twin a move merged into, points at the original in ANOTHER scope: a move, not
+    a correction) AND the fragment is older than the claim (a later fragment cannot quote the value it replaced);
+    one batched query loads the predecessors. Last, an injected claim that is the target of a live proposal counts
+    even when its replacement is not confirmed or not injected (one proposal scan). Fails closed.
     """
-    def check() -> bool:
+    def check(fragment_date: object = None) -> bool:
         if flagged:
             return True
         try:
+            if pointers:
+                ids = sorted({int(c.supersedes_claim_id) for c in pointers})
+                marks = ",".join("?" * len(ids))
+                with svc.store.connect() as conn:
+                    rows = conn.execute(f"SELECT id, scope, tenant_id FROM claims WHERE id IN ({marks})", ids).fetchall()
+                home = {int(r[0]): (r[1], r[2] or "") for r in rows}
+                for claim in pointers:
+                    predecessor = home.get(int(claim.supersedes_claim_id))
+                    if predecessor is None:
+                        return True  # cannot tell whose scope it was: fail closed
+                    if predecessor == (claim.scope, getattr(claim, "tenant_id", None) or "") and _created_before(
+                            fragment_date, claim.created_at):
+                        return True
             from memorymaster.recall.retrieval import pending_supersession_ids
 
             return bool(injected and set(injected) & pending_supersession_ids(
@@ -1332,7 +1361,7 @@ def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: i
     evidence_key = None
     if slots <= 0:  # claims filled the cap: the top fragment may still earn ONE extra slot (never displaces a claim)
         evidence_key = _evidence_fragment_key(rendered, found[0], query)
-        if evidence_key is not None and (check := _CORRECTION_CHECK.get()) is not None and check():
+        if evidence_key is not None and (check := _CORRECTION_CHECK.get()) is not None and check(getattr(found[0], "date", None)):
             evidence_key = None  # a correction is in play: the fragment may quote the value it replaced
         if evidence_key is None:
             return rendered
@@ -2465,9 +2494,10 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
             stages["jev_ms"] = _stage_ms(stage_start)
     injected = [cid for row in rendered_rows if isinstance(cid := getattr(row.get("claim"), "id", None), int)]
     if hook_data is not None:
-        linked = any(getattr(row.get("claim"), "supersedes_claim_id", None) is not None
-                     or getattr(row.get("claim"), "replaced_by_claim_id", None) is not None for row in rendered_rows)
-        _CORRECTION_CHECK.set(_correction_check(svc, injected, withheld or linked))
+        claims = [row.get("claim") for row in rendered_rows]
+        replaced = any(getattr(c, "replaced_by_claim_id", None) is not None for c in claims)
+        pointers = [c for c in claims if getattr(c, "supersedes_claim_id", None) is not None]
+        _CORRECTION_CHECK.set(_correction_check(svc, injected, withheld or replaced, pointers))
     if rendered_ids is not None:
         rendered_ids.extend(injected)
     stage_start = time.perf_counter()
