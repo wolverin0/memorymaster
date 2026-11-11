@@ -341,8 +341,11 @@ def apply_post_ingest_governance(
     claim: Claim,
     decision: IngestGovernanceDecision,
     confidence: float,
+    bound_hit: list[int] | None = None,
 ) -> list[int]:
-    """Record the mutable-state override and file supersession proposals; returns the target ids filed."""
+    """Record the mutable-state override and file supersession proposals; returns the target ids filed.
+
+    ``bound_hit`` collects the prose-named targets the daily bound kept from being filed."""
     record_mutable_override(
         store,
         claim,
@@ -350,11 +353,12 @@ def apply_post_ingest_governance(
         decision.requested_volatility,
     )
     filed = queue_supersession_proposals(store, decision.supersession_targets, claim, confidence)
-    return filed + queue_prose_corrections(store, claim, confidence)
+    return filed + queue_prose_corrections(store, claim, confidence, bound_hit)
 
 
 def _finish_supersession(
-    service: Any, filed: list[int], governance: IngestGovernanceDecision, report: dict[str, Any] | None
+    service: Any, filed: list[int], governance: IngestGovernanceDecision, report: dict[str, Any] | None,
+    bound_hit: list[int] | None = None,
 ) -> None:
     """Drop the service's cached pending set when a proposal was filed; say what happened to each declared target.
 
@@ -369,6 +373,7 @@ def _finish_supersession(
             declared=declared, filed=[i for i in declared if i in filed],
             not_filed=[i for i in declared if i not in filed],  # a live proposal for the target already exists
             prose_filed=[i for i in filed if i not in declared],
+            bound_hit=list(bound_hit or []),  # prose-named targets the daily bound kept out of the queue
         )
 
 
@@ -384,7 +389,9 @@ def govern_created(
     service: Any, claim: Claim, governance: IngestGovernanceDecision, confidence: float, report: dict[str, Any] | None
 ) -> None:
     """Post-create governance: mutable-state override, declared and prose-named supersession proposals."""
-    _finish_supersession(service, apply_post_ingest_governance(service.store, claim, governance, confidence), governance, report)
+    bound_hit: list[int] = []
+    filed = apply_post_ingest_governance(service.store, claim, governance, confidence, bound_hit)
+    _finish_supersession(service, filed, governance, report, bound_hit)
 
 
 def queue_supersession_proposals(
@@ -402,7 +409,9 @@ def queue_supersession_proposals(
     ]
 
 
-def queue_prose_corrections(store: Any, claim: Claim, confidence: float) -> list[int]:
+def queue_prose_corrections(
+    store: Any, claim: Claim, confidence: float, bound_hit: list[int] | None = None
+) -> list[int]:
     """Safety net: the text names an earlier claim id as corrected -> operator-only proposal, never applied.
 
     Why a proposal and not the supersession itself (core.promotion_policy): ``transition_claim`` retires or
@@ -423,7 +432,11 @@ def queue_prose_corrections(store: Any, claim: Claim, confidence: float) -> list
             if target is None or target.id >= claim.id or target.status in INACTIVE_STATUSES:
                 continue
             if _daily_bound_error(store, claim.source_agent, [target]):
-                continue  # past the daily bound: the claim stays, the inferred proposal is not filed (G-4)
+                # past the daily bound: the claim stays, the inferred proposal is not filed (G-4)
+                logger.info("prose correction by claim %s not filed for target %s: daily bound reached", claim.id, target.id)
+                if bound_hit is not None:
+                    bound_hit.append(target.id)
+                continue
             if queue_supersession_proposal(
                 store, target, claim, confidence, source=SOURCE_PROSE_CORRECTION,
                 cross_identity=target.source_agent != claim.source_agent,

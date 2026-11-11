@@ -64,3 +64,15 @@ def test_prose_corrections_count_toward_the_agent_bound(svc, monkeypatch):
         svc.ingest(f"Correction {k}: this supersedes {v[k].human_id} because the ring changed", CIT, scope=SCOPE,
                    source_agent="evil-prose")
     assert _proposal_count(svc, "prose-correction") == 3
+
+
+def test_a_prose_correction_stopped_by_the_bound_is_reported(svc, monkeypatch):
+    monkeypatch.setattr(ig, "MAX_DECLARED_PER_AGENT_PER_DAY", 1)
+    v = _victims(svc, 2)
+    first, second = {}, {}
+    svc.ingest(f"Correction a: this supersedes {v[0].human_id} because it changed", CIT, scope=SCOPE,
+               source_agent="p", supersession_report=first)
+    svc.ingest(f"Correction b: this supersedes {v[1].human_id} because it changed", CIT, scope=SCOPE,
+               source_agent="p", supersession_report=second)
+    assert first["bound_hit"] == [] and first["prose_filed"] == [v[0].id]
+    assert second["bound_hit"] == [v[1].id] and second["prose_filed"] == []
