@@ -176,6 +176,24 @@ def _decode_row(row: sqlite3.Row) -> dict[str, Any]:
     return payload
 
 
+LANE_ALL, LANE_BEAT, LANE_DREAM = "all", "beat", "dream"
+# Slow lane (D-11): a capture this large, or one that already failed, never takes a beat slot; the
+# 6-hourly run takes it once its backoff elapsed. 1 MiB: in the live queue (4.6k waiting) the p99 is 278 KB,
+# 7 captures are over 1 MiB and hold 17 MB of the 88 MB queued. After max_capture_errors the existing
+# quarantine applies. shortcut: byte count, not tokens; lower it if beat ticks still time out on mid-size ones.
+SLOW_CAPTURE_BYTES = 1024 * 1024
+_SLOW = "(c.byte_count >= ? OR c.state='retryable' OR c.error_count > 0)"
+# Retry wait after the Nth counted failure: 5 h doubling, at most 48 h (the Dreaming cadence is 6 h, so the first
+# retry lands on the next run). No failure counted yet = no wait.
+SLOW_BACKOFF_BASE_HOURS = 5
+SLOW_BACKOFF_MAX_HOURS = 48
+_BACKOFF_STEPS = 8
+
+
+def _backoff_hours() -> list[float]:
+    return [0.0] + [min(SLOW_BACKOFF_MAX_HOURS, SLOW_BACKOFF_BASE_HOURS * 2 ** (n - 1)) for n in range(1, _BACKOFF_STEPS + 1)]
+
+
 class DreamLedger:
     def __init__(self, db_path: str | Path) -> None:
         self.db_path = Path(db_path)
@@ -324,36 +342,71 @@ class DreamLedger:
 
     def eligible(
         self, *, idle_minutes: int, max_sessions: int, scope: str | None = None, now: datetime | None = None,
-        oldest_reserve: int = 0,
+        oldest_reserve: int = 0, lane: str = LANE_ALL,
     ) -> list[dict[str, Any]]:
-        """Captures a run may work on, oldest first.
+        """Captures a run may work on.
 
-        ``oldest_reserve`` > 0 (the beat) fills ``max_sessions - oldest_reserve`` slots with
-        beat-scanned captures (``source_mtime`` set, oldest first among them), then every
-        remaining slot, at least ``oldest_reserve``, oldest-first over the whole queue, so the
-        old backlog drains every tick while fresh sessions do not wait behind it.
+        ``oldest_reserve`` = 0: oldest first. ``oldest_reserve`` > 0 (beat, Dreaming): that many slots are
+        always filled oldest-first from the whole queue so the old backlog drains; every other slot goes to
+        the NEWEST captures (``last_activity_at`` DESC), so fresh sessions never wait behind the backlog.
+
+        ``lane``: ``beat`` skips slow captures (large, failed or retryable, see ``_SLOW``); ``dream`` takes
+        them once their failure backoff has elapsed; ``all`` applies no lane rule.
+
+        With ``oldest_reserve`` > 0 a capture is never selected while an OLDER capture of the same session is
+        still unfinished: newest-first must not let a newer one be consolidated and applied before the older
+        (it may supersede it).
         """
-        cutoff = _iso((now or _utc_now()) - timedelta(minutes=max(0, idle_minutes)))
-        params: list[Any] = [cutoff]
-        where = "(state IN ('captured','retryable') OR (state='extracted' AND resume_eligible=1)) AND turn_count >= 2 AND last_activity_at <= ?"
+        current = now or _utc_now()
+        params: list[Any] = [_iso(current - timedelta(minutes=max(0, idle_minutes)))]
+        where = ("(c.state IN ('captured','retryable') OR (c.state='extracted' AND c.resume_eligible=1)) "
+                 "AND c.turn_count >= 2 AND c.last_activity_at <= ?")
         if scope:
-            where += " AND scope=?"
+            where += " AND c.scope=?"
             params.append(scope)
+        newest_first = oldest_reserve > 0
+        if newest_first:  # only newest-first can overtake: plain oldest-first already goes in id order
+            where += (" AND NOT EXISTS (SELECT 1 FROM dream_captures o WHERE o.provider=c.provider AND "
+                      "o.session_hash=c.session_hash AND o.scope=c.scope AND o.id < c.id AND "
+                  "(((o.state IN ('captured','retryable') OR (o.state='extracted' AND o.resume_eligible=1)) "
+                      "AND o.turn_count >= 2) OR o.state='consolidated'))")
+        if lane == LANE_BEAT:
+            where += f" AND NOT {_SLOW}"
+            params.append(SLOW_CAPTURE_BYTES)
+        elif lane == LANE_DREAM:
+            where += (f" AND (NOT {_SLOW} OR c.updated_at <= CASE MIN(c.error_count, {_BACKOFF_STEPS}) "
+                      + " ".join(f"WHEN {n} THEN ?" for n in range(_BACKOFF_STEPS + 1)) + " END)")
+            params.append(SLOW_CAPTURE_BYTES)
+            params.extend(_iso(current - timedelta(hours=hours)) for hours in _backoff_hours())
         limit = max(0, max_sessions)
-        fresh_slots = limit - max(0, oldest_reserve) if oldest_reserve > 0 else 0
+        newest = limit - min(limit, max(0, oldest_reserve)) if newest_first else 0
         with self._connect() as conn:
             rows: list[Any] = []
-            if fresh_slots > 0:
+            if newest > 0:
                 rows = conn.execute(
-                    f"SELECT * FROM dream_captures WHERE {where} AND source_mtime IS NOT NULL "
-                    "ORDER BY last_activity_at, id LIMIT ?", [*params, fresh_slots],
+                    f"SELECT c.* FROM dream_captures c WHERE {where} ORDER BY c.last_activity_at DESC, c.id DESC LIMIT ?",
+                    [*params, newest],
                 ).fetchall()
             taken = ",".join(str(int(row["id"])) for row in rows) or "-1"
             rows += conn.execute(
-                f"SELECT * FROM dream_captures WHERE {where} AND id NOT IN ({taken}) "
-                "ORDER BY last_activity_at, id LIMIT ?", [*params, limit - len(rows)],
+                f"SELECT c.* FROM dream_captures c WHERE {where} AND c.id NOT IN ({taken}) "
+                "ORDER BY c.last_activity_at, c.id LIMIT ?", [*params, limit - len(rows)],
             ).fetchall()
         return [_decode_row(row) for row in rows]
+
+    def charge_hang(self, capture_ids: Iterable[int], run_id: str, *, max_errors: int) -> None:
+        """Count one failure on captures whose provider call hung while the provider answered others.
+
+        The state is kept (they stay resumable); ``error_count`` > 0 sends them to the slow lane with a
+        backoff, and ``max_errors`` (0 = never) quarantines them like any other counted failure.
+        """
+        with self._connect() as conn:
+            for capture_id in capture_ids:
+                conn.execute("UPDATE dream_captures SET error_count=error_count+1, run_id=?, updated_at=? WHERE id=?",
+                             (run_id, _iso(_utc_now()), int(capture_id)))
+                if max_errors > 0:
+                    conn.execute("UPDATE dream_captures SET state='quarantined', last_error='call_timeout' "
+                                 "WHERE id=? AND error_count>=?", (int(capture_id), max_errors))
 
     def drainable_queue(self) -> dict[str, Any]:
         """Captures a run can still pick up, the same set ``eligible`` draws from (ignoring the idle gate):
