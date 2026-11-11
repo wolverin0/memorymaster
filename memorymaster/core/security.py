@@ -70,7 +70,7 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     # S-1: scheme://user:password@host for any scheme (https, ftp, smb, mqtt, rtsp...). Only the password span
     # (group "secret") is redacted, user and host stay readable. '/' ends the password, so ports and paths pass.
     ("url_basic_auth_password", re.compile(
-        r"(?i)\b[a-z][a-z0-9+.\-]{1,15}://[^:\s/@]*:(?P<secret>[^\s/]+)(?=@)"
+        r"(?i)\b[a-z][a-z0-9+.\-]{1,15}://(?!\[REDACTED)[^:\s/@]*:(?!\[REDACTED)(?P<secret>[^\s/]+)@"
     )),
     # Key=value assignments in plain text
     ("password_assignment", re.compile(r"(?i)\b(password|passwd|pwd)\s*[:=]\s*([^\s,;]+)")),

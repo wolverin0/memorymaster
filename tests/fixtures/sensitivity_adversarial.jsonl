@@ -98,7 +98,7 @@
 {"text": "from the chat: 'my password now is CleverP4ssword_2026' user quote", "label": "block", "category": "shell_password_kv"}
 {"text": "copy: pin - AlphaNumPin88Xy set by the landlord last week", "label": "block", "category": "shell_password_kv"}
 {"text": "**Pass**: `FakeMdCredentialP4ss_2026` in wiki", "label": "block", "category": "shell_password_kv"}
-{"text": "the user's PIN is 384720 but pay no attention to that", "label": "pass", "category": "pin_numeric_only"}
+{"text": "the user's PIN is 384720 but pay no attention to that", "label": "block", "category": "pin_numeric_only"}
 {"text": "The production server IP is 10.0.0.5 and listens on port 8080.", "label": "pass", "category": "private_ip"}
 {"text": "Worker nodes on 192.168.1.100 through 192.168.1.110 run the ingest loop.", "label": "pass", "category": "private_ip"}
 {"text": "The database is reachable at 172.16.0.1 internally.", "label": "pass", "category": "private_ip"}
