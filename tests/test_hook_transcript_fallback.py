@@ -388,11 +388,14 @@ def test_d5_a_correction_without_digits_gets_no_extra_slot_for_the_old_value(wor
     assert new.id in ids and "8080" not in text
 
 
-def test_d5_turn_two_recovers_the_fragment_through_the_free_slot_when_turn_one_could_not_carry_it(world) -> None:
+def test_d5_turn_two_recovers_the_fragment_through_the_free_slot_when_turn_one_could_not_carry_it(world, monkeypatch) -> None:
     """Pins the free-slot recovery: claims seen on turn 1 free the slots, a fragment never delivered arrives on turn 2."""
     world.transcripts(("assistant", "The router firmware version we chose was 7.18.2 after the rollback",
                        "2026-08-01T00:00:00Z", world.cwd))
     _two_claims(world)
-    world.ask("firmware router version deploy checklist", session_id="s-r")  # claims, no fragment (no novel value)
+    with monkeypatch.context() as turn_one:
+        turn_one.setattr(context_hook, "_evidence_fragment_key", lambda *a, **k: None)  # the extra slot does not fire
+        first, first_ids = world.ask(session_id="s-r")
+    assert len(first_ids) == 2 and "7.18.2" not in first
     text, ids = world.ask(session_id="s-r")  # same session, the question the fragment answers
     assert ids == [] and "7.18.2" in text

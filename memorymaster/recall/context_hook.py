@@ -1201,6 +1201,7 @@ def recall(
     else:
         scope_token = shared_token = None
 
+    correction_token = _CORRECTION_IN_PLAY.set(False)
     try:
         # Raw past conversation is fetched BEFORE the claims pipeline: whether the older verbatim stream may
         # be bypassed depends on the fallback having produced usable fragments (T-1876 N8).
@@ -1224,6 +1225,7 @@ def recall(
             return rendered, rendered_ids
         return rendered
     finally:
+        _CORRECTION_IN_PLAY.reset(correction_token)
         if scope_token is not None:
             _REQUEST_SCOPE.reset(scope_token)
             _REQUEST_SHARED_SCOPES.reset(shared_token)
@@ -1244,27 +1246,59 @@ def _transcript_fragments(query: str, budget: int, phase_ms: dict[str, float]) -
         return []
 
 
-_VALUE_TOKEN = re.compile(r"\d[\w.\-]*\w|\d")
-_MM_ID = re.compile(r"\[mm-[^\]]*\]")
+_NOT_A_VALUE = re.compile(
+    r"\S*[/\x5c]\S*"  # paths, urls, locale dates (01/08/2026)
+    r"|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?Z?)?"  # ISO date / timestamp
+    r"|\b\d{1,2}:\d{2}(?::\d{2})?\b"  # clock time
+    r"|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"  # uuid
+    r"|\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b"  # commit hash / long hex
+    r"|#\d+|\b[A-Za-z]{1,6}-\d+\b"  # #123, T-1234, mm-0001
+    r"|\b(?:pr|pull|issue|ticket|msg|message|id)[\s_#:-]*\w*\d\w*"  # PR 12, msg_01H8..., ticket 4
+    r"|:\d+(?:-\d+)?\b|\bL\d+(?:-L?\d+)?\b|\blines?\s+\d+(?:\s*-\s*\d+)?"  # file:123, L10-20, lines 3-4
+    r"|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b",
+    re.I,
+)
+_MM_ID = re.compile(r"\x5bmm-[^\x5d]*\x5d")
+_VALUE_TOKEN = re.compile(r"\b[vV]?\d+(?:[._]\d+)*(?:-?[A-Za-z][\w.]*)?\b")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n")
+_CORRECTION_IN_PLAY: contextvars.ContextVar[bool] = contextvars.ContextVar("mm_correction_in_play", default=False)
 
 
 def _value_tokens(text: str) -> set[str]:
-    """Digit-bearing tokens (versions, numbers, ids) of ``text``, lower case, trailing dots dropped."""
-    return {t.lower().rstrip(".-") for t in _VALUE_TOKEN.findall(text)}
+    """Answer-like tokens (versions, ports, counts) of ``text``, lower case.
+
+    Dates, timestamps, clock times, uuids, commit hashes, ``#12``/``T-1234``/``PR 12``/message ids, line
+    references and anything inside a path or url are not values and are removed first.
+    """
+    return {t.lower() for t in _VALUE_TOKEN.findall(_NOT_A_VALUE.sub(" ", text))}
+
+
+def _tied_value_tokens(text: str, query_keys: frozenset[str]) -> set[str]:
+    """Value tokens of the sentences of ``text`` that contain at least one content term of the query."""
+    out: set[str] = set()
+    for sentence in _SENTENCE.split(text):
+        if query_keys & hook_lexical.text_keys(sentence):
+            out |= _value_tokens(sentence)
+    return out
 
 
 def _evidence_fragment_key(rendered: str, top, query: str, session: str | None) -> int | None:
     """Session key when the top fragment earns one extra slot beyond the claim cap, else ``None``.
 
-    It does when it states a value (a digit-bearing token) that neither the question nor the injected claims
-    contain, while those claims state no value of their own: then it adds the answer rather than restating or
-    contradicting them (a claim carrying a value the fragment lacks may be the correction of what the fragment
-    quotes, so the fragment is withheld). A fragment already delivered this session is not repeated. Pure
-    string work on text already in hand: no I/O besides the session file, and only when the rule fires.
+    It does when a value token (:func:`_value_tokens`) that sits in a sentence with a query term is absent
+    from the question and from every injected claim, and no injected claim states a query-tied value of its
+    own that the fragment lacks (that claim answers, or corrects what the fragment quotes: it wins). A fragment
+    already delivered this session is not repeated. Pure string work on text already in hand: no I/O besides
+    the session file, and only when the rule fires.
     """
     excerpt = getattr(top, "excerpt", "")
-    novel = _value_tokens(excerpt) - _value_tokens(query) - _value_tokens(_MM_ID.sub("", rendered))
-    if not novel or (_value_tokens(_MM_ID.sub("", rendered)) - _value_tokens(excerpt) - _value_tokens(query)):
+    claims = _MM_ID.sub("", rendered)
+    keys = hook_lexical.text_keys(query)
+    known = _value_tokens(query)
+    fragment = _tied_value_tokens(excerpt, keys) - known
+    if not fragment or fragment <= _value_tokens(claims):
+        return None
+    if _tied_value_tokens(claims, keys) - fragment - known:
         return None
     key = _fragment_key(excerpt)
     if session and key in hook_policy.seen_ids(session):
@@ -1298,7 +1332,7 @@ def _with_transcript_fallback(rendered: str, found: list, claims: int, budget: i
     room = max(0, budget) * 4 - (len(rendered) + 2 if rendered else 0)
     evidence_key = None
     if slots <= 0:  # claims filled the cap: the top fragment may still earn ONE extra slot (never displaces a claim)
-        evidence_key = _evidence_fragment_key(rendered, found[0], query, session)
+        evidence_key = None if _CORRECTION_IN_PLAY.get() else _evidence_fragment_key(rendered, found[0], query, session)
         if evidence_key is None:
             return rendered
         slots = 1
@@ -2347,7 +2381,10 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
     """
     # Truth eligibility holds after EVERY ranking stage (T-1862, review F4): lexical, dense and Jev all
     # render from this order, so a claim with a pending/explicit correction never precedes the correction.
+    pool_size = len(ranked)
     ranked = hook_lexical.apply_truth_eligibility(ranked, svc)
+    if hook_data is not None and len(ranked) < pool_size:
+        _CORRECTION_IN_PLAY.set(True)  # a disputed claim was withheld: a correction is in play for this prompt
     limit = None
     if hook_data is not None:
         stage_start = time.perf_counter()
@@ -2371,6 +2408,10 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
         if stages is not None:
             stages["jev_ms"] = _stage_ms(stage_start)
     injected = [cid for row in rendered_rows if isinstance(cid := getattr(row.get("claim"), "id", None), int)]
+    if hook_data is not None and any(getattr(row.get("claim"), "supersedes_claim_id", None) is not None
+                                     or getattr(row.get("claim"), "replaced_by_claim_id", None) is not None
+                                     for row in rendered_rows):
+        _CORRECTION_IN_PLAY.set(True)  # no extra transcript slot: a fragment may quote the value it replaced
     if rendered_ids is not None:
         rendered_ids.extend(injected)
     stage_start = time.perf_counter()
