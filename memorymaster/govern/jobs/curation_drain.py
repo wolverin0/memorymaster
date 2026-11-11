@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 _RIVAL_IN_DETAILS = re.compile(r"conflicts_with_confirmed_claim:(\d+)")
 
 DRAIN_DETAILS = "curation_drain"
+_RETIRED = frozenset({"archived", "superseded"})
 
 
 def _is_operator_owned(claim: Any) -> bool:
@@ -258,6 +259,7 @@ def drain_proposals(
         "kept_for_operator": 0,
         "kept_jev": 0,
         "kept_replacement_unconfirmed": 0,
+        "rejected_moot": 0,
         "failed": 0,
         "applied_targets": [],
         "dry_run": not apply,
@@ -280,10 +282,25 @@ def drain_proposals(
             summary["kept_for_operator"] += 1
             continue
         if isinstance(replacement_id, int):
-            # Retiring the target before its replacement can be served leaves hooks with neither value (audit
-            # D-3 / X-1): the proposal waits until the validator has confirmed the replacement.
             replacement = service.store.get_claim(replacement_id, include_citations=False)
-            if replacement is None or replacement.status != "confirmed":
+            if claim.status in _RETIRED or replacement is None or replacement.status in _RETIRED:
+                # Moot: the target is already retired, or the replacement never will be served. Left pending it
+                # failed to apply on every cycle (812 `apply_failed` rows in production) and sat in the queue.
+                summary["rejected_moot"] += 1
+                if apply:
+                    try:
+                        resolve_steward_proposal(
+                            service, action="reject", proposal_event_id=int(proposal["proposal_event_id"]),
+                            actor="automation",
+                        )
+                    except Exception as exc:  # noqa: BLE001 - una propuesta rota no frena el dren
+                        logger.warning("curation drain moot proposal %s failed: %s", proposal.get("proposal_event_id"), exc)
+                        summary["rejected_moot"] -= 1
+                        summary["failed"] += 1
+                continue
+            if replacement.status != "confirmed":
+                # Retiring the target before its replacement can be served leaves hooks with neither value
+                # (audit D-3 / X-1): the proposal waits until the validator has confirmed the replacement.
                 summary["kept_replacement_unconfirmed"] += 1
                 continue
         if not apply:

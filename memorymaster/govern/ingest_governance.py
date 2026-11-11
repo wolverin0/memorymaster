@@ -240,7 +240,10 @@ def _is_proposal(event: Any) -> bool:
 def has_live_proposal(store: Any, target_id: int) -> bool:
     """An unresolved supersession proposal exists for the target (resolved or rejected ones do not count).
 
-    Mirrors ``recall.retrieval.pending_supersession_ids``: an approval that failed to apply does not resolve.
+    Mirrors ``recall.retrieval.pending_supersession_ids``: an approval that failed to apply does not resolve, and
+    a proposal whose replacement is not ``confirmed`` does not hold the slot. Such a replacement may never become
+    deliverable (too short for the validator, archived), and it used to block the next, honest correction of the
+    same target for good, leaving old and new both served. The drain rejects the loser as moot.
     """
     resolved: set[int] = set()
     for event in store.list_events(claim_id=target_id, event_type="audit", limit=200):
@@ -255,10 +258,20 @@ def has_live_proposal(store: Any, target_id: int) -> bool:
             continue
         if isinstance(payload.get("proposal_event_id"), int):
             resolved.add(payload["proposal_event_id"])
-    return any(
-        _is_proposal(event) and int(event.id) not in resolved
-        for event in store.list_events(claim_id=target_id, event_type="policy_decision", limit=100)
-    )
+    for event in store.list_events(claim_id=target_id, event_type="policy_decision", limit=100):
+        if not _is_proposal(event) or int(event.id) in resolved:
+            continue
+        try:
+            payload = json.loads(getattr(event, "payload_json", None) or "{}")
+        except (ValueError, TypeError):
+            payload = {}
+        replacement_id = payload.get("replaced_by_claim_id") if isinstance(payload, dict) else None
+        if not isinstance(replacement_id, int):
+            return True
+        replacement = store.get_claim(replacement_id, include_citations=False)
+        if replacement is not None and replacement.status == "confirmed":
+            return True
+    return False
 
 
 def enforce_daily_bound(store: Any, source_agent: str | None, new_targets: int) -> None:

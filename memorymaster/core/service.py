@@ -818,18 +818,31 @@ class MemoryService(IntegrationService):
     def validate_now(self, claim_id: int) -> dict[str, object]:
         """Ingest fast path (ROADMAP 1.4; audit D-2/D-3): rule on ONE fresh candidate now, not at the next cycle.
 
-        It runs the validator's own gates for that claim (source and structure policy, pending supersession,
-        tuple conflict, classifier or score) and, once the claim is confirmed, the curation drain's own rule for
-        the supersessions it declared (same-agent only; cross-identity and prose stay with the operator). No new
-        promotion rule lives here. Callers are the surfaces where an agent states a fact on purpose (MCP
-        ``ingest_claim`` / ``checkpoint``); background intake keeps the steward cadence. Never raises: a fault
-        leaves the claim a candidate for the cycle. ``MEMORYMASTER_INLINE_VALIDATION=0`` turns it off.
+        It runs the cycle's own stages for that claim, in the cycle's order: the deterministic format checks
+        (a hard fail is ``conflicted``), the near-duplicate decision, the validator's gates (source and structure
+        policy, pending supersession, tuple conflict, classifier or score) and, once the claim is confirmed, the
+        curation drain's rule for the supersessions it declared (same-agent only; cross-identity and prose stay
+        with the operator). No new promotion rule lives here. A near-duplicate is left a candidate whatever this
+        process's dedupe flags say (``held: near_duplicate``): only candidates are ever deduped, so the cycle has
+        to rule on it. Callers are the surfaces where an agent states a fact on purpose (MCP ``ingest_claim`` /
+        ``checkpoint``); background intake keeps the steward cadence. Never raises: a fault leaves the claim a
+        candidate for the cycle. ``MEMORYMASTER_INLINE_VALIDATION=0`` turns it off.
         """
         if os.environ.get("MEMORYMASTER_INLINE_VALIDATION", "1").strip().lower() in {"0", "false", "off", "no"}:
             return {"enabled": False}
         report: dict[str, object] = {"enabled": True, "superseded": []}
         try:
-            validator.run(self.store, limit=1, claim_ids=[claim_id])
+            deterministic.run(self.store, workspace_root=self.workspace_root, limit=1, claim_ids=[claim_id])
+            claim = self.store.get_claim(claim_id, include_citations=False)
+            if claim is not None and claim.status == "candidate" and claim.text and claim.scope:
+                with contextlib.closing(self.store.connect()) as conn:
+                    duplicate = candidate_dedupe.find_near_duplicate(
+                        conn, candidate_id=claim.id, candidate_text=claim.text, candidate_scope=claim.scope
+                    )
+                if duplicate.action == "archive":
+                    report["held"] = "near_duplicate"
+                else:
+                    validator.run(self.store, limit=1, claim_ids=[claim_id])
             claim = self.store.get_claim(claim_id, include_citations=False)
             if claim is not None and claim.status == "confirmed":
                 from memorymaster.govern.jobs import curation_drain

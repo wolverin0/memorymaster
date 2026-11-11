@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import math
@@ -212,19 +213,32 @@ class PendingSupersessionScanError(RuntimeError):
     """``pending_supersession_ids(strict=True)`` could not scan the proposal log."""
 
 
-def _replacement_deliverable(service: object, replacement_id: object) -> bool:
-    """The proposed replacement can be served in the target's place (it is ``confirmed``).
+def confirmed_claim_ids(service: object, claim_ids: set[int]) -> set[int]:
+    """Which of ``claim_ids`` are ``confirmed``, in one query per 500 ids.
 
-    A proposal that names no replacement (a retraction, a Jev/fuzzy verdict) has nothing to wait for. A fault
-    reading the replacement counts as deliverable: the pre-existing behaviour, which errs toward hiding.
+    The prompt hooks build a fresh service per call, so nothing here is cached for them and a claim read per
+    pending proposal cost about 1 ms each (687 ms at 600 proposals). Raises on a store fault: the callers decide.
     """
-    if not isinstance(replacement_id, int):
-        return True
-    try:
-        replacement = getattr(service, "store", service).get_claim(replacement_id, include_citations=False)
-    except Exception:  # noqa: BLE001 - see docstring
-        return True
-    return replacement is not None and replacement.status == "confirmed"
+    if not claim_ids:
+        return set()
+    store = getattr(service, "store", service)
+    connect = getattr(store, "connect", None)
+    if connect is None:  # a store without raw SQL access: the slow, portable path
+        return {
+            claim_id for claim_id in claim_ids
+            if getattr(store.get_claim(claim_id, include_citations=False), "status", None) == "confirmed"
+        }
+    ordered = sorted(claim_ids)
+    confirmed: set[int] = set()
+    with contextlib.closing(connect()) as conn:
+        for start in range(0, len(ordered), 500):
+            chunk = ordered[start:start + 500]
+            rows = conn.execute(
+                f"SELECT id FROM claims WHERE status = 'confirmed' AND id IN ({','.join('?' * len(chunk))})",  # noqa: S608
+                chunk,
+            ).fetchall()
+            confirmed.update(int(row[0]) for row in rows)
+    return confirmed
 
 
 def pending_supersession_ids(
@@ -268,6 +282,7 @@ def pending_supersession_ids(
             return cached[1]
 
     ids: set[int] = set()
+    waiting: dict[int, int] = {}  # target id -> replacement id whose state decides (deliverable_only)
     try:
         # Time-bounded, not row-capped: at limit=2000 an unrelated burst of
         # bookkeeping events could push the oldest pending proposals out of the
@@ -308,11 +323,15 @@ def pending_supersession_ids(
                     proposal = json.loads(getattr(event, "payload_json", None) or "{}")
                 except (ValueError, TypeError):
                     proposal = {}
-                if isinstance(proposal, dict) and not _replacement_deliverable(
-                    service, proposal.get("replaced_by_claim_id")
-                ):
+                replacement_id = proposal.get("replaced_by_claim_id") if isinstance(proposal, dict) else None
+                if isinstance(replacement_id, int):
+                    waiting.setdefault(claim_id, replacement_id)
                     continue
+            # no replacement named (a retraction, a Jev/fuzzy verdict): nothing to wait for
             ids.add(claim_id)
+        if waiting:
+            deliverable = confirmed_claim_ids(service, set(waiting.values()))
+            ids.update(target for target, replacement_id in waiting.items() if replacement_id in deliverable)
     except Exception as exc:  # noqa: BLE001 - retrieval must survive a bookkeeping fault
         if strict:
             raise PendingSupersessionScanError("pending supersession scan failed") from exc
