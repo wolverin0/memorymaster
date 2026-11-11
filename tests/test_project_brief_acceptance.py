@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import io
 import json
+import os
 from pathlib import Path
 import runpy
 import shutil
@@ -309,6 +310,9 @@ def one_card_per_file_ledger(root: Path, repo: str, count: int) -> None:
         (root / f"T-{n:04d}.json").write_text(json.dumps({
             "id": f"T-{n:04d}", "repo": repo, "state": state, "visibility": "public", "version": "1",
             "title": f"card {n}", "updated_at": stamp(n % 3)}))
+        if state == "done":  # old closed cards are skipped by selection, like the live ledger's history
+            old = time.time() - 100 * 86_400
+            os.utime(root / f"T-{n:04d}.json", (old, old))
 
 
 def test_validation_reads_only_the_published_cards_of_a_big_ledger(world, monkeypatch):
