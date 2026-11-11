@@ -772,7 +772,9 @@ class DreamWorker:
         self.ledger.mark_retryable(capture_id, run_id, detail, error_count=errors)
 
     def _consolidation_inputs(self, run_id: str, rows: list[dict[str, Any]], summary: dict[str, Any]):
-        from memorymaster.dreaming.source_review import REVIEW_VERSION, bind_source
+        from memorymaster.dreaming.source_review import (
+            REVIEW_VERSION, bind_source, sanitized_messages,
+        )
 
         # Pending work may reuse extraction, never a pre-selection approval.
         rows = [{**row, "decisions": None} if any(
@@ -789,10 +791,13 @@ class DreamWorker:
                 summary["consolidated"] += 1
                 continue
             payloads = row["released"] if "released" in row else self._triage(row, summary)
+            safe_messages = sanitized_messages(row) if payloads else None  # once per capture, not per candidate (T-2123)
             for payload in payloads:
+                self._hold_lease()
                 candidate = DreamCandidate(**held.candidate_fields(payload))
                 effective_scope = "personal" if candidate.scope_class == "personal" else str(row["scope"])
-                groups.setdefault(effective_scope, []).append((row, bind_source(candidate, row)))
+                groups.setdefault(effective_scope, []).append(
+                    (row, bind_source(candidate, row, safe_messages=safe_messages)))
         return rows, groups
 
     @staticmethod

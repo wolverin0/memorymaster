@@ -83,13 +83,19 @@ def main(event: str) -> int:
             os.chdir(data["cwd"])
         captured = io.StringIO()
         original_stdin = sys.stdin
+        shared: dict = {}
+        confirm = None
+        try:
+            from memorymaster.recall.delivery import confirm_turn as confirm
+        except ImportError:  # a package older than this template: no delivery receipts
+            pass
         try:
             sys.stdin = io.StringIO(json.dumps(data))
             with redirect_stdout(captured), redirect_stderr(io.StringIO()):
                 try:
                     # The shared hook's stdout is captured here, not delivered.
                     # Only this adapter records the final, capped Codex output.
-                    runpy.run_path(
+                    shared = runpy.run_path(
                         str(Path(__file__).with_name(HOOKS[event])), run_name="__main__",
                         init_globals={"MEMORYMASTER_DEFER_HOOK_EVENT": True,
                                       "MEMORYMASTER_RECALL_ADAPTER": "codex"},
@@ -99,15 +105,32 @@ def main(event: str) -> int:
                         return 0
         finally:
             sys.stdin = original_stdin
-        result = json.loads(captured.getvalue())
-        context = result["hookSpecificOutput"]["additionalContext"]
-        if not isinstance(context, str) or not context.strip():
-            return 0
-        context = fit_context(context)
-        sys.stdout.write(json.dumps({"hookSpecificOutput": {
-            "hookEventName": event, "additionalContext": context,
-        }}))
-        sys.stdout.flush()
+        # T-2275: the shared hook only staged the claim ids; they are "seen" and counted once THIS write
+        # succeeded, and only the ids that survive the byte cut.
+        turn_data = shared.get("data") if isinstance(shared.get("data"), dict) else data  # carries the turn id
+        confirmable = confirm is not None and event == "UserPromptSubmit" and shared.get("via") in ("shared", "local")
+        emitted, failure = "", shared.get("delivery_failure") or "not_emitted"
+        try:
+            result = json.loads(captured.getvalue())
+            context = result["hookSpecificOutput"]["additionalContext"]
+            if not isinstance(context, str) or not context.strip():
+                return 0
+            context = fit_context(context)
+            failure = "write_failure"
+            sys.stdout.write(json.dumps({"hookSpecificOutput": {
+                "hookEventName": event, "additionalContext": context,
+            }}))
+            sys.stdout.flush()
+            emitted = context
+            if confirmable and shared.get("delivered_block"):
+                # the shared hook left the repeat fingerprint to this write: a failed write retries at once
+                from memorymaster.recall.delivery import record_delivered
+
+                record_delivered(turn_data, shared["delivered_block"])
+        finally:
+            if confirmable:
+                confirm(turn_data, "codex", emitted=emitted, query=data.get("prompt", ""), failure=failure,
+                        drop_reason="adapter_truncation", db_path=shared.get("DB_PATH") or "")
         try:
             from memorymaster.surfaces.hook_events import append_hook_event
 

@@ -2368,12 +2368,62 @@ def _recall_impl(
 def _session_seen(hook_data: dict | None) -> frozenset[int]:
     """Claim ids this session already received from the prompt hook (T-1351)."""
     session = hook_policy.session_id_of(hook_data)
-    return hook_policy.seen_ids(session) if session else frozenset()
+    if not session:
+        return frozenset()
+    # The adapter also sends the ids ITS state dir holds (T-2275): the staged turn and the seen set are
+    # confirmed hook-side, so a server resolving another state dir must not re-inject them.
+    sent = hook_data.get("seen_ids")
+    # bounded and typed: client input (a bool is an int in Python, and is not a claim id)
+    extra = (frozenset(i for i in sent[-hook_policy.SEEN_MAX_IDS:] if type(i) is int)
+             if isinstance(sent, list) else frozenset())
+    return hook_policy.seen_ids(session) | extra
 
 
 def _stage_ms(started: float) -> float:
     """Milliseconds since ``started`` (a ``perf_counter`` reading), for the stall probes (T-1648)."""
     return round((time.perf_counter() - started) * 1000.0, 1)
+
+
+RECEIPT_SELECTED_MAX = 12  # ids a delivery receipt lists as "selected"; a receipt stays one compact line
+
+
+def _claim_ids(rows: list[dict]) -> list[int]:
+    return [cid for row in rows if isinstance(cid := getattr(row.get("claim"), "id", None), int)]
+
+
+def _omission_reasons(ranked: list[dict], rendered_rows: list[dict], limit: int | None) -> dict[int, str]:
+    """Why each ranked row was not packed, derived from the packed set so ``_render_recall_lines`` keeps its
+    signature (``scripts/eval_recall_journey.py`` wraps it): packing is in order, so a row met after ``limit``
+    packed ones hit the slot cap, any earlier one did not fit the byte budget."""
+    packed = set(_claim_ids(rendered_rows))
+    reasons: dict[int, str] = {}
+    packed_so_far = 0
+    for row in ranked:
+        claim = row.get("claim")
+        cid = getattr(claim, "id", None)
+        if not hasattr(claim, "text") or not isinstance(cid, int):
+            continue
+        if cid in packed:
+            packed_so_far += 1
+        else:
+            reasons[cid] = "slot_cap" if limit is not None and packed_so_far >= limit else "byte_budget"
+    return reasons
+
+
+def _stage_turn(hook_data: dict, svc, offered: list[int], seen: frozenset[int], omitted: dict[int, str],
+                rendered_rows: list[dict]) -> None:
+    """Park the turn's ids and omission reasons for ``recall.delivery.confirm_turn`` (ids only, never text)."""
+    packed = [[row["claim"].id, getattr(row["claim"], "human_id", None)] for row in rendered_rows]
+    packed_ids = {cid for cid, _ in packed}
+    selected = offered[:RECEIPT_SELECTED_MAX]
+    selected += [cid for cid in packed_ids if cid not in selected]  # a packed id is always a selected one
+    reasons = {str(cid): "session_seen" if cid in seen else omitted.get(cid, "jev_surface")
+               for cid in selected if cid not in packed_ids}
+    turn_id = hook_policy.turn_id_of(hook_data)
+    hook_policy.stage_turn(hook_data["session_id"], turn_id, {
+        "turn": turn_id, "db_path": str(getattr(svc.store, "db_path", "") or ""),
+        "ranked_n": len(offered), "selected": selected, "packed": packed, "omitted": reasons,
+    })
 
 
 def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_data, rendered_ids, stages=None):
@@ -2389,6 +2439,8 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
     ranked = hook_lexical.apply_truth_eligibility(ranked, svc)
     withheld = len(ranked) < pool_size  # a disputed claim was withheld: a correction is in play
     limit = None
+    offered = _claim_ids(ranked)  # the receipt's first stage: what ranking selected
+    seen: frozenset[int] = frozenset()
     if hook_data is not None:
         stage_start = time.perf_counter()
         seen = _session_seen(hook_data)
@@ -2418,16 +2470,25 @@ def _finish_recall(query, ranked, *, budget, svc, phase_ms, rank_start, hook_dat
     if rendered_ids is not None:
         rendered_ids.extend(injected)
     stage_start = time.perf_counter()
-    if hook_data is not None and (session := hook_policy.session_id_of(hook_data)):
-        hook_policy.remember(session, injected)
-    if stages is not None:
-        stages["remember_ms"] = _stage_ms(stage_start)
+    if hook_policy.defers_delivery(hook_data):
+        # T-2275: the adapter marks the ids seen and records their accesses once the block is really
+        # emitted (recall.delivery.confirm_turn); a failed write or a truncation leaves the claim retryable.
+        if rendered_rows:
+            svc._emit_recall_telemetry()  # a query was served; the per-claim access waits for the emission
+        _stage_turn(hook_data, svc, offered, seen, _omission_reasons(ranked, rendered_rows, limit), rendered_rows)
+        if stages is not None:
+            stages["remember_ms"] = _stage_ms(stage_start)
+    else:
+        if hook_data is not None and (session := hook_policy.session_id_of(hook_data)):
+            hook_policy.remember(session, injected)
+        if stages is not None:
+            stages["remember_ms"] = _stage_ms(stage_start)
 
-    stage_start = time.perf_counter()
-    if rendered_rows:
-        svc._record_accesses(rendered_rows, query_text=query)
-    if stages is not None:
-        stages["access_ms"] = _stage_ms(stage_start)
+        stage_start = time.perf_counter()
+        if rendered_rows:
+            svc._record_accesses(rendered_rows, query_text=query)
+        if stages is not None:
+            stages["access_ms"] = _stage_ms(stage_start)
 
     # Close the rank_and_build timer right before we emit output so the
     # measurement covers _relevance/RRF + the budget-trimming loop.

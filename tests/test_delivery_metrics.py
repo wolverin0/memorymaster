@@ -184,6 +184,41 @@ def test_collect_end_to_end_is_read_only(tmp_path):
     json.dumps(report)
 
 
+def receipt_line(hours_ago: float, selected: str, emitted: str, omitted: str) -> str:
+    return (f"[{iso(hours_ago)}] hook=recall event=receipt turn=ab12 adapter=claude session=c0ffee "
+            f"ranked=3 selected={selected} packed={emitted} emitted={emitted} omitted={omitted}\n")
+
+
+def test_receipt_explanation_counts_only_turns_with_omissions(tmp_path):
+    log = tmp_path / "hook.log"
+    log.write_text(
+        receipt_line(1, "1,2,3", "1,2", "3:slot_cap")            # omission, explained
+        + receipt_line(2, "4,5", "4", "5:adapter_truncation")      # omission, explained
+        + receipt_line(3, "6,7", "6", "-")                         # omission WITHOUT a reason
+        + receipt_line(4, "8", "8", "-")                           # nothing omitted: not an omission turn
+        + receipt_line(24 * 30, "9", "-", "9:write_failure")       # outside the window
+        + f"[{iso(1)}] hook=recall event=done session=x delivered=True\n", encoding="utf-8")
+    result = dm.receipt_explanation(log, SINCE)
+    assert (result["turns_with_receipt"], result["turns_with_omissions"]) == (4, 3)
+    assert result["turns_omissions_fully_explained"] == 2 and result["share_omissions_explained"] == 0.6667
+    assert result["omission_reasons"] == {"slot_cap": 1, "adapter_truncation": 1}
+
+
+def test_receipt_explanation_is_null_with_a_reason_when_there_is_nothing(tmp_path):
+    assert "not found" in dm.receipt_explanation(tmp_path / "none.log", SINCE)["reason"]
+    log = tmp_path / "hook.log"
+    log.write_text(f"[{iso(1)}] hook=recall event=done session=x\n", encoding="utf-8")
+    assert "no delivery receipts" in dm.receipt_explanation(log, SINCE)["reason"]
+
+
+def test_collect_reports_delivery_receipts(tmp_path):
+    hook_log = tmp_path / ".memorymaster" / "hook_state" / "hook.log"
+    hook_log.parent.mkdir(parents=True)
+    hook_log.write_text(receipt_line(1, "1,2", "1", "2:slot_cap"), encoding="utf-8")
+    report = dm.collect(tmp_path / "no.db", tmp_path / "no2.db", tmp_path, tmp_path / "x.jsonl", 7, NOW)
+    assert report["delivery_receipts"]["share_omissions_explained"] == 1.0
+
+
 def test_missing_database_becomes_null_section(tmp_path):
     report = dm.collect(tmp_path / "no.db", tmp_path / "no2.db", tmp_path, tmp_path / "x.jsonl", 7, NOW)
     assert report["recall_returns_by_origin"]["value"] is None

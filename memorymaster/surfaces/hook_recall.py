@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 
 from memorymaster.core.text_safety import fit_brief, sanitize_text
-from memorymaster.recall.delivery import is_automated, recall_block
+from memorymaster.recall.delivery import confirm_turn, defer_payload, is_automated, recall_block
 from memorymaster.recall.hook_policy import is_trivial_prompt
 from memorymaster.recall.machine_traffic import machine_skip
 from memorymaster.recall.recall_format import active_task_text, apply_format, format_mode
@@ -61,13 +61,19 @@ def main(argv: list[str] | None = None) -> int:
         data = {"prompt": prompt, "cwd": cwd,
                 "session_id": f"{args.cli}:{data.get('session_id') or ''}"}
         db = os.environ.get("MEMORYMASTER_DEFAULT_DB") or str(Path(__file__).resolve().parents[2] / "memorymaster.db")
+        data = defer_payload(data)
         context, _via = hook_recall(prompt, data, db_path=db, timeout=2.5)
         mode = format_mode()
         if context and mode != "current":
             context = apply_format(context, prompt, active_task_text(cwd), mode)
-        if context:
-            sys.stdout.write(recall_block(context))
-            sys.stdout.flush()
+        block, failure = (recall_block(context) if context else ""), "not_emitted"
+        try:
+            if block:
+                sys.stdout.write(block)
+                sys.stdout.flush()
+        except Exception:  # the plugin is gone: the claims stay retryable (T-2275)
+            block, failure = "", "write_failure"
+        confirm_turn(data, args.cli, emitted=block, query=prompt, failure=failure, db_path=db)
     except Exception:
         pass
     return 0

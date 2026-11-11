@@ -71,13 +71,31 @@ def _source_kind(message: dict | None) -> str:
     return str(message.get("role", "unknown"))
 
 
-def bind_source(candidate: DreamCandidate, row: dict, *, max_chars: int = MAX_SOURCE_CHARS) -> SourceCandidate:
-    messages = [{key: message.get(key, "") for key in ("message_id", "role", "text", "timestamp")}
-                for message in row.get("messages", [])]
+def _context_messages(row: dict) -> list[dict]:
+    return [{key: message.get(key, "") for key in ("message_id", "role", "text", "timestamp")}
+            for message in row.get("messages", [])]
+
+
+def sanitized_messages(row: dict) -> list[dict]:
+    """Sanitize a capture's messages once (T-2123); pass the result to every ``bind_source`` of that row.
+
+    The secret-regex pass is the expensive part and is independent of the candidate, so a capture with
+    many candidates must not repeat it. The result is read-only: ``bind_source`` copies the list.
+    """
+    return safe_context(_context_messages(row))
+
+
+def bind_source(candidate: DreamCandidate, row: dict, *, max_chars: int = MAX_SOURCE_CHARS,
+                safe_messages: list[dict] | None = None) -> SourceCandidate:
+    """``safe_messages`` is ``sanitized_messages(row)`` computed once by a caller binding many candidates."""
+    messages = _context_messages(row)
     context = {"capture_scope": row["scope"], "messages": messages}
     source_hash = _hash({"candidate": candidate.to_dict(), "context": context,
                          "provider": row.get("provider"), "session": row.get("session_hash")})
-    safe = safe_context(context)
+    if safe_messages is None:
+        safe = safe_context(context)
+    else:
+        safe = {"capture_scope": safe_context(row["scope"]), "messages": list(safe_messages)}
     complete = bool(messages)
     if len(json.dumps(safe, ensure_ascii=False)) > max_chars:
         evidence_index = next((i for i, m in enumerate(messages)

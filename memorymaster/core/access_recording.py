@@ -24,10 +24,13 @@ The write stays best-effort; recall must not break because telemetry failed.
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import logging
 from typing import Any
 
 from memorymaster.core import observability
+from memorymaster.core.security import sanitize_persisted_text
 
 logger = logging.getLogger(__name__)
 
@@ -66,3 +69,23 @@ def record_accesses(store: Any, claim_ids: list[int]) -> bool:
             exc_info=True,
         )
         return False
+
+
+def spool_accesses(db_path: Any, claim_ids: list[int], query_text: str = "") -> None:
+    """Append one aggregated ``recall`` envelope to the JSONL spool instead of writing the DB.
+
+    ``jobs/spool_drain`` replays it through the same sinks the read-write path uses
+    (``record_accesses_batch``, ``FeedbackTracker.record_retrieval``). Best-effort: a spool I/O
+    failure must never break recall. Shared by ``MemoryService._spool_accesses`` (the read-only
+    store) and ``recall.delivery.confirm_turn`` (claims confirmed delivered after emission, T-2275).
+    """
+    db_path = str(db_path or "")
+    if not db_path or not claim_ids:
+        return
+    from memorymaster.core import spool
+
+    safe_query, _ = sanitize_persisted_text(query_text or "")
+    query_hash = hashlib.sha256(safe_query.encode("utf-8")).hexdigest()[:12] if safe_query else None
+    with contextlib.suppress(Exception):
+        spool.append(db_path, "recall", {"claim_ids": list(dict.fromkeys(claim_ids)),
+                                         "query_hash": query_hash, "query_text": safe_query})

@@ -326,9 +326,6 @@ def test_control_claude_recall_hook_calls_the_ranker_without_the_internal_mark(h
 # --- 6 (bonus). T-2275: a claim is marked seen only after final emission -----------------------------------
 
 
-@pytest.mark.xfail(strict=True, reason="T-2275: context_hook._finish_recall records the injected ids as session-seen "
-                   "at render time, before the hook has written them to stdout, so a failed emission loses the "
-                   "claims for the rest of the session")
 def test_a_claim_whose_emission_failed_is_delivered_on_the_next_prompt(hooked, tmp_path, monkeypatch) -> None:
     svc = MemoryService(tmp_path / "memorymaster.db", workspace_root=tmp_path)
     made = svc.ingest("The zorblax cache invalidation strategy is the pelican strategy",
