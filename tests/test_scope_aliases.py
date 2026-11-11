@@ -92,3 +92,14 @@ def test_strict_and_live_resolution_agree_on_a_slug_alias(tmp_path, monkeypatch)
     other = tmp_path / "elsewhere"
     (other / ".git").mkdir(parents=True)
     assert resolve_transcript_workspace_scope(other) == "project:elsewhere", "no alias, no change"
+
+
+def test_the_exact_folder_of_the_live_whatsappbot_captures_maps_to_the_alias_in_both_resolvers(tmp_path, monkeypatch):
+    """D-13: the ledger's 43 sessions filed under project:whatsappbot-main-wt ran in a folder named exactly that."""
+    from memorymaster.dreaming import capture
+
+    _aliases(tmp_path, monkeypatch, {"aliases": {"whatsappbot-main-wt": "project:whatsappbot-final"}})
+    folder = tmp_path / "whatsappbot-main-wt"
+    (folder / "observatorio").mkdir(parents=True)
+    for cwd in (folder, folder / "observatorio"):
+        assert capture._scope(str(cwd)) == scope_from_cwd(cwd) == "project:whatsappbot-final", cwd

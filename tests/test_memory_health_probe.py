@@ -72,7 +72,7 @@ class World:
             conn.execute("INSERT INTO files VALUES ('a', ?)", (int((NOW - timedelta(hours=1)).timestamp() * 1e9),))
         with edit(self.capture) as conn:
             conn.execute("CREATE TABLE dream_captures (id INTEGER PRIMARY KEY, state TEXT, captured_at TEXT, "
-                         "last_activity_at TEXT, turn_count INTEGER)")
+                         "last_activity_at TEXT, turn_count INTEGER, updated_at TEXT)")
             conn.execute("INSERT INTO dream_captures (state, captured_at, last_activity_at, turn_count) "
                          "VALUES ('captured', ?, ?, 3)", (iso(2), iso(2)))
             conn.execute("CREATE TABLE dream_runs (run_id TEXT PRIMARY KEY, status TEXT NOT NULL, dry_run INTEGER NOT NULL, "
@@ -761,7 +761,7 @@ def test_dreaming_runs_are_red_above_half_failed_and_green_at_or_below(world):
     assert runs(world)["status"] == probe.PASS
     add_runs(world, ["failed", "failed"])  # 4 of 7
     check = runs(world)
-    assert check["status"] == probe.FAIL and check["data"] == {"failed": 4, "total": 7, "failed_share": 0.57}, check
+    assert check["status"] == probe.FAIL and check["data"] == {"failed": 4, "abandoned": 0, "total": 7, "failed_share": 0.57}, check
 
 
 def test_dreaming_runs_ignore_running_dry_and_out_of_window_runs(world):
@@ -771,6 +771,68 @@ def test_dreaming_runs_ignore_running_dry_and_out_of_window_runs(world):
     add_runs(world, ["ok"])
     check = runs(world)
     assert check["status"] == probe.PASS and check["data"]["total"] == 1, check
+
+
+def test_abandoned_runs_count_as_not_ok_and_are_reported_apart_from_failed(world):
+    """The scheduler's time limit kills Beat runs and leaves them 'abandoned': 34, 56, 65 a day while nothing drained."""
+    add_runs(world, ["ok", "abandoned", "abandoned", "failed", "partial"])
+    check = runs(world)
+    assert check["status"] == probe.FAIL and check["data"]["failed"] == 1 and check["data"]["abandoned"] == 2, check
+    assert "1 failed and 2 abandoned of 5" in check["detail"]
+
+
+def test_under_the_minimum_sample_only_the_newest_run_is_judged_against_the_schedule(world):
+    add_runs(world, ["failed"], hours_ago=0.5)  # a lone failure inside the schedule: no verdict yet
+    assert runs(world)["status"] == probe.PASS
+    with edit(world.capture) as conn:
+        conn.execute("UPDATE dream_runs SET started_at=?", (iso(3),))  # newest run not ok and older than the schedule
+    assert runs(world)["status"] == probe.FAIL
+    add_runs(world, ["ok"], hours_ago=0.1)  # a later healthy run clears it
+    assert runs(world)["status"] == probe.PASS
+    add_runs(world, ["failed"] * 2, hours_ago=2)  # three failures of four runs: the share rule applies from 4 runs
+    assert runs(world)["status"] == probe.FAIL and runs(world)["data"]["total"] == 4
+
+
+def drain(world, **cfg):
+    (check,) = probe.check_dream_drain(world.capture, NOW, {**CFG, **cfg})
+    return check
+
+
+def set_capture(world, state, hours_ago, turns=3):
+    with edit(world.capture) as conn:
+        conn.execute("INSERT INTO dream_captures (state, captured_at, last_activity_at, turn_count, updated_at) VALUES (?,?,?,?,?)",
+                     (state, iso(hours_ago), iso(hours_ago), turns, iso(hours_ago)))
+
+
+def test_drain_is_red_when_work_waits_and_nothing_reached_a_terminal_state_in_the_window(world):
+    set_capture(world, "applied", 20)  # an exit, but older than the 12 h window
+    check = drain(world)  # the fixture already holds one waiting capture
+    assert check["status"] == probe.FAIL and check["data"] == {"exited": 0, "waiting_now": 1}, check
+
+
+def test_drain_is_green_with_an_exit_in_the_window_or_with_nothing_waiting(world):
+    for state in ("applied", "skipped", "quarantined"):
+        set_capture(world, state, 3)
+    assert drain(world)["status"] == probe.PASS and drain(world)["data"]["exited"] == 3
+    with edit(world.capture) as conn:
+        conn.execute("DELETE FROM dream_captures WHERE state IN ('captured','applied','skipped','quarantined')")
+    set_capture(world, "applied", 30)
+    assert drain(world)["status"] == probe.PASS, "an empty queue is not a stall"
+
+
+def test_drain_ignores_captures_below_the_scheduling_threshold(world):
+    set_capture(world, "skipped", 1, turns=1)  # the below-two-turns sweep is not throughput
+    set_capture(world, "captured", 30, turns=1)
+    assert drain(world)["status"] == probe.FAIL  # the fixture's real waiting capture still has no exit
+
+
+def test_the_probe_names_the_stall_when_runs_are_abandoned_and_nothing_drains(world, hooks):
+    canaries = world.tmp / "c.json"
+    canaries.write_text(json.dumps({"canaries": []}), encoding="utf-8")
+    add_runs(world, ["abandoned"] * 6)
+    report = probe.run_probe(world.db, workspace=world.tmp, canaries_path=canaries, transcripts_db=world.transcripts,
+                             capture_db=world.capture, now=NOW, cfg=CFG, recallers={})
+    assert {"dreaming.runs", "dreaming.drain"} <= set(report["failures"]), report["failures"]
 
 
 def test_no_dreaming_runs_at_all_is_not_a_failure_here(world):

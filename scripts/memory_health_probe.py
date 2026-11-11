@@ -31,7 +31,7 @@ import sys
 import tempfile
 import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -63,6 +63,9 @@ CONFIG: dict = {
     "services": {"mcp_http": "http://127.0.0.1:8766/healthz"},
     "service_timeout_s": 4.0,
     "dream_runs_window_h": 48,  # red when more than half of the finished dreaming runs in this window failed
+    "dream_runs_min_sample": 4,  # fewer runs than this in the window: judge only the newest run
+    "dream_schedule_h": 1,  # the beat ticks every 5 min; an unhealthy newest run older than this means nothing ran since
+    "dream_drain_window_h": 12,  # red when captures wait and none reached applied/skipped/quarantined in this window
     "steward_max_age_h": 12,  # the steward is scheduled every 6 h: red after two missed cycles
     "alert_reminder_days": 7,  # a check that stays red is re-announced at most this often
     "alert_worse_factor": 1.5,  # a red check is "materially worse" at this multiple of its level at the last alert
@@ -421,15 +424,40 @@ def check_hook_drift(dirs: dict[str, Path], allowlist_path: Path | None) -> list
 
 
 def check_dream_runs(capture_db: Path, now: datetime, cfg: dict) -> list[dict]:
-    """Red when more than half of the finished (non-dry) dreaming runs in the window failed."""
+    """Finished (non-dry) dreaming runs in the window; ``failed`` and ``abandoned`` (killed by the scheduler's time
+    limit) both count as not ok. With enough runs, red above half; with fewer, red when the newest one is not ok
+    and older than the schedule."""
     cutoff = now.timestamp() - cfg["dream_runs_window_h"] * 3600
     with contextlib.closing(ro_connect(capture_db)) as conn:
         rows = conn.execute("SELECT status, started_at FROM dream_runs WHERE dry_run=0 ORDER BY started_at DESC LIMIT 500").fetchall()
-    finished = [status for status, started in rows if status != "running" and (parse_ts(started) or now).timestamp() >= cutoff]
-    failed = finished.count("failed")
-    return [_result("dreaming.runs", failed * 2 <= len(finished),
-                    f"{failed} of {len(finished)} dreaming runs failed in the last {cfg['dream_runs_window_h']}h (red above half)",
-                    failed=failed, total=len(finished), failed_share=round(failed / len(finished), 2) if finished else 0.0)]
+    finished = [(status, parse_ts(started) or now) for status, started in rows
+                if status != "running" and (parse_ts(started) or now).timestamp() >= cutoff]
+    statuses = [status for status, _ in finished]
+    failed, abandoned = statuses.count("failed"), statuses.count("abandoned")
+    bad = failed + abandoned
+    if len(finished) >= cfg["dream_runs_min_sample"]:
+        ok, rule = bad * 2 <= len(finished), "red above half"
+    else:
+        newest_status, newest_at = finished[0] if finished else ("ok", now)
+        ok = newest_status not in ("failed", "abandoned") or (now - newest_at).total_seconds() <= cfg["dream_schedule_h"] * 3600
+        rule = f"under {cfg['dream_runs_min_sample']} runs: red when the newest is not ok and older than {cfg['dream_schedule_h']}h"
+    return [_result("dreaming.runs", ok,
+                    f"{failed} failed and {abandoned} abandoned of {len(finished)} dreaming runs in the last {cfg['dream_runs_window_h']}h ({rule})",
+                    failed=failed, abandoned=abandoned, total=len(finished),
+                    failed_share=round(bad / len(finished), 2) if finished else 0.0)]
+
+
+def check_dream_drain(capture_db: Path, now: datetime, cfg: dict) -> list[dict]:
+    """Throughput, not backlog size (``ingest.capture_queue`` owns that): red when work is waiting and no capture
+    reached a terminal state (applied / skipped / quarantined) in the window."""
+    since = (now - timedelta(hours=cfg["dream_drain_window_h"])).isoformat()
+    with contextlib.closing(ro_connect(capture_db)) as conn:
+        waiting = conn.execute("SELECT COUNT(*) FROM dream_captures WHERE state IN ('captured','retryable') AND turn_count >= 2").fetchone()[0]
+        exited = conn.execute("SELECT COUNT(*) FROM dream_captures WHERE state IN ('applied','skipped','quarantined') "
+                              "AND turn_count >= 2 AND updated_at >= ?", (since,)).fetchone()[0]
+    return [_result("dreaming.drain", not (waiting and not exited),
+                    f"{exited} captures reached a terminal state in the last {cfg['dream_drain_window_h']}h with {waiting} waiting",
+                    exited=exited, waiting_now=waiting)]
 
 
 def check_steward_recency(log: Path, now: datetime, cfg: dict) -> list[dict]:
@@ -465,6 +493,7 @@ def run_probe(db: Path, *, workspace: Path, canaries_path: Path, transcripts_db:
     canaries = json.loads(Path(canaries_path).read_text(encoding="utf-8"))["canaries"]
     checks = _guard("ingest", check_ingest, db, transcripts_db, capture_db, now, cfg)
     checks += _guard("dreaming.runs", check_dream_runs, capture_db, now, cfg)
+    checks += _guard("dreaming.drain", check_dream_drain, capture_db, now, cfg)
     if steward_log is not None:
         checks += _guard("steward.recency", check_steward_recency, steward_log, now, cfg)
     if hook_dirs is not None:  # opt-in: a caller that passes no directories never reads the machine's real hooks
@@ -556,7 +585,7 @@ def send_orca(run_id: str, subject: str, body: str) -> None:
 
 
 # Severity of a red check, for "materially worse": the first of these numbers a check reports.
-SEVERITY_KEYS = ("waiting", "drifted", "failed_share", "age_h")
+SEVERITY_KEYS = ("waiting", "waiting_now", "drifted", "failed_share", "age_h")
 
 
 def _severity(check: dict | None) -> float | None:
