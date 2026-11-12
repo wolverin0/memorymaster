@@ -45,6 +45,22 @@ POSITIVES = {
     ),
 }
 
+# Wordings that an over-eager "rule cue" would wrongly excuse (detector-level only).
+EXTRA_POSITIVES = {
+    "total_before_balance": (
+        "Juan Perez", "pending_balance", "12,500.00 ARS",
+        "Juan Perez has an active internet service with a total pending balance of 12,500.00 ARS.",
+    ),
+    "spanish_total_debt": (
+        "Juan Perez", None, None, "Juan Perez tiene una deuda total de $12.500 con el proveedor.",
+    ),
+    "arrow_form": ("Juan Perez", "saldo pendiente", None, "Juan Perez -> saldo pendiente $12.500"),
+    "bare_debe_with_amount": (
+        "Juan Perez", None, None, "Juan Perez debe $12.500 del servicio de fibra.",
+    ),
+    "owes_over": ("Juan Perez", None, None, "Juan Perez owes over $12,500 on the fiber plan."),
+}
+
 # Real false-positive shapes from the live corpus, described abstractly. All carry a subject
 # (a capitalised one where the live shape had it: that is what makes them hard).
 # (subject, predicate, object_value, text)
@@ -138,6 +154,15 @@ def _positive_claim(svc, name):
 @pytest.mark.parametrize("name", sorted(POSITIVES))
 def test_detector_flags_customer_balances(name):
     assert _states(*POSITIVES[name]) is True
+
+
+@pytest.mark.parametrize("name", sorted(EXTRA_POSITIVES))
+def test_detector_flags_wordings_a_loose_rule_cue_would_excuse(name):
+    assert _states(*EXTRA_POSITIVES[name]) is True
+
+
+def test_detector_does_not_flag_modal_debe():
+    assert _states("Juan Perez", None, None, "Juan Perez debe 3 veces revisar los $1.000 del plan.") is False
 
 
 @pytest.mark.parametrize("name", sorted(NEGATIVES))
@@ -252,6 +277,50 @@ def test_llm_steward_cas_judges_the_stored_triple_the_llm_wrote(svc):
                         object_value="12,500.00 ARS") is False
 
 
+def _steward_run(svc, source_text, extractions):
+    original = llm_steward.extract_claim
+
+    def fake_extract(provider, api_key, model, claim_id, text, base_url="", key_rotator=None,
+                     use_llm_provider=False):
+        return llm_steward.ExtractionResult(
+            claim_id=claim_id, original_text=text, extractions=extractions, action="confirm", raw_response="")
+
+    llm_steward.extract_claim = fake_extract
+    try:
+        cid = _claim(svc, source_text)
+        stats = llm_steward.run_steward(svc.store.db_path, api_key="x", provider="gemini", limit=10,
+                                        delay=0.0, auto_validate=False)
+    finally:
+        llm_steward.extract_claim = original
+    return cid, stats
+
+
+def _subjects(svc):
+    return {c.subject for c in svc.list_claims(limit=50, include_archived=True)}
+
+
+def test_llm_steward_run_holds_a_first_extraction_that_states_a_balance(svc):
+    cid, stats = _steward_run(
+        svc, "Juan Perez has an active internet service with a pending balance of 12,500.00 ARS.",
+        [{"subject": "Juan Perez", "predicate": "pending_balance", "object_value": "12,500.00 ARS",
+          "confidence": 0.8}],
+    )
+    assert _status_of(svc, cid) == "candidate"
+    assert stats["held_by_customer_balance"] == 1 and stats["confirmed"] == 0
+
+
+def test_llm_steward_run_does_not_insert_a_balance_extra_extraction_as_confirmed(svc):
+    cid, stats = _steward_run(
+        svc, "Juan Perez has a pending balance of 12,500.00 ARS and the release deadline is 2026-04-01.",
+        [{"subject": "rel-b", "predicate": "deadline", "object_value": "2026-04-01", "confidence": 0.8},
+         {"subject": "Juan Perez", "predicate": "pending_balance", "object_value": "12,500.00 ARS",
+          "confidence": 0.8}],
+    )
+    assert _status_of(svc, cid) == "confirmed", "the harmless first extraction still confirms"
+    assert "Juan Perez" not in _subjects(svc)
+    assert stats["held_by_customer_balance"] == 1
+
+
 # --- curation drain -----------------------------------------------------------------------------
 
 def test_a_customer_balance_conflict_winner_is_not_promoted_and_does_not_supersede_the_rival(svc):
@@ -267,9 +336,9 @@ def test_a_customer_balance_conflict_winner_is_not_promoted_and_does_not_superse
 
     result = curation_drain.drain_conflicts(svc, apply=True)
 
-    assert result["held_by_customer_balance"] == 1 and result["resolved_won"] == 0
     assert _status_of(svc, winner) == "conflicted"
     assert _status_of(svc, rival) == "confirmed"
+    assert result["held_by_customer_balance"] == 1 and result["resolved_won"] == 0
 
 
 # --- atlas extractor (source) ----------------------------------------------------------------------

@@ -80,7 +80,9 @@ def structure_blocks_auto_promotion(subject: object, predicate: object) -> bool:
 _WINDOW = 100  # chars each side of the balance term (about one sentence)
 
 _BALANCE_TERM = re.compile(
-    r"\b(?:saldo|balance|deuda|adeud\w*|debt|outstanding|owes?|owed|impag\w+|unpaid|overdue)\b", re.I
+    r"\b(?:saldo|balance|deuda|adeud\w*|debt|outstanding|owes?|owed|impag\w+|unpaid|overdue)\b"
+    r"|\bdebe\b(?=\s+(?:[$€]|(?:ARS|USD|EUR)\b))",  # bare "debe" is a common modal verb
+    re.I,
 )
 _AMOUNT = re.compile(
     r"(?:(?<![A-Za-z])(?:ARS|USD|EUR|U\$S|US\$|AR\$)|[$€])\s*\d"
@@ -93,11 +95,19 @@ _ID_MARKER = re.compile(
     r"(?:(?:n[°º]?\.?|nro\.?|num\w*|number|id|c[oó]digo|code)\b[\s:#.]*)?\d+",
     re.I,
 )
-# A comparison, condition or aggregate is a rule or a total, not one customer's account.
+# A comparison, condition or aggregate is a rule or a total, not one customer's account. Each cue is
+# anchored to the amount or the balance term, so "a total pending balance of ..." is not one.
 # Only weighs against a party known by NAME; a client-id marker is stronger evidence.
+_CUR = r"(?:ARS|USD|EUR|U\$S|US\$|AR\$|[$€])?"
 _RULE_CUE = re.compile(
-    r"[<>≤≥]|\b(?:under|below|above|less than|more than|at least|threshold|minimum|average"
-    r"|total|prepa\w+|promedio|umbral|menos de|al menos|m[ií]nimo|en total)\b",
+    # comparator directly before the amount: "under $1,000", "> $0"
+    r"(?:[<>≤≥]|\b(?:under|below|above|less than|more than|at least|menos de|al menos)\b)"
+    r"\s*=?\s*" + _CUR + r"\s*\d"
+    # qualifier just before the balance term: "average account balance", "prepay balance"
+    r"|\b(?:average|minimum|maximum|prepay|prepaid|prepago|promedio|m[ií]nim[oa]|threshold|umbral)\s+"
+    r"(?:[\w-]+\s+){0,2}(?:saldo|balance|deuda|debt)\b"
+    # a counted plural is an aggregate: "38 suspended clients owe ..."
+    r"|\b\d[\d.,]*\s+(?:[\w-]+\s+){0,2}(?:clients|customers|clientes|socios|users|usuarios|accounts|cuentas)\b",
     re.I,
 )
 _NAME_TOKEN = re.compile(r"[A-ZÁÉÍÓÚÑ][a-záéíóúñ'’.-]+")
