@@ -33,6 +33,8 @@ contexto AWS, OTP/PIN con palabra clave, CUIT/CUIL con dígito verificador váli
 Fuera de alcance: secretos partidos por espacios o saltos de línea, o en hex puro; palabra clave seguida de 9+ espacios o salto de línea antes del valor; `pin 8080` (puerto) y ids de 11 dígitos con dígito CUIT válido; contraseñas en minúsculas+dígitos sin símbolo ni comillas (`admin1234`) o con más de 256 caracteres; `/Users/Shared`, `C:/Users/Public` no se tratan como usuarios. Una huella SSH
 `SHA256:<43 b64>` es pública y no se redacta.
 
+Saldos transaccionales de clientes (T-2112): no los detiene este filtro (no son un secreto, no se redactan ni se rechazan en el ingest); `core/promotion_policy.states_customer_balance` impide que se confirmen solos y `atlas_llm_extractor` ni siquiera los ingiere. Cubre término de saldo/deuda + monto con moneda (o cero explícito) + cliente identificado (id `cliente 9001` o sujeto con nombre de persona) en una misma ventana; no cubre saldos en prosa sin id ni nombre, nombres sueltos en minúscula, ni montos sin símbolo de moneda. Los claims ya confirmados no se tocan.
+
 ## Where the filter applies
 
 The filter MUST run on:
