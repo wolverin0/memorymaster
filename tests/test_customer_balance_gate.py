@@ -256,7 +256,7 @@ def test_llm_steward_cas_judges_the_stored_triple_the_llm_wrote(svc):
 
 def test_a_customer_balance_conflict_winner_is_not_promoted_and_does_not_supersede_the_rival(svc):
     rival = _claim(svc, "the older confirmed fact with less confidence", subject="Juan Perez",
-                   predicate="pending_balance", object_value="10,000.00 ARS", confidence=0.3)
+                   predicate="pending_balance", object_value="12,500.00 ARS", confidence=0.3)
     transition_claim(svc.store, rival, "confirmed", reason="fixture", event_payload={"actor": "operator"})
     winner = _claim(svc, "Juan Perez has an active internet service with a pending balance of 12,500.00 ARS.",
                     subject="Juan Perez", predicate="pending_balance", object_value="12,500.00 ARS",

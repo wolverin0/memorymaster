@@ -32,6 +32,7 @@ from memorymaster.stores.claim_identity import content_fingerprint
 from memorymaster.core.promotion_policy import (
     auto_promotion_blocked,
     non_auto_promotable_sources,
+    states_customer_balance,
     structure_blocks_auto_promotion,
 )
 from memorymaster.core.security import sanitize_claim_input
@@ -520,8 +521,11 @@ def _confirm_candidate_cas(
     if is_dream_claim(conn, claim_id):
         return False
     # Backstop for the candidate query's source policy filter (T-1354).
-    row = conn.execute("SELECT source_agent FROM claims WHERE id = ?", (claim_id,)).fetchone()
+    row = conn.execute("SELECT source_agent, text FROM claims WHERE id = ?", (claim_id,)).fetchone()
     if row is not None and auto_promotion_blocked(row[0]):
+        return False
+    # T-2112: a customer balance is never confirmed automatically, judged on the stored triple + text.
+    if row is not None and states_customer_balance(subject, predicate, object_value, row[1]):
         return False
     # T-1591: judge the triple that will be STORED (the LLM rewrites it), not the
     # one the candidate arrived with.
@@ -703,6 +707,7 @@ def run_steward(
         "claims_extracted": 0,
         "claims_filtered_sensitive": 0,
         "egress_withheld": 0,
+        "held_by_customer_balance": 0,
         "provider": provider,
         "model": model,
         "key_count": key_rotator.key_count if key_rotator else 1,
@@ -858,6 +863,12 @@ def run_steward(
                         claim_id, ",".join(f_findings),
                     )
                     stats["claims_filtered_sensitive"] += 1
+                if states_customer_balance(f_subj, f_pred, f_obj, text):
+                    # T-2112: before the dup lookup, which would merge the amount into a confirmed row.
+                    # The candidate stays as it is (it is judged again next cycle: known limit).
+                    log.info("steward: held claim #%d, it states a customer balance", claim_id)
+                    stats["held_by_customer_balance"] += 1
+                    continue
                 if not dry_run:
                     # F-1 fix (mm-d53d, 2026-05-04): scope must match the source
                     # claim's scope, not the literal 'project' which never appears
@@ -913,6 +924,12 @@ def run_steward(
                                 "claim #%d [REDACTED findings=%s]",
                                 claim_id, ",".join(extra_findings),
                             )
+
+                        if states_customer_balance(subj, pred, obj_val, text):
+                            # T-2112: an extra extraction is inserted straight as confirmed.
+                            log.info("steward: dropped an extraction of claim #%d, it states a customer balance", claim_id)
+                            stats["held_by_customer_balance"] += 1
+                            continue
 
                         # F-1 fix (mm-d53d, 2026-05-04): same as above — scope
                         # is the source claim's scope, not the literal 'project'.

@@ -28,6 +28,7 @@ from memorymaster.bridges.atlas_claim_extractor import AtlasClaimExtractionResul
 from memorymaster.bridges.evidence_policy import is_governed_evidence_eligible
 from memorymaster.core.llm_provider import call_llm, parse_json_response
 from memorymaster.core.models import CitationInput, Claim, EvidenceItem, SourceItem
+from memorymaster.core.promotion_policy import states_customer_balance
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ __all__ = [
 ]
 
 # Bump when the prompt changes so idempotency keys / caches invalidate.
-LLM_PROMPT_VERSION = "atlas-llm-v1-2026-06-22"
+LLM_PROMPT_VERSION = "atlas-llm-v2-2026-11-12"
 
 # Permitted typed-claim ``type`` values. Anything else is dropped.
 ALLOWED_TYPES: frozenset[str] = frozenset(
@@ -201,6 +202,14 @@ def extract_atlas_claims_llm(
             continue
         if rejected:
             partial += 1
+        # T-2112: a transactional customer balance is operational data, never memory. It is a
+        # rejected row (not a degraded item: that would make the capture worker retry the job and
+        # resend the same message to the provider).
+        kept = [t for t in typed_claims if not _states_balance(t)]
+        if len(kept) != len(typed_claims):
+            invalid_rows += len(typed_claims) - len(kept)
+            partial += 0 if rejected else 1
+            typed_claims = kept
         if typed_claims:
             matched += 1
         for typed in typed_claims:
@@ -290,6 +299,10 @@ def _parse_rows(raw: str) -> list[Any] | None:
     if not isinstance(parsed, list):
         return None
     return parsed
+
+
+def _states_balance(typed: _TypedClaim) -> bool:
+    return states_customer_balance(typed.subject, typed.predicate, typed.object_value, typed.text)
 
 
 def _validate_row(row: dict) -> _TypedClaim | None:
@@ -428,6 +441,7 @@ Return STRICT JSON ARRAY of objects, no prose, no code fence. Return [] (empty a
 - OTP / 2FA / verification codes
 - receipts or confirmations with no future obligation
 - pure FYI with nothing actionable or memorable
+- transactional customer balances: what a named or numbered customer owes, has outstanding or holds as account balance (saldo, deuda, pending balance, with an amount or an explicit zero). That is billing data, never a fact to remember.
 
 ALLOWED type values (exactly one per object): person, company, project, product, topic, decision, commitment, preference, fact, event.
 
