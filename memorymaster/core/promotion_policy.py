@@ -75,42 +75,59 @@ def structure_blocks_auto_promotion(subject: object, predicate: object) -> bool:
 
 
 # --- customer balance (T-2112) -----------------------------------------------------------------
-# All three parts must co-occur inside one sentence-sized window around a balance term, so a field
-# name, a policy threshold or an aggregate never matches on one part alone.
+# Three parts must co-occur around a balance term, so a field name, a policy threshold or an
+# aggregate never matches on one part alone. Every quantifier is bounded and only the first
+# _MAX_SCAN characters / _MAX_TERMS balance terms are judged, so a hostile claim costs linear time.
+_MAX_SCAN = 20_000  # shortcut: text past this is not judged (a balance statement is a sentence), raise if lessons outgrow it
+_MAX_TERMS = 50  # balance terms examined per claim
 _WINDOW = 100  # chars each side of the balance term (about one sentence)
 
 _BALANCE_TERM = re.compile(
-    r"\b(?:saldo|balance|deuda|adeud\w*|debt|outstanding|owes?|owed|impag\w+|unpaid|overdue)\b"
-    r"|\bdebe\b(?=\s+(?:[$€]|(?:ARS|USD|EUR)\b))",  # bare "debe" is a common modal verb
+    r"\b(?:saldo|balance|deuda|adeud\w{0,10}|debt|outstanding|owes?|owed|impag\w{0,8}|unpaid|overdue)\b"
+    r"|\bdebe\b(?=\s{1,3}(?:[$€]|(?:ARS|USD|EUR)\b))",  # bare "debe" is a common modal verb
     re.I,
 )
 _AMOUNT = re.compile(
-    r"(?:(?<![A-Za-z])(?:ARS|USD|EUR|U\$S|US\$|AR\$)|[$€])\s*\d"
-    r"|\d[\d.,]*\s*(?:pesos|ars|usd|eur|euros|d[oó]lares|dollars)\b",
+    r"(?:(?<![A-Za-z])(?:ARS|USD|EUR|U\$S|US\$|AR\$)|[$€])\s{0,3}\d"
+    r"|(?<![\d.,])\d[\d.,]{0,20}\s{0,3}(?:pesos|ars|usd|eur|euros|d[oó]lares|dollars)\b",
     re.I,
 )
+# A decimal amount with no currency symbol ("deuda de 12500.00"): only counts next to a client id.
+_BARE_AMOUNT = re.compile(r"(?<![\d.,-])\d{1,9}(?:[.,]\d{3}){0,3}[.,]\d{2}(?!\d)")
 _ZERO = re.compile(r"\b(?:zero|cero)\b", re.I)
 _ID_MARKER = re.compile(
-    r"\b(?:cliente|client|customer|socio|uisp)\b[\s:#]*"
-    r"(?:(?:n[°º]?\.?|nro\.?|num\w*|number|id|c[oó]digo|code)\b[\s:#.]*)?\d+",
+    r"\b(?:cliente|client|customer|socio|uisp)\b[\s:#.]{0,4}"
+    r"(?:(?:n[°º]|no\.?|nro\.?|n[uú]m(?:ero|ber)?\.?|id|c[oó]digo|code)[\s:#.]{0,4})?\d"
+    # a name between the word and the id: "client Juan Perez #9001"
+    r"|\b(?:cliente|client|customer|socio|uisp)\b[^\d#\n]{0,40}#\s{0,2}\d",
     re.I,
 )
 # A comparison, condition or aggregate is a rule or a total, not one customer's account. Each cue is
 # anchored to the amount or the balance term, so "a total pending balance of ..." is not one.
-# Only weighs against a party known by NAME; a client-id marker is stronger evidence.
-_CUR = r"(?:ARS|USD|EUR|U\$S|US\$|AR\$|[$€])?"
+# It weighs against a party known by NAME or by a client id away from the balance term; a client id
+# next to the balance term is stronger evidence.
+_CUR_OPT = r"(?:ARS|USD|EUR|U\$S|US\$|AR\$|[$€])?"
 _RULE_CUE = re.compile(
     # comparator directly before the amount: "under $1,000", "> $0"
     r"(?:[<>≤≥]|\b(?:under|below|above|less than|more than|at least|menos de|al menos)\b)"
-    r"\s*=?\s*" + _CUR + r"\s*\d"
+    r"\s{0,3}=?\s{0,3}" + _CUR_OPT + r"\s{0,3}\d"
     # qualifier just before the balance term: "average account balance", "prepay balance"
-    r"|\b(?:average|minimum|maximum|prepay|prepaid|prepago|promedio|m[ií]nim[oa]|threshold|umbral)\s+"
-    r"(?:[\w-]+\s+){0,2}(?:saldo|balance|deuda|debt)\b"
+    r"|\b(?:average|minimum|maximum|prepay|prepaid|prepago|promedio|m[ií]nim[oa]|threshold|umbral)\s{1,3}"
+    r"(?:[\w-]{1,30}\s{1,3}){0,2}(?:saldo|balance|deuda|debt)\b"
     # a counted plural is an aggregate: "38 suspended clients owe ..."
-    r"|\b\d[\d.,]*\s+(?:[\w-]+\s+){0,2}(?:clients|customers|clientes|socios|users|usuarios|accounts|cuentas)\b",
+    r"|(?<![\d.,])\d[\d.,]{0,20}\s{1,3}(?:[\w-]{1,30}\s{1,3}){0,2}"
+    r"(?:clients|customers|clientes|socios|users|usuarios|accounts|cuentas)\b",
     re.I,
 )
-_NAME_TOKEN = re.compile(r"[A-ZÁÉÍÓÚÑ][a-záéíóúñ'’.-]+")
+_CAMEL_BOUNDARY =re.compile(r"([a-z])([A-Z])")
+_NAME_TOKEN = re.compile(r"[A-ZÁÉÍÓÚÑ][a-záéíóúñ'’-]+|[A-ZÁÉÍÓÚÑ]\.")
+_CAPS_TOKEN = re.compile(r"[A-ZÁÉÍÓÚÑ]{3,}")
+_PARTICLES = frozenset({"de", "del", "la", "las", "los", "van", "von", "da", "di", "dos", "do", "el"})
+# ALLCAPS tokens that are acronyms or products, not a surname.
+_ACRONYMS = frozenset({
+    "api", "uisp", "crm", "erp", "sql", "cpu", "gpu", "usd", "ars", "eur", "mcp", "llm", "url", "dns",
+    "vpn", "iva", "cuit", "cuil", "afip", "pdf", "csv", "json", "html", "ssh", "vps", "nas", "wip",
+})
 # Corporate suffixes: not a person, and capitalised like one.
 _ORG_TOKENS = frozenset({
     "banco", "bank", "inc", "corp", "srl", "sa", "sas", "llc", "ltd", "gmbh", "group", "grupo",
@@ -119,12 +136,22 @@ _ORG_TOKENS = frozenset({
 
 
 def _person_like(subject: object) -> bool:
-    """1-4 Capitalised name tokens, no digits, no corporate suffix (``API``/``OpenAI`` are not)."""
+    """1-4 name tokens (Capitalised, an initial, or an ALLCAPS surname), particles (de la) between them.
+
+    No digits, no corporate suffix, no acronym (``API``/``UISP``/``OpenAI`` are not people). A name with
+    an ALLCAPS token needs two name tokens: a lone ``SANTANDER`` is a company.
+    """
     tokens = str(subject or "").split()
-    return (
-        1 <= len(tokens) <= 4
-        and all(_NAME_TOKEN.fullmatch(t) for t in tokens)
-        and not any(t.strip(".").lower() in _ORG_TOKENS for t in tokens)
+    if not 1 <= len(tokens) <= 7 or tokens[0].lower() in _PARTICLES or tokens[-1].lower() in _PARTICLES:
+        return False
+    names = [t for t in tokens if t.lower() not in _PARTICLES]
+    if not 1 <= len(names) <= 4 or any(t.strip(".").lower() in _ORG_TOKENS for t in names):
+        return False
+    caps = [t for t in names if _CAPS_TOKEN.fullmatch(t)]
+    if caps and len(names) < 2:
+        return False
+    return all(
+        _NAME_TOKEN.fullmatch(t) or (_CAPS_TOKEN.fullmatch(t) and t.lower() not in _ACRONYMS) for t in names
     )
 
 
@@ -135,34 +162,41 @@ def _amount_or_zero(text: str) -> bool:
 def states_customer_balance(subject: object, predicate: object, object_value: object, text: object) -> bool:
     """True when the claim states what an identifiable customer owes / has outstanding / has as balance.
 
-    A CONJUNCTION is required: a balance or debt term, a currency-marked amount (or an explicit
-    zero balance) and an identified party, all within one sentence-sized window of the text. The
-    party is a client-id marker (``cliente 9001``, ``customer #9001``, ``uisp 9001``) or a
-    person-like ``subject`` that appears in the window. Triple form: a person-like subject, a
-    predicate with balance wording and an amount in ``object_value`` or ``text``. A balance term
-    alone (``saldo_pendiente`` field docs, ``deuda tecnica``), a policy threshold, an aggregate or a
-    bank's account condition does not match. Judgement is by wording; the known limits are in
-    ``.claude/rules/claims-lifecycle.md``.
+    A CONJUNCTION is required around a balance or debt term: a currency-marked amount (or an explicit
+    zero balance) within one sentence-sized window, AND a party. The party is a client-id marker
+    (``cliente 9001``, ``Cliente N° 9001``, ``customer #9001``, ``uisp 9001``) next to the balance term or
+    anywhere in the claim (then a rule cue in the window excuses it, and a bare decimal amount right
+    after the term counts), or a person-like ``subject`` that appears in the window. Triple form: a
+    person-like subject, balance wording in the predicate and an amount in ``object_value`` or text.
+    A balance term alone (``saldo_pendiente`` field docs, ``deuda tecnica``), a policy threshold, an
+    aggregate or a bank's account condition does not match. Judgement is by wording; the known limits
+    are in ``.claude/rules/claims-lifecycle.md``.
     """
-    body = str(text or "")
-    name = str(subject or "").strip()
+    body = str(text or "")[:_MAX_SCAN]
+    name = str(subject or "").strip()[:200]
+    obj = str(object_value or "")[:200]
     person = _person_like(name)
-    claim_wording = f"{predicate or ''} {object_value or ''}"
-    predicate_words = re.sub(r"([a-z])([A-Z])", r"\1 \2", str(predicate or "")).replace("_", " ")
-    if (
-        person
-        and _BALANCE_TERM.search(predicate_words)
-        and _amount_or_zero(f"{object_value or ''} {body}")
-        and not _RULE_CUE.search(f"{predicate_words} {claim_wording} {body}")
-    ):
-        return True
-    for term in _BALANCE_TERM.finditer(body):
+    if person:
+        predicate_words = _CAMEL_BOUNDARY.sub(r"\1 \2", str(predicate or "")[:200]).replace("_", " ")
+        if (
+            _BALANCE_TERM.search(predicate_words)
+            and _amount_or_zero(f"{obj} {body}")
+            and not _RULE_CUE.search(f"{predicate_words} {obj}")
+        ):
+            return True
+    id_in_claim = bool(_ID_MARKER.search(f"{name} {body}"))
+    for count, term in enumerate(_BALANCE_TERM.finditer(body)):
+        if count >= _MAX_TERMS:
+            break
         window = body[max(0, term.start() - _WINDOW): term.end() + _WINDOW]
-        if not _amount_or_zero(window):
+        bare = id_in_claim and _BARE_AMOUNT.search(body[term.end(): term.end() + 40])
+        if not (bare or _amount_or_zero(window)):
             continue
         if _ID_MARKER.search(window):
             return True
-        if person and name.lower() in window.lower() and not _RULE_CUE.search(window):
+        if _RULE_CUE.search(window):
+            continue
+        if id_in_claim or (person and name.lower() in window.lower()):
             return True
     return False
 

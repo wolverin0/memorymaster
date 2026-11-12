@@ -177,10 +177,16 @@ def test_detector_needs_the_conjunction_not_one_part():
     assert _states(None, None, None, "Cliente 9001 compró el plan.") is False  # no balance, no amount
 
 
-def test_detector_party_must_be_in_the_same_window():
+def test_a_name_must_be_in_the_window_but_a_client_id_may_be_anywhere_in_the_claim():
     far = "x" * 400
+    # a client id elsewhere in the claim identifies the party (round 2) ...
     text = f"Client 9001 is a fiber customer. {far} The reconciliation shows a balance of $12,500."
-    assert _states(None, None, None, text) is False
+    assert _states(None, None, None, text) is True
+    # ... unless the window around the balance is a rule or an aggregate
+    rule = f"Client 9001 is a fiber customer. {far} The reconciliation needs a balance under $12,500."
+    assert _states(None, None, None, rule) is False
+    # a person-like subject has to be in the window itself
+    assert _states("Juan Perez", None, None, f"Juan Perez is a fiber customer. {far} The balance is $12,500.") is False
 
 
 def test_detector_tolerates_missing_fields():

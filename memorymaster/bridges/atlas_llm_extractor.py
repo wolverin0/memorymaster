@@ -217,6 +217,8 @@ def extract_atlas_claims_llm(
             if dry_run:
                 continue
             claim = _ingest_typed_claim(service, evidence, source_item, typed, scope=scope)
+            if claim is None:
+                continue
             ingested += 1
             claims.append(claim)
 
@@ -369,7 +371,10 @@ def _ingest_typed_claim(
     typed: _TypedClaim,
     *,
     scope: str,
-) -> Claim:
+) -> Claim | None:
+    if _states_balance(typed):
+        # T-2112: the one gate every caller goes through (the loop above and scripts/atlas_autoloop.py).
+        return None
     claim = service.ingest(
         text=typed.text,
         citations=[_citation_for_evidence(evidence, source_item)],

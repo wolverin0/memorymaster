@@ -49,7 +49,7 @@ def _cas_conn() -> sqlite3.Connection:
         "CREATE TABLE claims (id INTEGER PRIMARY KEY, status TEXT, version INTEGER, "
         "replaced_by_claim_id INTEGER, subject TEXT, predicate TEXT, "
         "object_value TEXT, confidence REAL, updated_at TEXT, "
-        "source_agent TEXT, idempotency_key TEXT)"
+        "source_agent TEXT, idempotency_key TEXT, text TEXT)"
     )
     conn.execute("CREATE TABLE citations (claim_id INTEGER, source TEXT)")
     return conn

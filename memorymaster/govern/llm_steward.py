@@ -503,6 +503,38 @@ def _archive_candidate_cas(
     return cur.rowcount > 0
 
 
+def _candidate_window(
+    conn: sqlite3.Connection, *, scope: str | None, policy_sql: str, blocked: list[str], want: int
+) -> tuple[list[sqlite3.Row], int]:
+    """The next ``want`` candidates by id that do not state a customer balance, and how many were held.
+
+    T-2112: a held candidate is judged here, on its own stored triple and text, before it can spend the
+    ``limit`` budget or be sent to the provider; paging past them keeps a backlog of them from starving the
+    rest. shortcut: a backlog of held candidates is rescanned (in-process, cheap) every cycle.
+    """
+    scope_sql = "AND scope = ? " if scope is not None else ""
+    kept: list[sqlite3.Row] = []
+    held = 0
+    after = 0
+    while len(kept) < want:
+        page = conn.execute(
+            "SELECT id, text, scope, version, tenant_id, visibility, source_agent, subject, predicate, object_value "
+            "FROM claims WHERE status = 'candidate' "
+            "AND COALESCE(claim_type, '') <> 'observation' "
+            f"AND text IS NOT NULL AND id > ? {scope_sql}{policy_sql}ORDER BY id LIMIT ?",
+            (after, *((scope,) if scope is not None else ()), *blocked, want),
+        ).fetchall()
+        if not page:
+            break
+        after = page[-1]["id"]
+        for row in page:
+            if states_customer_balance(row["subject"], row["predicate"], row["object_value"], row["text"]):
+                held += 1
+            elif len(kept) < want:
+                kept.append(row)
+    return kept, held
+
+
 def _confirm_candidate_cas(
     conn: sqlite3.Connection,
     *,
@@ -671,22 +703,9 @@ def run_steward(
         if blocked
         else ""
     )
-    if scope is not None:
-        candidates = conn.execute(
-            "SELECT id, text, scope, version, tenant_id, visibility, source_agent "
-            "FROM claims WHERE status = 'candidate' "
-            "AND COALESCE(claim_type, '') <> 'observation' "
-            f"AND text IS NOT NULL AND scope = ? {policy_sql}ORDER BY id LIMIT ?",
-            (scope, *blocked, limit * SCAN_FACTOR),
-        ).fetchall()
-    else:
-        candidates = conn.execute(
-            "SELECT id, text, scope, version, tenant_id, visibility, source_agent "
-            "FROM claims WHERE status = 'candidate' "
-            "AND COALESCE(claim_type, '') <> 'observation' "
-            f"AND text IS NOT NULL {policy_sql}ORDER BY id LIMIT ?",
-            (*blocked, limit * SCAN_FACTOR),
-        ).fetchall()
+    candidates, held_before_llm = _candidate_window(
+        conn, scope=scope, policy_sql=policy_sql, blocked=blocked, want=limit * SCAN_FACTOR
+    )
 
     confirmed_claim_ids: list[int] = []
 
@@ -707,7 +726,7 @@ def run_steward(
         "claims_extracted": 0,
         "claims_filtered_sensitive": 0,
         "egress_withheld": 0,
-        "held_by_customer_balance": 0,
+        "held_by_customer_balance": held_before_llm,
         "provider": provider,
         "model": model,
         "key_count": key_rotator.key_count if key_rotator else 1,
