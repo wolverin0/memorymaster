@@ -96,8 +96,8 @@ _AMOUNT = re.compile(
 _BARE_AMOUNT = re.compile(r"(?<![\d.,-])\d{1,9}(?:[.,]\d{3}){0,3}[.,]\d{2}(?!\d)")
 _ZERO = re.compile(r"\b(?:zero|cero)\b", re.I)
 _ID_MARKER = re.compile(
-    r"\b(?:cliente|client|customer|socio|uisp)\b[\s:#.]{0,4}"
-    r"(?:(?:n[°º]|no\.?|nro\.?|n[uú]m(?:ero|ber)?\.?|id|c[oó]digo|code)[\s:#.]{0,4})?\d"
+    r"\b(?:cliente|client|customer|socio|uisp)\b[\s:#.(]{0,4}"
+    r"(?:(?:n\.?[°º]|no\.?|nro\.?|n[uú]m(?:ero|ber)?\.?|id|c[oó]digo|code)[\s:#.(]{0,4})?\d"
     # a name between the word and the id: "client Juan Perez #9001"
     r"|\b(?:cliente|client|customer|socio|uisp)\b[^\d#\n]{0,40}#\s{0,2}\d",
     re.I,
