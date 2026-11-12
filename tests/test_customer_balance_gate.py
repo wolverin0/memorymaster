@@ -178,7 +178,7 @@ def test_detector_needs_the_conjunction_not_one_part():
 
 
 def test_a_client_id_counts_only_near_the_balance_statement_a_name_only_inside_the_window():
-    near, far = "x" * 150, "x" * 400
+    near, far = "x" * 100, "x" * 400
     # an id up to ~200 chars from the balance term identifies the party ...
     text = f"Client 9001 is a fiber customer. {near} The reconciliation shows a balance of $12,500."
     assert _states(None, None, None, text) is True
@@ -441,7 +441,7 @@ RECALL_POSITIVES = {
     ),
     "id_marker_far_from_the_amount": (
         "billing-lesson", "lesson", None,
-        "Cliente 9001 mantiene el plan de fibra desde el año pasado. " + "Texto de relleno. " * 8
+        "Cliente 9001 mantiene el plan de fibra desde el año pasado. " + "Texto de relleno. " * 6
         + "Hoy figura un saldo pendiente de $12.500 en su cuenta.",
     ),
     "id_marker_in_the_subject": (

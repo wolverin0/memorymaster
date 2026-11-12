@@ -81,6 +81,7 @@ def structure_blocks_auto_promotion(subject: object, predicate: object) -> bool:
 _MAX_SCAN = 20_000  # shortcut: text past this is not judged (a balance statement is a sentence), raise if lessons outgrow it
 _MAX_TERMS = 50  # balance terms examined per claim
 _WINDOW = 100  # chars each side of the balance term (about one sentence)
+_ID_NEAR = 200  # a client id counts as the party only this close to the balance term (or inside the subject)
 
 _BALANCE_TERM = re.compile(
     r"\b(?:saldo|balance|deuda|adeud\w{0,10}|debt|outstanding|owes?|owed|impag\w{0,8}|unpaid|overdue)\b"
@@ -93,7 +94,11 @@ _AMOUNT = re.compile(
     re.I,
 )
 # A decimal amount with no currency symbol ("deuda de 12500.00"): only counts next to a client id.
-_BARE_AMOUNT = re.compile(r"(?<![\d.,-])\d{1,9}(?:[.,]\d{3}){0,3}[.,]\d{2}(?!\d)")
+_BARE_AMOUNT = re.compile(
+    r"(?<![\d.,-])\d{1,9}(?:[.,]\d{3}){0,3}[.,]\d{2}(?!\d)"
+    r"(?!\s{0,2}(?:%|(?:ms|s|seg|min|h|hs|px|loc|mb|kb|gb|x)\b))",  # "12.50 ms" is a measure, not money
+    re.I,
+)
 _ZERO = re.compile(r"\b(?:zero|cero)\b", re.I)
 _ID_MARKER = re.compile(
     r"\b(?:cliente|client|customer|socio|uisp)\b[\s:#.(]{0,4}"
@@ -164,9 +169,11 @@ def states_customer_balance(subject: object, predicate: object, object_value: ob
 
     A CONJUNCTION is required around a balance or debt term: a currency-marked amount (or an explicit
     zero balance) within one sentence-sized window, AND a party. The party is a client-id marker
-    (``cliente 9001``, ``Cliente N° 9001``, ``customer #9001``, ``uisp 9001``) next to the balance term or
-    anywhere in the claim (then a rule cue in the window excuses it, and a bare decimal amount right
-    after the term counts), or a person-like ``subject`` that appears in the window. Triple form: a
+    (``cliente 9001``, ``Cliente N° 9001``, ``customer #9001``, ``uisp 9001``) inside the term's window, or
+    within ``_ID_NEAR`` characters of the term or in the subject (then a rule cue in the window excuses
+    it; a bare decimal amount, never one followed by a unit, counts only with the id inside the
+    window), or a person-like ``subject`` that appears in the window. An id mentioned farther away in a
+    long note is just a mention. Triple form: a
     person-like subject, balance wording in the predicate and an amount in ``object_value`` or text.
     A balance term alone (``saldo_pendiente`` field docs, ``deuda tecnica``), a policy threshold, an
     aggregate or a bank's account condition does not match. Judgement is by wording; the known limits
@@ -184,19 +191,21 @@ def states_customer_balance(subject: object, predicate: object, object_value: ob
             and not _RULE_CUE.search(f"{predicate_words} {obj}")
         ):
             return True
-    id_in_claim = bool(_ID_MARKER.search(f"{name} {body}"))
+    id_in_subject = bool(_ID_MARKER.search(name))
     for count, term in enumerate(_BALANCE_TERM.finditer(body)):
         if count >= _MAX_TERMS:
             break
         window = body[max(0, term.start() - _WINDOW): term.end() + _WINDOW]
-        bare = id_in_claim and _BARE_AMOUNT.search(body[term.end(): term.end() + 40])
+        id_in_window = bool(_ID_MARKER.search(window))
+        bare = id_in_window and _BARE_AMOUNT.search(body[term.end(): term.end() + 40])
         if not (bare or _amount_or_zero(window)):
             continue
-        if _ID_MARKER.search(window):
+        if id_in_window:
             return True
         if _RULE_CUE.search(window):
             continue
-        if id_in_claim or (person and name.lower() in window.lower()):
+        near = body[max(0, term.start() - _ID_NEAR): term.end() + _ID_NEAR]
+        if id_in_subject or _ID_MARKER.search(near) or (person and name.lower() in window.lower()):
             return True
     return False
 
