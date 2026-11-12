@@ -450,6 +450,34 @@ RECALL_POSITIVES = {
     ),
 }
 
+# Every spelling of "customer number 9001" next to a balance (verifier addendum).
+ID_MARKER_FORMS = [
+    "customer no. 9001 owes $12,500 on the plan.",
+    "customer no 9001 owes $12,500 on the plan.",
+    "Customer number 9001 owes $12,500 on the plan.",
+    "customer id: 9001 owes $12,500 on the plan.",
+    "cliente número 9001 adeuda $12.500 del plan.",
+    "cliente numero 9001 adeuda $12.500 del plan.",
+    "cliente núm. 9001 adeuda $12.500 del plan.",
+    "cliente N° 9001 adeuda $12.500 del plan.",
+    "cliente Nº: 9001 adeuda $12.500 del plan.",
+    "cliente N.º 9001 adeuda $12.500 del plan.",
+    "cliente n.° 9001 adeuda $12.500 del plan.",
+    "cliente No. 9001 adeuda $12.500 del plan.",
+    "cliente nro. 9001 adeuda $12.500 del plan.",
+    "cliente ID 9001 adeuda $12.500 del plan.",
+    "cliente código 9001 adeuda $12.500 del plan.",
+    "cliente #9001 adeuda $12.500 del plan.",
+    "cliente (9001) adeuda $12.500 del plan.",
+    "Juan Perez (cliente 9001) adeuda $12.500 del plan.",
+]
+
+
+@pytest.mark.parametrize("text", ID_MARKER_FORMS)
+def test_detector_reads_every_client_id_spelling(text):
+    assert _states(None, None, None, text) is True
+
+
 NEW_NEGATIVES = {
     "client_id_example_far_from_a_rule": (
         "billing-doc", "doc", None,
