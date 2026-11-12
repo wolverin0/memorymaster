@@ -177,16 +177,18 @@ def test_detector_needs_the_conjunction_not_one_part():
     assert _states(None, None, None, "Cliente 9001 compró el plan.") is False  # no balance, no amount
 
 
-def test_a_name_must_be_in_the_window_but_a_client_id_may_be_anywhere_in_the_claim():
-    far = "x" * 400
-    # a client id elsewhere in the claim identifies the party (round 2) ...
-    text = f"Client 9001 is a fiber customer. {far} The reconciliation shows a balance of $12,500."
+def test_a_client_id_counts_only_near_the_balance_statement_a_name_only_inside_the_window():
+    near, far = "x" * 150, "x" * 400
+    # an id up to ~200 chars from the balance term identifies the party ...
+    text = f"Client 9001 is a fiber customer. {near} The reconciliation shows a balance of $12,500."
     assert _states(None, None, None, text) is True
-    # ... unless the window around the balance is a rule or an aggregate
-    rule = f"Client 9001 is a fiber customer. {far} The reconciliation needs a balance under $12,500."
+    # ... an id farther away is just another mention in a long note (round 3) ...
+    assert _states(None, None, None, f"Client 9001 is a fiber customer. {far} The reconciliation shows a balance of $12,500.") is False
+    # ... and near the term but outside its window it is excused by a rule cue
+    rule = f"Client 9001 is a fiber customer. {near} The reconciliation needs a balance under $12,500."
     assert _states(None, None, None, rule) is False
     # a person-like subject has to be in the window itself
-    assert _states("Juan Perez", None, None, f"Juan Perez is a fiber customer. {far} The balance is $12,500.") is False
+    assert _states("Juan Perez", None, None, f"Juan Perez is a fiber customer. {near} The balance is $12,500.") is False
 
 
 def test_detector_tolerates_missing_fields():
@@ -439,7 +441,7 @@ RECALL_POSITIVES = {
     ),
     "id_marker_far_from_the_amount": (
         "billing-lesson", "lesson", None,
-        "Cliente 9001 mantiene el plan de fibra desde el año pasado. " + "Texto de relleno. " * 20
+        "Cliente 9001 mantiene el plan de fibra desde el año pasado. " + "Texto de relleno. " * 8
         + "Hoy figura un saldo pendiente de $12.500 en su cuenta.",
     ),
     "id_marker_in_the_subject": (
@@ -478,6 +480,47 @@ def test_detector_reads_every_client_id_spelling(text):
     assert _states(None, None, None, text) is True
 
 
+# Technical notes that mention a client id ~200+ chars away from a balance word and a price/number
+# (round 3, the verifier's far-id set). Invented. They must promote.
+_FILL = " El job corre cada hora y registra el resultado en el log del servicio de facturación, sin reintentos." * 2
+FAR_ID_NEGATIVES = {
+    "price_and_load_balance": (
+        None, None, None,
+        "El plan cuesta $12.500 y el balance de carga entre nodos es 3 a 1." + _FILL
+        + " Bug reportado por el cliente 9001.",
+    ),
+    "alert_threshold": (
+        None, None, None,
+        "Alert fires when the account balance drops below the configured threshold of USD 50." + _FILL
+        + " First seen on customer #9001.",
+    ),
+    "technical_debt_budget": (
+        None, None, None,
+        "La deuda técnica del módulo es de ~4000 LOC y el presupuesto es $5000." + _FILL
+        + " Reportado en cliente 9001.",
+    ),
+    "test_expects_bare_balance": (
+        None, None, None,
+        "El test espera balance 150.00 tras el refund." + _FILL + " Fixture: cliente 9001.",
+    ),
+    "field_docs_owed": (
+        None, None, None,
+        "Docs: el campo owed muestra el monto en ARS 1.500 para cada cuenta." + _FILL + " Ejemplo con cliente 9001.",
+    ),
+    "aggregate_total": (
+        None, None, None,
+        "Reporte de mora: los clientes adeudan $450.000 en total." + _FILL + " Incluye al cliente 9001.",
+    ),
+    "default_zero_balance": (
+        None, None, None,
+        "El valor por defecto del saldo es cero para cuentas nuevas." + _FILL + " Probado con cliente 9001.",
+    ),
+    "commit_line_with_a_duration": (
+        None, None, None,
+        "fix(billing): client 9001 invoice rounding; overdue invoices job now logs 12.50 ms per batch",
+    ),
+}
+
 NEW_NEGATIVES = {
     "client_id_example_far_from_a_rule": (
         "billing-doc", "doc", None,
@@ -491,6 +534,24 @@ NEW_NEGATIVES = {
         "Juan Perez", "note", None, "Juan Perez configured the load balancer with 12 nodes and 3 pools.",
     ),
 }
+
+
+@pytest.mark.parametrize("name", sorted(FAR_ID_NEGATIVES))
+def test_a_far_client_id_mention_does_not_make_a_technical_note_a_balance(name):
+    assert _states(*FAR_ID_NEGATIVES[name]) is False
+
+
+@pytest.mark.parametrize("name", ["price_and_load_balance", "default_zero_balance", "commit_line_with_a_duration"])
+def test_far_id_notes_still_promote_through_validate_now(svc, name):
+    subject, predicate, obj, text = FAR_ID_NEGATIVES[name]
+    cid = _claim(svc, text, subject=subject, predicate=predicate, object_value=obj)
+    report = svc.validate_now(cid)
+    assert report["status"] == "confirmed" and "held" not in report
+
+
+@pytest.mark.parametrize("unit", ["ms", "s", "%", "px", "LOC", "MB"])
+def test_a_bare_number_with_a_unit_is_not_a_bare_amount(unit):
+    assert _states(None, None, None, f"Cliente 9001: overdue job logs 12.50 {unit} per batch") is False
 
 
 @pytest.mark.parametrize("name", sorted(RECALL_POSITIVES))
