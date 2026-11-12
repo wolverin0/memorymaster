@@ -396,3 +396,207 @@ def test_atlas_extractor_item_with_only_a_balance_is_not_degraded(tmp_path, monk
 def test_atlas_prompt_tells_the_model_not_to_emit_customer_balances():
     prompt = atlas_llm_extractor._PROMPT_BODY.lower()
     assert "balance" in prompt and "customer" in prompt
+
+
+# =============================================================================================
+# Round 2 (T-2112): recall, linear time, the autoloop bypass, the steward budget
+# =============================================================================================
+
+# (subject, predicate, object_value, text): shapes the first detector missed. Invented.
+RECALL_POSITIVES = {
+    "allcaps_surname": (
+        "Juan PEREZ", None, None, "Juan PEREZ has an active fiber plan with a pending balance of $12,500.",
+    ),
+    "allcaps_full_name": (
+        "PEREZ JUAN", None, None, "PEREZ JUAN tiene un saldo pendiente de $12.500 en el servicio de fibra.",
+    ),
+    "name_with_particles": (
+        "Maria de la Cruz", None, None, "Maria de la Cruz tiene un saldo pendiente de $12.500 en su plan.",
+    ),
+    "initial_and_surname": (
+        "J. Perez", None, None, "J. Perez tiene una deuda de $12.500 con el proveedor.",
+    ),
+    "id_marker_with_degree_sign": (
+        "billing-note", "note", None, "Cliente N° 9001 tiene un saldo pendiente de $12.500 en fibra.",
+    ),
+    "id_marker_with_ordinal_sign": (
+        "billing-note", "note", None, "Cliente Nº9001 tiene un saldo pendiente de $12.500 en fibra.",
+    ),
+    "id_marker_nro": (
+        "billing-note", "note", None, "cliente nro. 9001 adeuda $12.500 de la ultima factura.",
+    ),
+    "id_marker_hash": (
+        "billing-note", "note", None, "cliente #9001 tiene deuda de ARS 12.500 en el servicio.",
+    ),
+    "id_marker_customer_no": (
+        "billing-note", "note", None, "Customer No. 9001 owes $12,500 on the fiber plan.",
+    ),
+    "id_marker_far_from_the_amount": (
+        "billing-lesson", "lesson", None,
+        "Cliente 9001 mantiene el plan de fibra desde el año pasado. " + "Texto de relleno. " * 20
+        + "Hoy figura un saldo pendiente de $12.500 en su cuenta.",
+    ),
+    "id_marker_in_the_subject": (
+        "Cliente 9001", "estado", None, "Tiene un saldo pendiente de $12.500 en su cuenta de fibra.",
+    ),
+    "id_marker_with_a_bare_decimal_amount": (
+        "billing-note", "note", None, "Cliente 9001: deuda de 12500.00 (vencida desde enero).",
+    ),
+}
+
+NEW_NEGATIVES = {
+    "client_id_example_far_from_a_rule": (
+        "billing-doc", "doc", None,
+        "The sample payload uses cliente 9001 as the example id. " + "Texto de relleno. " * 20
+        + "A service reactivates when the remaining balance is under $1,000.",
+    ),
+    "uppercase_acronym_subject": (
+        "UISP API", "doc", None, "UISP API returns the balance field as $12,500 in the example.",
+    ),
+    "load_balancer": (
+        "Juan Perez", "note", None, "Juan Perez configured the load balancer with 12 nodes and 3 pools.",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(RECALL_POSITIVES))
+def test_detector_recall_on_shapes_the_first_version_missed(name):
+    assert _states(*RECALL_POSITIVES[name]) is True
+
+
+@pytest.mark.parametrize("name", sorted(NEW_NEGATIVES))
+def test_detector_stays_quiet_on_the_new_negative_shapes(name):
+    assert _states(*NEW_NEGATIVES[name]) is False
+
+
+def test_recall_positives_end_candidate_through_validate_now(svc):
+    """Outcome level, as the verifier saw them confirmed: ALLCAPS name, far client id, degree sign."""
+    ids = [
+        _claim(svc, text, subject=subject, predicate=predicate, object_value=obj)
+        for subject, predicate, obj, text in (
+            RECALL_POSITIVES["allcaps_surname"],
+            RECALL_POSITIVES["id_marker_far_from_the_amount"],
+            RECALL_POSITIVES["id_marker_with_degree_sign"],
+            RECALL_POSITIVES["name_with_particles"],
+        )
+    ]
+    for cid in ids:
+        report = svc.validate_now(cid)
+        assert report["status"] == "candidate" and report.get("held") == "customer_balance"
+
+
+def test_recall_positive_stays_candidate_through_a_full_cycle(svc):
+    held = _claim(svc, RECALL_POSITIVES["id_marker_far_from_the_amount"][3],
+                  subject="billing-lesson", predicate="lesson")
+    other = _harmless(svc)
+    svc.run_cycle()
+    assert _status_of(svc, held) == "candidate"
+    assert _status_of(svc, other) == "confirmed"
+
+
+# --- linear time (a hostile claim must not stall the validator or the extractor) -------------------
+
+ADVERSARIAL_SHAPES = {
+    "digits": "1" * 200_000,
+    "dots_and_commas": "1.1," * 50_000,
+    "digit_dot_runs": ("1" * 40 + ".") * 5_000,
+    "dollars": "$" * 200_000,
+    "dollar_digit": "$ 1 " * 50_000,
+    "balance_terms": "saldo " * 33_000,
+    "client_markers": "cliente " * 25_000,
+    "comparators": "> " * 100_000,
+    "qualifiers": "average " * 25_000,
+    "spaces": " " * 200_000,
+    "counted_plural": "1 x " * 50_000,
+    "mixed": ("saldo cliente 1.1,1 $ " + "9" * 30 + " ") * 6_000,
+}
+
+
+def _best_of(fn, runs=3):
+    import time
+
+    best = float("inf")
+    for _ in range(runs):
+        started = time.perf_counter()
+        fn()
+        best = min(best, time.perf_counter() - started)
+    return best
+
+
+@pytest.mark.parametrize("shape", sorted(ADVERSARIAL_SHAPES))
+def test_detector_is_linear_on_adversarial_text_prose_path(shape):
+    text = ADVERSARIAL_SHAPES[shape]
+    elapsed = _best_of(lambda: _states("Juan Perez", None, None, text))
+    assert elapsed < 0.1, f"{shape}: {elapsed:.3f}s for 200 KB"
+
+
+@pytest.mark.parametrize("shape", sorted(ADVERSARIAL_SHAPES))
+def test_detector_is_linear_on_adversarial_text_triple_path(shape):
+    text = ADVERSARIAL_SHAPES[shape]
+    elapsed = _best_of(lambda: _states("Juan Perez", "pending_balance", text[:2000], text))
+    assert elapsed < 0.1, f"{shape}: {elapsed:.3f}s for 200 KB"
+
+
+# --- the atlas autoloop calls the same shared functions ---------------------------------------------
+
+def _load_autoloop(mp):
+    import importlib.util
+    import sys
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "atlas_autoloop.py"
+    mp.setenv("GEMINI_API_KEY", "test-key")
+    for key in ("MEMORYMASTER_LLM_API_KEYS", "MEMORYMASTER_LLM_PROVIDER"):
+        mp.setenv(key, "")
+    mp.setattr(sys, "path", list(sys.path))
+    spec = importlib.util.spec_from_file_location("atlas_autoloop_balance_under_test", script)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_autoloop_entry_point_drops_a_customer_balance_and_keeps_the_sibling(tmp_path):
+    db = tmp_path / "loop.db"
+    service = MemoryService(db, workspace_root=tmp_path)
+    service.init_db()
+    evidence = _seed_evidence(service, text="synthetic message body")
+    source_item = service.get_source_item_by_id(evidence.source_item_id)
+    with pytest.MonkeyPatch.context() as mp:
+        autoloop = _load_autoloop(mp)
+        mp.setattr(autoloop, "BRAIN", str(db))
+        rows = [dict(BALANCE_ROW, item=0), dict(HARMLESS_ROW, item=0)]
+        mp.setattr(autoloop, "_call", lambda prompt: json.dumps(rows))
+        ingested, failed, batches = autoloop.extract_and_merge([(evidence, source_item)])
+    assert (ingested, failed, batches) == (1, 0, 1)
+    claims = service.list_claims(limit=50, include_archived=True)
+    assert [c.subject for c in claims] == ["Pablo"]
+
+
+# --- the steward budget: a held candidate neither spends it nor leaves the machine -------------------
+
+def test_llm_steward_held_candidates_do_not_spend_the_budget_nor_reach_the_provider(svc):
+    held_a = _claim(svc, "Juan Perez has an active internet service with a pending balance of 12,500.00 ARS.",
+                    subject="Juan Perez", predicate="pending_balance", object_value="12,500.00 ARS")
+    held_b = _claim(svc, "Cliente 9001 tiene un saldo pendiente de $12.500 en el servicio de fibra.")
+    harmless = _claim(svc, "The release deadline for the new dashboard is 2026-04-01 according to the plan.")
+    sent: list[int] = []
+    original = llm_steward.extract_claim
+
+    def fake_extract(provider, api_key, model, claim_id, text, base_url="", key_rotator=None,
+                     use_llm_provider=False):
+        sent.append(claim_id)
+        return llm_steward.ExtractionResult(
+            claim_id=claim_id, original_text=text, action="confirm", raw_response="",
+            extractions=[{"subject": "dashboard", "predicate": "deadline", "object_value": "2026-04-01",
+                          "confidence": 0.8}],
+        )
+
+    llm_steward.extract_claim = fake_extract
+    try:
+        stats = llm_steward.run_steward(svc.store.db_path, api_key="x", provider="gemini", limit=2,
+                                        delay=0.0, auto_validate=False)
+    finally:
+        llm_steward.extract_claim = original
+    assert sent == [harmless], "only the harmless candidate is sent to the provider, in the first cycle"
+    assert _status_of(svc, harmless) == "confirmed"
+    assert _status_of(svc, held_a) == "candidate" and _status_of(svc, held_b) == "candidate"
+    assert stats["held_by_customer_balance"] == 2
