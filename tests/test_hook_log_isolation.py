@@ -9,6 +9,7 @@ from pathlib import Path
 from memorymaster.core import hook_log
 
 ROOT = Path(__file__).resolve().parents[1]
+ENV = "MEMORYMASTER_HOOK_STATE_DIR"
 
 
 class _Sink:
@@ -40,15 +41,15 @@ def test_log_hook_under_the_suite_stays_inside_the_pytest_tree(tmp_path_factory,
         assert base in path.resolve().parents, f"log_hook reached outside the pytest tree: {path.name} under {path.parent.parent}"
 
 
-def test_env_state_dir_redirects_log_hook_and_the_latency_guard_reader(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv(hook_log.ENV_STATE_DIR, str(tmp_path / "state"))
+def test_env_state_dir_redirects_log_hook_and_the_reader_follows(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv(ENV, str(tmp_path / "state"))
     hook_log.log_hook("t2510", "env_redirect")
-    assert hook_log.log_file() == tmp_path / "state" / "hook.log"
     assert "event=env_redirect" in (tmp_path / "state" / "hook.log").read_text(encoding="utf-8")
+    assert hook_log.log_file() == tmp_path / "state" / "hook.log"  # what the latency guard reads
 
 
 def test_explicit_module_patch_wins_over_the_env_var(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv(hook_log.ENV_STATE_DIR, str(tmp_path / "from-env"))
+    monkeypatch.setenv(ENV, str(tmp_path / "from-env"))
     monkeypatch.setattr(hook_log, "_STATE_DIR", tmp_path / "patched")
     monkeypatch.setattr(hook_log, "_LOG_FILE", tmp_path / "patched" / "hook.log")
     hook_log.log_hook("t2510", "patched")
