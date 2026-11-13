@@ -276,3 +276,21 @@ def test_skip_tick_that_rewrites_the_hint_also_advances_checked_at(project_confi
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     assert runtime._refresh_one(project_config, skip=True)["status"] == "ok"
     assert datetime.fromisoformat(read_manifest(project_config)["checked_at"]) > ten_minutes_ago
+
+
+def test_expired_projection_of_a_configured_project_delivers_only_the_refresh_pending_notice(
+        project_config, monkeypatch):  # noqa: F811
+    """Documented read-side behaviour: past the 60-minute read TTL nothing of the brief is delivered."""
+    claim(project_config)
+    assert runtime._refresh_one(project_config)["status"] == "ok"
+    monkeypatch.setattr(runtime, "active", lambda name: name != "MEMORYMASTER_PROJECT_SESSION_DELTA")
+    monkeypatch.setattr(runtime, "config_for_cwd", lambda cwd: project_config)
+    fresh = runtime.session_start_context({"cwd": "x"})
+    assert "refresh pending" not in fresh and len(fresh.encode()) > 300
+    _, manifest_path = projection_paths(project_config)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["checked_at"] = (datetime.now(timezone.utc) - timedelta(minutes=61)).isoformat()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    expired = runtime.session_start_context({"cwd": "x"})
+    assert expired == runtime.compose_session_context("Project context unavailable; refresh pending.")
+    assert len(expired.encode()) == 162
