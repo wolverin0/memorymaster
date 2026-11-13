@@ -359,6 +359,18 @@ def _hermetic_wal_discipline(tmp_path_factory, monkeypatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_hook_log(monkeypatch) -> None:
+    """A test's ``log_hook`` call never reaches the operator's real ~/.memorymaster/hook_state/hook.log (T-2510).
+
+    log_hook resolves its file per call from MEMORYMASTER_HOOK_STATE_DIR, else from the home that
+    _hermetic_wal_discipline already redirected, so in-process calls and inheriting subprocesses land in
+    the test tree. The variable is cleared (not exported) because tests that set their own HOME read the
+    log under it; tests that want a specific directory set the variable or patch hook_log themselves.
+    """
+    monkeypatch.delenv("MEMORYMASTER_HOOK_STATE_DIR", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _cleanup_case_artifacts() -> None:
     _CASE_ROOT.mkdir(parents=True, exist_ok=True)
     # Don't prune before the test - files might be locked from previous tests
