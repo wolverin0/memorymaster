@@ -160,6 +160,12 @@ def _card_paths(config: Any, card_ids: Any) -> list[Path] | None:
     return paths if len(paths) == len(card_ids) and all(path.is_file() for path in paths) else None
 
 
+def _is_repo(row: Any, config: Any) -> bool:
+    """The card belongs to the mapped project; the ledger spells repos in mixed case (`futuraMAX`)."""
+    repo = row.get("repo")
+    return isinstance(repo, str) and repo.casefold() == str(config.ledger_repo).casefold()
+
+
 def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES, only_ids: Any = None,
                 deadline: float | None = None) -> tuple[dict, bool, list[str]]:
     """`only_ids` (validation): read just those cards' files instead of the whole directory when the ledger is
@@ -198,7 +204,7 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES, only_ids: Any
                     malformed += 1
                     continue
                 parsed += 1
-                mine = [row for row in tasks if row.get("repo") == config.ledger_repo]
+                mine = [row for row in tasks if _is_repo(row, config)]
                 if not mine or not (mtime_ns >= recent_ns or any(row.get("state") in OPEN_STATES for row in mine)):
                     continue
                 consumed += len(raw)
@@ -216,7 +222,7 @@ def load_ledger(config: Any, *, max_bytes: int = MAX_SOURCE_BYTES, only_ids: Any
                     return {}, False, ["ledger_unavailable", f"ledger_malformed:{malformed}"]
             cards = {}
             for row in records:
-                if row.get("repo") != config.ledger_repo:
+                if not _is_repo(row, config):
                     continue
                 if row.get("blind") or row.get("is_blind") or row.get("visibility", "public") != "public":
                     continue
