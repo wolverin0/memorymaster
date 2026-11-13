@@ -19,7 +19,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-ENV_STATE_DIR = "MEMORYMASTER_HOOK_STATE_DIR"
+from memorymaster.core.hook_log import ENV_STATE_DIR
+
 MAX_ITEMS = 10
 MAX_CHARS = 1500
 MAX_ITEM_CHARS = 220

@@ -179,7 +179,7 @@ def evaluate(
 
         since = current - timedelta(minutes=thresholds["window_minutes"])
         metrics["dense"] = _dense_metrics(dense_log if dense_log is not None else dense_recall.log_path(), since)
-        metrics["hook"] = _hook_metrics(hook_log if hook_log is not None else hook_log_module._LOG_FILE, since)
+        metrics["hook"] = _hook_metrics(hook_log if hook_log is not None else hook_log_module.log_file(), since)
         verdicts = [
             _judge("dense", metrics["dense"], *thresholds["dense"], thresholds["min_events"], reasons),
             _judge("hook", metrics["hook"], *thresholds["hook"], thresholds["min_events"], reasons),

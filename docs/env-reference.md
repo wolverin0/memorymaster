@@ -118,7 +118,7 @@ Total: 357 variables.
 | `MEMORYMASTER_HOME` | `memorymaster/surfaces/hook_events.py`, `memorymaster/surfaces/hooks_doctor.py` |
 | `MEMORYMASTER_HOOK_EVENTS_LOG` | `memorymaster/surfaces/hook_events.py` |
 | `MEMORYMASTER_HOOK_RECALL_REMOTE` | `memorymaster/recall/remote.py`, `memorymaster/surfaces/hooks_doctor.py` |
-| `MEMORYMASTER_HOOK_STATE_DIR` | `memorymaster/config_templates/hooks/memorymaster-precompact.py`, `memorymaster/recall/residual.py` |
+| `MEMORYMASTER_HOOK_STATE_DIR` | `memorymaster/config_templates/hooks/memorymaster-precompact.py`, `memorymaster/core/hook_log.py` |
 | `MEMORYMASTER_INITDB_FASTPATH` | `memorymaster/stores/migrations/__init__.py`, `memorymaster/stores/storage.py` |
 | `MEMORYMASTER_INLINE_VALIDATION` | `memorymaster/govern/ingest_governance.py` |
 | `MEMORYMASTER_INTAKE_DEFAULT_SOURCE_AGENT` | `memorymaster/core/intake_policy.py` |
