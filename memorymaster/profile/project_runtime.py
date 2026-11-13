@@ -152,6 +152,13 @@ def compose_session_context(payload: str, delta: str = "", profile: str = "") ->
     return context
 
 
+def delivery_payload(projection) -> str:
+    """What every adapter delivers at SessionStart: the published brief alone (it replaces the legacy
+    sections and fits Codex's 1,800 B cap with the envelope), the whole payload while there is none."""
+    brief = projection.manifest.get("brief")
+    return brief if isinstance(brief, str) and brief.strip() else projection.payload
+
+
 def session_start_context(data: dict, *, profile_loader=None) -> str | None:
     if not active(PREFIX + "ENABLED") or not active(PREFIX + "SESSION_START"):
         return None
@@ -170,7 +177,7 @@ def session_start_context(data: dict, *, profile_loader=None) -> str | None:
         delta = (result["delta"].text if result.get("delta")
                  else "Prior-session continuity unavailable: " + result["status"])
     profile = profile_loader() if profile_loader is not None else ""
-    return compose_session_context(projection.payload if projection else
+    return compose_session_context(delivery_payload(projection) if projection else
                                    "Project context unavailable; refresh pending.", delta, profile)
 
 

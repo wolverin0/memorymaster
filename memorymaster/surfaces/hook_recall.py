@@ -13,7 +13,7 @@ import sys
 
 from memorymaster.core.text_safety import fit_brief, sanitize_text
 from memorymaster.recall.delivery import confirm_turn, defer_payload, is_automated, recall_block
-from memorymaster.recall.hook_policy import is_trivial_prompt
+from memorymaster.recall.hook_policy import disabled_for, is_trivial_prompt
 from memorymaster.recall.machine_traffic import machine_skip
 from memorymaster.recall.recall_format import active_task_text, apply_format, format_mode
 from memorymaster.recall.remote import hook_recall
@@ -29,6 +29,8 @@ def session_brief(data: dict, cli: str) -> str:
     if not isinstance(cwd, str) or not cwd or not isinstance(session, str) or not session:
         return ""
     if filter_enabled(cli) and internal_run():
+        return ""
+    if disabled_for(cwd):  # per-lane A/B switch (T-1351): a lane with the hook off gets no brief either
         return ""
     from memorymaster.profile.project_runtime import session_start_context
 

@@ -21,11 +21,12 @@ from memorymaster.profile.project_repository import (
 
 BRIEF_MAX_BYTES = 1600
 STALE_DAYS = 14
-RUNNING_CARDS = DECISIONS = FAILURES = 3
+RUNNING_CARDS = DECISIONS = FAILURES = CONSTRAINTS = 3
 _RANK = {"running": 0, "review": 0, "ready": 1, "queued": 1}
 _FAIL_STATES = ("failed", "blocked")
 NL = chr(10)
-TITLES = ("RUNNING", "NEXT", "FAILURES", "DECISIONS")  # required elements first: a cut drops DECISIONS before FAILURES
+# Required elements first: a cut drops DECISIONS, then the pinned CONSTRAINTS, before FAILURES.
+TITLES = ("RUNNING", "NEXT", "FAILURES", "CONSTRAINTS", "DECISIONS")
 EMPTY = "empty"  # readable source with nothing in it, distinct from unavailable (None)
 
 
@@ -47,6 +48,7 @@ class BriefInputs:
     roadmap_missing: bool = True
     decisions: tuple[Entry, ...] = ()
     failures: tuple[Entry, ...] = ()
+    constraints: tuple[Entry, ...] = ()  # pinned Constraints claims: safety prose the brief must keep carrying
     # name -> last-update instant | None (unavailable) | EMPTY. Order is the header order.
     sources: Mapping[str, datetime | None | str] | None = None
     # section title -> short reason it could not be read. Rendered instead of "none", which would claim an empty source.
@@ -128,7 +130,7 @@ def render_brief(inputs: BriefInputs) -> str:
 
 
 def render_brief_cut(inputs: BriefInputs) -> tuple[str, bool]:
-    """Header + RUNNING / NEXT / DECISIONS / FAILURES, every line ending in its source tag.
+    """Header + RUNNING / NEXT / FAILURES / CONSTRAINTS (pinned, when any) / DECISIONS, every line ending in its source tag.
 
     Over the cap, whole lines are cut from the bottom (never mid-line, so a tag is never orphaned).
     """
@@ -151,6 +153,8 @@ def render_brief_cut(inputs: BriefInputs) -> tuple[str, bool]:
         ("RUNNING", _running(inputs.cards) or empty("RUNNING", "ledger")),
         ("NEXT", nxt),
         ("FAILURES", [_entry_line(e, dated=False) for e in failures] or empty("FAILURES", "claims")),
+        *([("CONSTRAINTS", [_entry_line(e, dated=False) for e in inputs.constraints[:CONSTRAINTS]])]
+          if inputs.constraints else []),
         ("DECISIONS", [_entry_line(e, dated=True) for e in _newest(list(inputs.decisions))[:DECISIONS]]
          or empty("DECISIONS", "claims")),
     ]
@@ -170,6 +174,9 @@ def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], di
         for key, item in items.items() if key.startswith("card:")
     )
     stamps = [t for t in (when(c["updated_at"]) for c in cards) if t]
+    pinned = sorted((i for i in items.values() if i.get("section") == "Constraints" and i.get("pinned")),
+                    key=lambda item: item["sort"])
+    constraints = tuple(Entry(None, _cell(i["text"], 100), f"claim:{i['support']['id']}") for i in pinned)  # never mm-<numeric id>, see claim_label
     claims, claims_ok = load_brief_claims(config, now=now)
     decisions = tuple(Entry(r["when"], r["text"], r["label"]) for r in claims["decision"] or ())
     failures = [Entry(r["when"], r["text"], r["label"]) for r in claims["failure"] or ()]
@@ -203,4 +210,5 @@ def collect_brief_inputs(config: Any, items: Mapping[str, Mapping[str, Any]], di
         sources["due"] = mtime
     return BriefInputs(project=config.slug, as_of=now, cards=cards, next_item=next_item,
                        roadmap_missing=roadmap_mtime is None, decisions=decisions,
-                       failures=tuple(failures), sources=sources, unavailable=unavailable)
+                       failures=tuple(failures), constraints=constraints, sources=sources,
+                       unavailable=unavailable)
