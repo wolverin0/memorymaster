@@ -139,7 +139,7 @@ def test_built_projection_carries_brief_and_session_start_only_reads_it(project_
     assert "- T-1 running: Ship brief | next: open PR [T-1]" in brief
     assert "- T-2 failed: disk full [T-2]" in brief
     assert "- bug: Race in cache [claim:4]" in brief and "[claim:3]" in brief
-    assert "NEXT\n- none: no roadmap [ROADMAP.md]" in brief
+    assert "NEXT\n- Ship brief (ledger: no ROADMAP.md) [T-1]" in brief  # no ROADMAP.md: the top ledger card
     assert publish_project_projection(config, built)
 
     def boom(*args, **kwargs):
