@@ -99,10 +99,26 @@ def _field(label: str, value: Any, limit: int) -> str:
     return f" | {label}: {text}" if text else ""
 
 
-def _running(cards) -> list[str]:
+def _live(cards) -> list:
     floor = datetime.min.replace(tzinfo=timezone.utc)
     live = [c for c in cards if c.get("state") in _RANK]
     live.sort(key=lambda c: (_RANK[c["state"]], -(when(c.get("updated_at")) or floor).timestamp(), str(c["id"])))
+    return live
+
+
+def _ledger_next(cards) -> str | None:
+    """No ROADMAP.md: the top `ready` card (else `running`) in RUNNING's order, preferring one RUNNING does not list."""
+    live = _live(cards)
+    listed = {c["id"] for c in live[:RUNNING_CARDS]}
+    pool = [c for state in ("ready", "running") for c in live if c["state"] == state]
+    pick = next((c for c in pool if c["id"] not in listed), pool[0] if pool else None)
+    if pick is None:
+        return None
+    return f"- {_cell(pick.get('title'), 80)} (ledger: no ROADMAP.md) [{_display(pick['id'], 24)}]"
+
+
+def _running(cards) -> list[str]:
+    live = _live(cards)
     return [
         f"- {_display(c['id'], 24)} {_display(c['state'], 12)}: {_cell(c.get('title'), 60)}"
         f"{_field('next', c.get('next_action'), 60)}{_field('blocker', c.get('blocker'), 50)} [{_display(c['id'], 24)}]"
@@ -142,7 +158,8 @@ def render_brief_cut(inputs: BriefInputs) -> tuple[str, bool]:
         text, line = inputs.next_item
         nxt = [f"- {_display(text, 110)} [ROADMAP.md#L{line}]"]
     else:
-        nxt = ["- none: no roadmap [ROADMAP.md]" if inputs.roadmap_missing else "- none: no open item [ROADMAP.md]"]
+        nxt = [(inputs.roadmap_missing and _ledger_next(inputs.cards))
+               or ("- none: no roadmap [ROADMAP.md]" if inputs.roadmap_missing else "- none: no open item [ROADMAP.md]")]
     failures = _newest([*_card_failures(inputs.cards), *inputs.failures])[:FAILURES]
     down = inputs.unavailable or {}
 

@@ -58,7 +58,7 @@ These commands do not enable automatic refresh or consumers.
 ## Project brief (T-2278)
 
 An opt-in, fixed-shape digest published inside the projection: header (project, `as_of`, one
-freshness stamp per source), then RUNNING (top three cards), NEXT (first unchecked ROADMAP item),
+freshness stamp per source), then RUNNING (top three cards), NEXT (first unchecked ROADMAP item; with no `ROADMAP.md` at all, the top ledger card, see below),
 FAILURES (three newest bug / bug_cause / gotcha claims, failed or blocked cards with blocker text, and
 `FAIL` due-measurements) and DECISIONS (three newest confirmed decision claims). FAILURES precede DECISIONS
 so a cut at the 1,600-byte cap, or at the Codex adapter's 1,800-byte limit, drops decisions first. Every line
@@ -69,6 +69,16 @@ prefix, which is a different id space. A source
 older than 14 days shows `(stale Nd)`, a missing one `unavailable`, a readable-but-empty one `empty`.
 The cap is 1,600 UTF-8 bytes; the brief is cut from the bottom by whole lines. With the 59-byte envelope
 opener and the two identity lines the whole brief fits inside Codex's 1,800-byte cut.
+
+NEXT without a roadmap file. When `ROADMAP.md` is missing and the ledger is readable (the conditions under
+which RUNNING renders cards), NEXT shows one ledger card instead of `- none: no roadmap [ROADMAP.md]`: the top
+`ready` card, else the top `running` one, in RUNNING's order, preferring one RUNNING does not already list (the top
+one if all are listed). Format: `- <title> (ledger: no ROADMAP.md) [T-NNNN]`. Blind and private cards are excluded
+as in RUNNING. With an unreadable ledger or no ready/running card the line stays `- none: no roadmap [ROADMAP.md]`;
+an existing `ROADMAP.md` is never overridden (including `- none: no open item [ROADMAP.md]`). The mapping's
+`ledger_repo` matches the cards' `repo` field case-insensitively (the ledger spells one repo `futuraMAX`).
+`scripts/accept_project_brief.py --strict` fails the no-roadmap line and requires three sourced FAILURES lines
+(loose mode, the default, accepts `[ROADMAP.md#L<n>]`, `[ROADMAP.md]` or `[T-NNNN]` and one failure line).
 
 Coverage is declared, never implied. A section that could not be read says so instead of `none`:
 `- unavailable: <reason> [ledger|claims]`. The ledger renders only with `ledger_filtered: true` in the mapping,
