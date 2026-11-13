@@ -39,7 +39,11 @@ import re
 from typing import Any
 
 from memorymaster.core.models import tuple_key
-from memorymaster.core.promotion_policy import auto_promotion_blocked, structure_blocks_auto_promotion
+from memorymaster.core.promotion_policy import (
+    auto_promotion_blocked,
+    customer_balance_blocks_auto_promotion,
+    structure_blocks_auto_promotion,
+)
 from memorymaster.govern.conflict_resolver import (
     SupersessionRaceLost,
     _verdict,
@@ -167,6 +171,7 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
         "kept_for_operator": 0,
         "held_by_source_policy": 0,
         "held_by_structure_policy": 0,
+        "held_by_customer_balance": 0,
         "skipped_race": 0,
         "dry_run": not apply,
     }
@@ -220,6 +225,10 @@ def drain_conflicts(service: Any, *, limit: int = 500, apply: bool = False) -> d
                     # T-1591: mismo corte previo a la supersesion para un predicado
                     # sin sujeto (campo corrido, no una tripleta).
                     summary["held_by_structure_policy"] += 1
+                    continue
+                if customer_balance_blocks_auto_promotion(claim):
+                    # T-2112: mismo corte previo para un saldo de cliente.
+                    summary["held_by_customer_balance"] += 1
                     continue
                 if apply:
                     transition_claim(

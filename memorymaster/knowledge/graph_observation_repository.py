@@ -313,6 +313,19 @@ class GraphObservationRepository:
             conn.commit()
         return cur.rowcount > 0
 
+    def release_job(self, job_id: int, *, owner: str) -> bool:
+        """Give a leased job back WITHOUT spending the attempt that leasing counted (a budget skip, not a failure)."""
+        with self._connection() as conn:
+            cur = conn.execute(
+                """UPDATE graph_observation_jobs
+                   SET status='retryable', attempts=MAX(0, attempts-1), next_attempt_at=NULL, updated_at=?,
+                       lease_owner=NULL, lease_expires_at=NULL
+                   WHERE id=? AND status='leased' AND lease_owner=?""",
+                (_iso(_now()), job_id, owner),
+            )
+            conn.commit()
+        return cur.rowcount > 0
+
     def fail_job(
         self, job_id: int, *, owner: str, error_code: str, detail: str | None = None
     ) -> bool:

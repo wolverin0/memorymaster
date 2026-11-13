@@ -18,7 +18,7 @@ from memorymaster.profile.project_projection import (
     read_manifest,
     render_project_projection,
 )
-from memorymaster.profile.project_repository import brief_claims_sql, digest, load_brief_claims
+from memorymaster.profile.project_repository import brief_claims_sql, digest, load_brief_claims, pinned_scope_index
 
 project_config = _project_config
 NOW = datetime(2026, 11, 9, 12, 0, tzinfo=timezone.utc)
@@ -29,11 +29,12 @@ def gen(config):
 
 
 def with_indexes(config):
-    """The live schema: migration 0031's tuple_key index plus the replaced_by index that tempts the planner."""
+    """The live schema: migration 0031's tuple_key index, the status index, and the replaced_by index that tempts the planner."""
     with sqlite3.connect(config.db_path) as conn:
         conn.execute("ALTER TABLE claims ADD COLUMN tuple_key TEXT")
         conn.execute("CREATE INDEX idx_claims_tuple_key ON claims(tenant_id, scope, tuple_key)")
         conn.execute("CREATE INDEX idx_claims_replaced_by ON claims(replaced_by_claim_id)")
+        conn.execute("CREATE INDEX idx_claims_status ON claims(status)")
 
 
 def plan(config, **kwargs) -> str:
@@ -42,12 +43,20 @@ def plan(config, **kwargs) -> str:
         return " | ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sql, ["x", "a", "b", "d", "e", "d", "e", 60]))
 
 
-def test_claims_query_is_pinned_to_the_tenant_scope_index(project_config):
-    """Live DB: the default plan used idx_claims_replaced_by (~35k rows, ~2 s cold); the pinned plan took 2-100 ms."""
+def test_claims_query_is_pinned_to_the_status_index_then_the_scope_index(project_config):
+    """Live DB: the default plan used idx_claims_replaced_by (~35k rows, ~2 s cold); the pinned status plan took ~11 ms."""
     with_indexes(project_config)
-    pinned = plan(project_config, indexed=True)
-    assert "idx_claims_tuple_key (tenant_id=? AND scope=?)" in pinned
+    with sqlite3.connect(project_config.db_path) as conn:
+        index = pinned_scope_index(conn)
+    assert index == " INDEXED BY idx_claims_status"
+    pinned = plan(project_config, index=index)
+    assert "idx_claims_status (status=?)" in pinned
     assert "idx_claims_replaced_by" not in pinned
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("DROP INDEX idx_claims_status")
+        assert pinned_scope_index(conn) == " INDEXED BY idx_claims_tuple_key"
+        conn.execute("DROP INDEX idx_claims_tuple_key")
+        assert pinned_scope_index(conn) == ""
 
 
 def test_brief_claims_work_with_and_without_the_index(project_config):
@@ -93,14 +102,14 @@ def test_state_changes_move_the_fingerprint_and_the_refresh_drops_the_line(proje
     claim(config, 1, "Shown decision", event_time="2026-11-01T00:00:00+00:00")
     claim(config, 2, "Other decision", event_time="2026-10-01T00:00:00+00:00")
     assert runtime._refresh_one(config)["status"] == "ok"
-    assert "[mm-1]" in read_manifest(config)["brief"]
+    assert "[claim:1]" in read_manifest(config)["brief"]
     before = runtime.cheap_fingerprint(config)
     with sqlite3.connect(config.db_path) as conn:
         conn.execute(change)
     assert runtime.cheap_fingerprint(config) != before, "the refresher must notice the state change"
     assert runtime._refresh_one(config)["status"] == "ok"
     brief = read_manifest(config)["brief"]
-    assert "[mm-1]" not in brief and "[mm-2]" in brief
+    assert "[claim:1]" not in brief and "[claim:2]" in brief
 
 
 def test_roadmap_root_overrides_project_root_and_is_watched(project_config, tmp_path):

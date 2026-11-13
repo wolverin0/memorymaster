@@ -201,7 +201,8 @@ def extract_and_merge(pairs):
                 if typed is not None:
                     ev, si = batch[idx]
                     try:
-                        ax._ingest_typed_claim(svc, ev, si, typed, scope="user"); ing += 1
+                        if ax._ingest_typed_claim(svc, ev, si, typed, scope="user") is not None:
+                            ing += 1
                     except Exception:
                         pass
     return ing, failed, len(batches)

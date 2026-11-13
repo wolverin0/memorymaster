@@ -10,6 +10,7 @@ from memorymaster.core.models import Claim, normalize_identity_part
 from memorymaster.core.promotion_policy import (
     PromotionPolicyBlocked,
     auto_promotion_blocked,
+    customer_balance_blocks_auto_promotion,
     structure_blocks_auto_promotion,
     non_auto_promotable_sources,
 )
@@ -97,6 +98,7 @@ def _candidate_recency_key(claim: Claim) -> tuple[str, int]:
 
 _SOURCE_POLICY_HOLD = "promotion_blocked_source_policy"
 _STRUCTURE_POLICY_HOLD = "promotion_blocked_structure_policy"
+_CUSTOMER_BALANCE_HOLD = "promotion_blocked_customer_balance"
 
 
 def _record_source_policy_hold(
@@ -185,6 +187,7 @@ def run(
             "blocked_pending_supersession": 0,
             "held_by_source_policy": 0,
             "held_by_structure_policy": 0,
+            "held_by_customer_balance": 0,
             "staled": 0,
             "revalidated_healthy": 0,
             "observation_checked": 0,
@@ -230,6 +233,7 @@ def run(
     blocked_pending_supersession = 0
     held_by_source_policy = 0
     held_by_structure_policy = 0
+    held_by_customer_balance = 0
     conflicted = 0
     superseded = 0
     archived_duplicates = 0
@@ -325,6 +329,14 @@ def run(
             _record_source_policy_hold(store, claim, score, citation_count, _STRUCTURE_POLICY_HOLD)
             pending += 1
             held_by_structure_policy += 1
+            continue
+
+        # Customer-balance policy (T-2112): operational data about a customer is
+        # never confirmed automatically; it stays a candidate with its own reason.
+        if claim.status != "confirmed" and customer_balance_blocks_auto_promotion(claim):
+            _record_source_policy_hold(store, claim, score, citation_count, _CUSTOMER_BALANCE_HOLD)
+            pending += 1
+            held_by_customer_balance += 1
             continue
 
         # Calibrated-classifier gate (task #129): when the artifact is present
@@ -454,6 +466,7 @@ def run(
         "blocked_pending_supersession": blocked_pending_supersession,
         "held_by_source_policy": held_by_source_policy,
         "held_by_structure_policy": held_by_structure_policy,
+        "held_by_customer_balance": held_by_customer_balance,
         "staled": staled,
         "revalidated_healthy": revalidated_healthy,
         "observation_checked": observation_review["checked"],

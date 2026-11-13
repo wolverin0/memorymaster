@@ -6,6 +6,8 @@ from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from memorymaster.surfaces import scheduled_task
 from memorymaster.surfaces.scheduled_task import _parser, _run_dream
 
@@ -38,7 +40,7 @@ def test_scheduled_dream_queues_due_capture_work_before_processing(
         calls.append(("capture", limit))
         return {"completed": 1}
 
-    def fake_dream(db, workspace, *, apply_candidates):
+    def fake_dream(db, workspace, *, apply_candidates, **_kwargs):
         calls.append(("dream", apply_candidates))
         return {"ok": True, "errors": 0}
 
@@ -266,6 +268,8 @@ def test_scheduled_transcript_index_refreshes_the_sidecar_and_logs(tmp_path: Pat
     (root / "sess.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
     index = tmp_path / "transcripts.db"
     monkeypatch.setenv("MEMORYMASTER_TRANSCRIPT_ROOT", str(tmp_path / "projects"))
+    for source in ("CODEX", "AGY", "OPENCODE"):  # the default roots of the other CLIs are the real home: never read it
+        monkeypatch.setenv(f"MEMORYMASTER_TRANSCRIPT_ROOT_{source}", "off")
     monkeypatch.setenv("MEMORYMASTER_TRANSCRIPT_INDEX", str(index))
     log_path = tmp_path / "transcript-index.log"
     monkeypatch.setattr(scheduled_task, "_log_path", lambda _mode: log_path)
@@ -276,3 +280,21 @@ def test_scheduled_transcript_index_refreshes_the_sidecar_and_logs(tmp_path: Pat
     assert conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] == 1
     conn.close()
     assert "transcript_index_result" in log_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("stats, code", [
+    ({"errors": 4, "files_indexed": 9, "files_skipped": 100, "opencode_errors": 4}, 0),  # per-session errors are not a failed run
+    ({"errors": 1, "claude_errors": 1, "claude_failed": 1, "sources_failed": 1, "files_indexed": 3}, 1),  # Claude source failed
+    ({"errors": 2, "files_indexed": 0, "files_skipped": 0}, 1),  # nothing could be read
+    ({"errors": 0, "files_indexed": 0, "files_skipped": 0}, 0),  # nothing to do
+    ({"errors": 1, "opencode_failed": 1, "sources_failed": 1, "files_indexed": 5}, 1),  # any whole source down
+])
+def test_scheduled_transcript_index_exit_code_reflects_a_failed_run(monkeypatch, tmp_path, stats, code) -> None:
+    from memorymaster.recall import transcript_index
+
+    monkeypatch.setattr(transcript_index, "index_transcripts", lambda **_: dict(stats))
+    monkeypatch.setattr(scheduled_task, "_log_path", lambda _mode: tmp_path / "t.log")
+    assert scheduled_task.main(["transcript-index", "--db", str(tmp_path / "x.db"), "--workspace", str(tmp_path)]) == code
+    logged = (tmp_path / "t.log").read_text(encoding="utf-8")
+    named = [k[: -len("_failed")] for k, v in stats.items() if k.endswith("_failed") and v]
+    assert "failed_sources" in logged and all(name in logged for name in named)  # the log line says which source failed

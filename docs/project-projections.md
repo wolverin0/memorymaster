@@ -59,11 +59,24 @@ These commands do not enable automatic refresh or consumers.
 
 An opt-in, fixed-shape digest published inside the projection: header (project, `as_of`, one
 freshness stamp per source), then RUNNING (top three cards), NEXT (first unchecked ROADMAP item),
-DECISIONS (three newest confirmed decision claims) and FAILURES (three newest bug / bug_cause /
-gotcha claims, failed or blocked cards with blocker text, and `FAIL` due-measurements). Every line
-ends with its source tag (`[T-NNNN]`, `[ROADMAP.md#L<n>]`, `[mm-<id>]`, `[due:<id>]`). A source
+FAILURES (three newest bug / bug_cause / gotcha claims, failed or blocked cards with blocker text, and
+`FAIL` due-measurements) and DECISIONS (three newest confirmed decision claims). FAILURES precede DECISIONS
+so a cut at the 1,600-byte cap, or at the Codex adapter's 1,800-byte limit, drops decisions first. Every line
+ends with its source tag (`[T-NNNN]`, `[ROADMAP.md#L<n>]`, `[due:<id>]`, or a claim label). A claim label is
+the claim's `human_id` (`mm-344e`), the same label the recall hooks print, so it can be cited and looked up in
+its scope; a claim without a valid `human_id` shows `claim:<numeric id>`, never a numeric id behind an `mm-`
+prefix, which is a different id space. A source
 older than 14 days shows `(stale Nd)`, a missing one `unavailable`, a readable-but-empty one `empty`.
-The cap is 1,600 UTF-8 bytes; the brief is cut from the bottom by whole lines.
+The cap is 1,600 UTF-8 bytes; the brief is cut from the bottom by whole lines. With the 59-byte envelope
+opener and the two identity lines the whole brief fits inside Codex's 1,800-byte cut.
+
+Coverage is declared, never implied. A section that could not be read says so instead of `none`:
+`- unavailable: <reason> [ledger|claims]`. The ledger renders only with `ledger_filtered: true` in the mapping,
+`ledger_repo`, and `MEMORYMASTER_PROJECT_LEDGER_TASKS_DIR`; without them RUNNING reads `ledger source not
+configured (mapping ledger_filtered + tasks dir)`, and a configured but unreadable directory reads `ledger
+source unreadable`. DECISIONS and FAILURES are read by two independent newest-first queries (at most 60 rows
+and 1 MiB each, one deadline each): a failed or timed-out query marks only its section unavailable, and a scan
+that hit its row limit with fewer than three surviving rows stamps `claims partial` in the header.
 
 | Setting | Meaning |
 |---|---|
@@ -71,8 +84,10 @@ The cap is 1,600 UTF-8 bytes; the brief is cut from the bottom by whole lines.
 | `MEMORYMASTER_PROJECT_PROJECTION_DUE_MEASUREMENTS` | Absolute path of `due-measurements.json`; default `~/.memorymaster/checkpoints/due-measurements.json` when the brief is on. Read-only, only for the `memorymaster` / `py-apps` slugs (the file has no repo field). Ignored while the brief is off |
 | mapping key `roadmap_root` | Absolute directory holding the `ROADMAP.md` to read; default is the mapping's `project_root`. Point memorymaster at the live-main checkout (`_wt/live-main`) so the brief does not read a stale working copy. Ignored while the brief is off; a relative value rejects the allowlist when the brief is on |
 
-Everything above is collected on the refresh path only. SessionStart reads the published file and
-never queries the database, so a brief line is not rehydrated at read time. The exposure window for
+The brief is collected on the refresh path only; SessionStart never rebuilds it and a brief line is not
+rehydrated at read time. SessionStart does validate the published projection: it re-reads the legacy support
+claims (at most 64 by primary key) and the configured ledger directory, which dominates its cost when a ledger
+is configured (measured 30-70 ms without a ledger, 220-1,200 ms with the live ledger). The exposure window for
 a claim that was forgotten (archived), privatized or superseded after publication is therefore
 bounded by the refresh cycle plus the read TTL: any such write is a database commit, which changes
 the refresher's `PRAGMA data_version` fingerprint, so the next refresh tick (the in-process cache
@@ -81,9 +96,19 @@ lives at most 60 s) rebuilds and republishes the brief without that line. If the
 not fit the budget is shrunk from the bottom (`brief_trimmed`) and, if even its header cannot fit,
 dropped (`brief_dropped`); neither fails the projection.
 
-The claim query pins `idx_claims_tuple_key` (tenant, scope) when that index exists: without it the
-planner chose `idx_claims_replaced_by` (about 35k rows on the live database, seconds cold) against
-the per-query deadline (1 s each for the claim query and its citation lookup).
+The claim queries pin `idx_claims_status` when it exists (else `idx_claims_tuple_key`): without a pin the planner
+chose `idx_claims_replaced_by` (about 35k rows on the live database, seconds cold). The status index bounds the
+read by the table's confirmed rows (6.7k live, about 11 ms) rather than by the scope (33k rows, about 80 ms).
+No (tenant, scope, status) index exists; add one by migration when confirmed rows pass about 50k.
+
+Publication with an incomplete source. The projection's legacy sections read every claim of the scope that can
+render. With the brief on, that scan is narrowed to confirmed, public, unsuperseded, section-typed rows (the
+change cursor reports a candidate confirmed later), so a 40,000-claim scope no longer exceeds the 512 cap; a
+scope with more than 512 renderable claims still does. With the brief off the scan, the all-status fence and
+the refusal to publish an incomplete source are unchanged. With the brief on, an incomplete source still
+publishes (`source_complete: false`, diagnostics `source_incomplete` / `claims_unavailable`, legacy sections
+absent) because the brief carries its own per-source coverage, except that a complete publication younger than
+30 minutes is never replaced by an incomplete one, so a transient read failure keeps the last good view.
 
 ## Integrity and budgets
 

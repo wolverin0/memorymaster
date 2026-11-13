@@ -588,3 +588,14 @@ def test_tampered_temporal_boundary_never_reaches_public_manifest_or_cli(project
     # An unavailable pair is a non-zero read; whatever is emitted carries nothing of the tampered field.
     assert main(args) in (0, 1)
     assert injected not in capsys.readouterr().out
+
+
+def test_a_validation_that_could_not_read_its_source_is_reported_as_not_revalidated(project_config):
+    claim(project_config)
+    assert publish_project_projection(project_config, build_project_projection(project_config))
+    assert "not_revalidated" not in read_project_projection(project_config).manifest["diagnostics"]
+    with sqlite3.connect(project_config.db_path) as conn:
+        conn.execute("DROP TABLE claims")  # the claim source becomes unreadable between publication and read
+    view = read_project_projection(project_config)
+    assert view is not None and "not_revalidated" in view.manifest["diagnostics"]
+    assert "claims_unavailable" in view.manifest["diagnostics"]

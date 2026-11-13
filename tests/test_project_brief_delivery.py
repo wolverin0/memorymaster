@@ -19,7 +19,6 @@ from memorymaster.profile import project_runtime
 from memorymaster.profile.project_brief import BriefInputs, Entry, render_brief_cut
 from memorymaster.profile.project_brief import BRIEF_MAX_BYTES
 from memorymaster.profile.project_projection import build_project_projection, publish_project_projection
-from memorymaster.recall import delivery
 from memorymaster.surfaces import agy_hooks, hook_recall
 from scripts import accept_project_brief as accept
 
@@ -56,10 +55,24 @@ def _emitted(cli: str, config) -> str:
 @pytest.mark.parametrize("cli", accept.CLIS)
 def test_every_adapter_delivers_the_brief_instead_of_the_legacy_sections(cli, published) -> None:
     text = _emitted(cli, published)
-    assert "T-1 running: Ship brief" in text and "[ROADMAP.md#L2]" in text and "bug: Race in cache [mm-4]" in text
+    assert "T-1 running: Ship brief" in text and "[ROADMAP.md#L2]" in text and "bug: Race in cache [claim:4]" in text
     assert "## Purpose" not in text and "## Decisions" not in text  # the legacy block is replaced
     if cli == "codex":
         assert len(text.encode()) <= 1800 and "[... truncated]" not in text
+
+
+def test_without_a_published_brief_every_adapter_still_gets_the_legacy_payload(published, monkeypatch) -> None:
+    """Opt-in: projections on but no brief in the manifest (brief flag off at publish time) changes nothing."""
+    config = replace(published, brief=False, output_root=published.output_root.parent / "out-legacy")
+    assert publish_project_projection(config, build_project_projection(config))
+    monkeypatch.setattr(project_runtime, "load_project_configs", lambda: [config])
+    from memorymaster.profile.project_projection import read_project_projection
+
+    projection = read_project_projection(config)
+    assert "brief" not in projection.manifest and project_runtime.delivery_payload(projection) == projection.payload
+    for cli in accept.CLIS:
+        text = _emitted(cli, config)
+        assert "Brief demo" not in text and "## Decisions" in text, cli
 
 
 def test_acceptance_runner_passes_every_cli_for_a_complete_project(published) -> None:
@@ -100,22 +113,22 @@ def test_agy_session_start_without_projections_keeps_the_scope_recall(tmp_path, 
     assert "[mm-7] fact" in json.loads(out)["injectSteps"][0]["ephemeralMessage"]
 
 
-def _opencode_prompt(published, monkeypatch, capsys, prompt: str, session: str = "oc-1") -> str:
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({"prompt": prompt, "cwd": str(published.project_root),
-                                                              "session_id": session})))
+def _opencode(published, monkeypatch, capsys, *argv: str, **payload) -> str:
+    """The python process the OpenCode plugin spawns: `--session-start` for the brief, no flag for a prompt's recall."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
+        "prompt": "what did we decide about the cache layer design", "cwd": str(published.project_root), **payload})))
     monkeypatch.setattr(hook_recall, "hook_recall", lambda *args, **kwargs: ("- [mm-9] recalled fact", "local"))
-    assert hook_recall.main(["--cli", "opencode"]) == 0
+    assert hook_recall.main(["--cli", "opencode", *argv]) == 0
     return capsys.readouterr().out
 
 
-def test_opencode_gets_the_brief_once_per_session_id_even_on_a_trivial_first_prompt(published, monkeypatch, capsys) -> None:
-    first = _opencode_prompt(published, monkeypatch, capsys, "ok gracias")  # trivial: no recall, the brief still arrives
-    assert first.startswith("[MemoryMaster recall]\n") and "T-1 running: Ship brief" in first and "mm-9" not in first
-    second = _opencode_prompt(published, monkeypatch, capsys, "what did we decide about the cache layer design")
-    assert "mm-9" in second and "T-1 running" not in second
-    assert "T-1 running" in _opencode_prompt(published, monkeypatch, capsys, "ok gracias", session="oc-2")
-    delivery.reset_session("opencode:oc-1")  # a SessionStart event re-arms the brief
-    assert delivery.brief_pending("opencode:oc-1")
+def test_opencode_brief_comes_from_session_start_and_never_rides_a_prompt(published, monkeypatch, capsys) -> None:
+    """One delivery path: the plugin asks `--session-start` once per session (test_opencode_hooks counts those);
+    the per-prompt process carries the recall only, so the brief cannot arrive twice."""
+    brief = _opencode(published, monkeypatch, capsys, "--session-start", session_id="oc-1")
+    assert brief.startswith(hook_recall.BRIEF_PREFIX) and "T-1 running: Ship brief" in brief and "mm-9" not in brief
+    prompt = _opencode(published, monkeypatch, capsys, session_id="oc-1")
+    assert "mm-9" in prompt and "T-1 running" not in prompt and "Brief demo" not in prompt
 
 
 def test_a_maximum_size_brief_fits_the_codex_cap_with_its_envelope() -> None:
@@ -133,12 +146,12 @@ def test_pinned_constraints_ride_in_the_brief_before_decisions(cli, published) -
     assert publish_project_projection(published, build_project_projection(published))
     text = _emitted(cli, published)
     assert text.index("CONSTRAINTS") < text.index("DECISIONS")
-    assert "- Never write to the live database [mm-5]" in text
+    assert "- Never write to the live database [claim:5]" in text
     if cli == "codex":
         assert len(text.encode()) <= 1800 and "[... truncated]" not in text
 
 
-def test_a_pinned_constraint_survives_the_byte_cap_that_cuts_decisions_and_failures() -> None:
+def test_a_pinned_constraint_outlives_decisions_under_the_byte_cap_and_failures_outlive_it() -> None:
     entries = [Entry(datetime(2026, 11, n, tzinfo=timezone.utc), f"item {n} " + "y" * 105, f"mm-{n}") for n in range(1, 4)]
     cards = tuple({"id": f"T-{n}", "state": "running", "title": "t" * 60, "next_action": "n" * 60, "blocker": "b" * 50,
                    "updated_at": "2026-11-08T00:00:00Z"} for n in range(1, 4))
@@ -147,34 +160,24 @@ def test_a_pinned_constraint_survives_the_byte_cap_that_cuts_decisions_and_failu
                          failures=tuple(entries), constraints=(Entry(None, "Never write the live database", "mm-9"),))
     text, cut = render_brief_cut(inputs)
     assert cut and len(text.encode()) <= BRIEF_MAX_BYTES
-    assert "- Never write the live database [mm-9]" in text and text.index("CONSTRAINTS") < text.index("DECISIONS")
-    assert text.count("[mm-") < 7  # decisions/failures lost lines, the constraint did not
+    assert "- Never write the live database [mm-9]" in text
+    assert text.index("FAILURES") < text.index("CONSTRAINTS") < text.index("DECISIONS")  # required elements first
+    assert text.count("[mm-") < 7  # decisions lost lines, the constraint did not
 
 
-def _opencode_out(published, monkeypatch, capsys, **payload) -> str:
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({
-        "prompt": "what did we decide about the cache layer design", "cwd": str(published.project_root), **payload})))
-    monkeypatch.setattr(hook_recall, "hook_recall", lambda *args, **kwargs: ("- [mm-9] recalled fact", "local"))
-    assert hook_recall.main(["--cli", "opencode"]) == 0
-    return capsys.readouterr().out
-
-
-def test_a_failing_brief_never_removes_the_prompts_recall(published, monkeypatch, capsys) -> None:
+def test_a_failing_brief_prints_nothing_and_never_removes_the_prompts_recall(published, monkeypatch, capsys) -> None:
     def boom(data):
         raise RuntimeError("brief broke")
 
     monkeypatch.setattr(project_runtime, "session_start_context", boom)
-    out = _opencode_out(published, monkeypatch, capsys, session_id="oc-1")
-    assert "mm-9" in out and "Brief" not in out
+    assert _opencode(published, monkeypatch, capsys, "--session-start", session_id="oc-1") == ""
+    assert "mm-9" in _opencode(published, monkeypatch, capsys, session_id="oc-1")
 
 
 def test_a_lane_with_the_hook_disabled_gets_no_brief(published, monkeypatch, capsys) -> None:
-    monkeypatch.setattr(hook_recall.hook_policy, "disabled_for", lambda cwd: True)
-    assert "Brief demo" not in _opencode_out(published, monkeypatch, capsys, session_id="oc-1")
-    assert delivery.brief_pending("opencode:oc-1")  # nothing was delivered, so nothing is marked
+    monkeypatch.setattr(hook_recall, "disabled_for", lambda cwd: True)
+    assert _opencode(published, monkeypatch, capsys, "--session-start", session_id="oc-1") == ""
 
 
-def test_an_opencode_session_without_an_id_gets_no_brief_and_no_shared_marker(published, monkeypatch, capsys, tmp_path) -> None:
-    out = _opencode_out(published, monkeypatch, capsys)  # no session_id at all
-    assert "mm-9" in out and "Brief demo" not in out
-    assert not list((tmp_path / "recall-state").glob("*.brief"))
+def test_an_opencode_session_without_an_id_gets_no_brief(published, monkeypatch, capsys) -> None:
+    assert _opencode(published, monkeypatch, capsys, "--session-start") == ""  # no session_id at all

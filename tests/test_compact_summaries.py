@@ -371,3 +371,16 @@ def test_summary_is_never_more_visible_than_its_private_sources(mock_llm, store)
     [summary] = [c for c in store.list_claims(limit=50) if c.claim_type == "summary"]
     assert (summary.visibility, summary.source_agent, summary.status) == ("private", "alice", "candidate")
 
+
+
+def test_prompt_block_is_gated_and_drops_a_line_the_egress_gate_withholds():
+    """S-6: compaction prompts go through the egress gate, not only the literal redactor."""
+    from types import SimpleNamespace
+
+    from memorymaster.govern.jobs.compact_summaries import _build_claim_text_block
+
+    def claim(text):
+        return SimpleNamespace(subject="svc", predicate="uses", object_value=None, text=text)
+
+    block = _build_claim_text_block([claim("host 10.1.2.3 is up"), claim("DB_PASS=" + "hunter2hunter2")])
+    assert "10.1.2.3" not in block and "hunter2" not in block and block.count("\n") == 0

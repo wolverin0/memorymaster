@@ -37,31 +37,12 @@ def _state_path(session_id: str, state_dir: Path | None = None) -> Path:
     return directory / (name + ".json")
 
 
-def _brief_marker(session_id: str, state_dir: Path | None = None) -> Path:
-    return _state_path(session_id, state_dir).with_suffix(".brief")
-
-
-def brief_pending(session_id: str, *, state_dir: Path | None = None) -> bool:
-    """True until the project brief was delivered for this session id (CLIs with no SessionStart event)."""
-    return isinstance(session_id, str) and bool(session_id) and not _brief_marker(session_id, state_dir).exists()
-
-
-def mark_brief_delivered(session_id: str, *, state_dir: Path | None = None) -> None:
-    try:
-        marker = _brief_marker(session_id, state_dir)
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.touch()
-    except OSError:
-        pass  # worst case the brief repeats on the next prompt
-
-
 def reset_session(session_id: str, *, state_dir: Path | None = None) -> None:
     """SessionStart (including compact/resume) permits unchanged context again."""
     if not isinstance(session_id, str) or not session_id:
         return
     try:
         _state_path(session_id, state_dir).unlink(missing_ok=True)
-        _brief_marker(session_id, state_dir).unlink(missing_ok=True)
     except OSError:
         pass
     hook_policy.forget(session_id)  # the claims injected before are gone from the context too
@@ -254,6 +235,17 @@ def confirm_turn(data: dict, adapter: str, *, emitted: str, query: str = "", fai
         for cid, _ in packed:
             if cid not in kept:
                 omitted[str(cid)] = (failure or "not_emitted") if not emitted else drop_reason
+        fragment = turn.get("fragment")  # the reserved-slot transcript fragment: same emitted test, by its tag
+        fragment_state = "-"
+        if isinstance(fragment, dict) and isinstance(fragment.get("key"), int):
+            tag = fragment.get("tag")
+            if emitted and (not tag or tag in emitted):
+                fragment_state = "emitted"
+                if hook_policy.session_id_of(data):
+                    hook_policy.remember(session, [fragment["key"]])
+            else:
+                fragment_state = (failure or "not_emitted") if not emitted else drop_reason
+            fragment_state = f"{fragment['key']}:{fragment_state}"
         if kept:
             if hook_policy.session_id_of(data):
                 hook_policy.remember(session, kept)
@@ -265,7 +257,8 @@ def confirm_turn(data: dict, adapter: str, *, emitted: str, query: str = "", fai
                    "omitted": omitted}
         _log_receipt(adapter, session, turn=receipt["turn"], ranked=receipt["ranked"],
                      selected=_ids(receipt["selected"]), packed=_ids(receipt["packed"]), emitted=_ids(kept),
-                     omitted=",".join(f"{cid}:{reason}" for cid, reason in omitted.items()) or "-")
+                     omitted=",".join(f"{cid}:{reason}" for cid, reason in omitted.items()) or "-",
+                     fragment=fragment_state)
         return receipt
     except Exception:  # noqa: BLE001 — observation and bookkeeping only
         return None

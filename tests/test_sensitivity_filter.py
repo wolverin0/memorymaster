@@ -581,6 +581,7 @@ def test_aws_shaped_tokens_300kb_with_and_without_a_key_id_are_linear() -> None:
 @pytest.mark.parametrize("path", [
     "C:/Users/pauolx11/AppData/x.log",
     "/c/Users/pauolx12/projects/x",
+    "/mnt/c/Users/pauolx19/projects/x",                    # WSL mount (persisted text only; egress has its own rule)
     "C:\\\\Users\\\\pauolx13\\\\Desktop\\\\x.txt",           # JSON-escaped: two literal backslashes
     "C:\\Users\\pauolx14\\Desktop\\x.txt",
     "/Users/Pauolx15/projects/x",

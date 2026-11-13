@@ -22,8 +22,7 @@ from memorymaster.govern.llm_steward import (
     _parse_extractions,
 )
 from memorymaster.core.models import CitationInput
-from memorymaster.core.promotion_policy import auto_promotion_blocked
-from memorymaster.core.security import redact_text
+from memorymaster.core.promotion_policy import auto_promotion_blocked, claim_auto_promotion_blocked
 from memorymaster.stores.claim_identity import identity_namespace_key
 
 log = logging.getLogger(__name__)
@@ -80,9 +79,12 @@ def _inherited_source_agent(sources: list[Any]) -> str | None:
     return None
 
 
-def _build_claim_text_block(claims: list[Any]) -> str:
-    """Format and redact claims into a text block for the LLM prompt."""
+def _gated_claim_block(claims: list[Any]) -> tuple[str, list[Any]]:
+    """Prompt text for ``claims`` after the egress gate, and the claims whose line went out."""
+    from memorymaster.core.provider_egress import export_stored
+
     lines: list[str] = []
+    sent: list[Any] = []
     for i, claim in enumerate(claims, 1):
         parts = [f"[{i}]"]
         if claim.subject:
@@ -93,11 +95,18 @@ def _build_claim_text_block(claims: list[Any]) -> str:
             parts.append(f"Value: {claim.object_value}")
         if claim.text:
             parts.append(f"Text: {claim.text[:300]}")
-        lines.append(" | ".join(parts))
-    redacted_text, findings = redact_text("\n".join(lines))
-    if findings:
-        log.info("Redacted sensitive compact-summaries prompt fields: %s", ",".join(findings))
-    return redacted_text
+        safe = export_stored(" | ".join(parts))  # a line the gate withholds is left out of the prompt
+        if safe is None:
+            log.info("Withheld a compact-summaries prompt line (egress gate)")
+        else:
+            lines.append(safe)
+            sent.append(claim)
+    return "\n".join(lines), sent
+
+
+def _build_claim_text_block(claims: list[Any]) -> str:
+    """Format and gate claims into a text block for the LLM prompt."""
+    return _gated_claim_block(claims)[0]
 
 
 def _partition_by_identity(claims: list[Any]) -> list[list[Any]]:
@@ -298,7 +307,8 @@ def run(
         log.info("Key rotation enabled with %d keys", key_rotator.key_count)
 
     # 1. Find unsummarized archived claims
-    archived_claims = _get_unsummarized_archived_claims(store, limit=limit)
+    # Scan up to 10x limit: a claim the egress gate withholds is not summarised and must not use up `limit`.
+    archived_claims = _get_unsummarized_archived_claims(store, limit=limit * 10)
     if not archived_claims:
         log.info("No unsummarized archived claims found")
         return CompactSummaryResult(
@@ -344,10 +354,29 @@ def run(
             for i in range(0, len(cluster), max_cluster)
         ]
         for sub_cluster in sub_clusters:
+            if source_claims_summarized >= limit:
+                break
             if len(sub_cluster) < min_cluster:
                 continue
 
-            claims_text = _build_claim_text_block(sub_cluster)
+            claims_text, sent_claims = _gated_claim_block(sub_cluster)
+            if not sent_claims:  # every line withheld by the egress gate: no call, nothing summarised
+                details.append({
+                    "source_claim_ids": [c.id for c in sub_cluster],
+                    "cluster_size": len(sub_cluster),
+                    "action": "egress_withheld",
+                })
+                continue
+            # Only the claims whose lines went out are summarised, linked and retired by this summary;
+            # a withheld claim stays exactly as it was.
+            if len(sent_claims) < min_cluster:  # min_cluster counts what was actually summarised
+                details.append({
+                    "source_claim_ids": [c.id for c in sub_cluster],
+                    "cluster_size": len(sub_cluster),
+                    "action": "egress_withheld",
+                })
+                continue
+            sub_cluster = sent_claims
             prompt = SUMMARIZE_PROMPT.replace("{claims_text}", claims_text)
 
             detail: dict[str, Any] = {
@@ -423,10 +452,11 @@ def run(
                 )
 
                 # Transition summary claim to confirmed status, unless its sources
-                # are all authors that never auto-promote (T-1354): it stays candidate.
+                # are all authors that never auto-promote (T-1354), or the summary itself
+                # states a customer balance (T-2112): it stays candidate.
                 from memorymaster.core.lifecycle import transition_claim
                 # Never auto-confirm a summary of non-public sources: it stays a candidate.
-                if sub_cluster[0].visibility == "public" and not auto_promotion_blocked(inherited_agent):
+                if sub_cluster[0].visibility == "public" and not claim_auto_promotion_blocked(summary_claim):
                     transition_claim(
                         store,
                         claim_id=summary_claim.id,

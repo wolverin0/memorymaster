@@ -11,71 +11,71 @@ import os
 from pathlib import Path
 import sys
 
-from memorymaster.core.text_safety import sanitize_text
-from memorymaster.recall.delivery import (
-    brief_pending, confirm_turn, defer_payload, is_automated, mark_brief_delivered, recall_block,
-)
-from memorymaster.recall import hook_policy
-from memorymaster.recall.hook_policy import is_trivial_prompt
+from memorymaster.core.text_safety import fit_brief, sanitize_text
+from memorymaster.recall.delivery import confirm_turn, defer_payload, is_automated, recall_block
+from memorymaster.recall.hook_policy import disabled_for, is_trivial_prompt
 from memorymaster.recall.machine_traffic import machine_skip
 from memorymaster.recall.recall_format import active_task_text, apply_format, format_mode
 from memorymaster.recall.remote import hook_recall
 
 
-def session_brief(cwd: str, session_id: str) -> str:
-    """The project brief, once per session id: OpenCode has no SessionStart event, so its first prompt carries it.
-    ``""`` while projections are off, when nothing is published, after the first delivery, for a session with no
-    id (no marker to key on), where the hook is switched off, and on any failure: the brief never costs the
-    prompt its recall."""
-    try:
-        if not brief_pending(session_id) or hook_policy.disabled_for(cwd):
-            return ""
-        from memorymaster.profile.project_runtime import session_start_context
+BRIEF_PREFIX = "[MemoryMaster project brief]\n"
 
-        return session_start_context({"cwd": cwd, "session_id": session_id}) or ""
-    except Exception:  # noqa: BLE001
+
+def session_brief(data: dict, cli: str) -> str:
+    """The project brief for a session's first prompt ("" when the flags are off or nothing is published)."""
+    from memorymaster.recall.machine_traffic import filter_enabled, internal_run
+    cwd, session = data.get("cwd"), data.get("session_id")
+    if not isinstance(cwd, str) or not cwd or not isinstance(session, str) or not session:
         return ""
+    if filter_enabled(cli) and internal_run():
+        return ""
+    if disabled_for(cwd):  # per-lane A/B switch (T-1351): a lane with the hook off gets no brief either
+        return ""
+    from memorymaster.profile.project_runtime import session_start_context
+
+    context = session_start_context({"cwd": cwd, "session_id": f"{cli}:{session}"})
+    if not context or not context.strip():
+        return ""
+    return BRIEF_PREFIX + fit_brief(sanitize_text(context))
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cli", choices=("opencode",), required=True)
+    parser.add_argument("--session-start", action="store_true", help="print the project brief instead of a recall")
     args = parser.parse_args(argv)
     try:
         data = json.loads(sys.stdin.read(65_536) or "{}")
         if not isinstance(data, dict):
+            return 0
+        if args.session_start:
+            sys.stdout.write(session_brief(data, args.cli))
+            sys.stdout.flush()
             return 0
         prompt = data.get("prompt")
         cwd = data.get("cwd")
         if not isinstance(prompt, str) or not isinstance(cwd, str) or not cwd:
             return 0
         prompt = sanitize_text(prompt)
-        if is_automated(prompt) or machine_skip(prompt, args.cli):
+        if is_automated(prompt) or is_trivial_prompt(prompt) or machine_skip(prompt, args.cli):
             return 0
         data = {"prompt": prompt, "cwd": cwd,
                 "session_id": f"{args.cli}:{data.get('session_id') or ''}"}
         db = os.environ.get("MEMORYMASTER_DEFAULT_DB") or str(Path(__file__).resolve().parents[2] / "memorymaster.db")
-        brief = session_brief(cwd, data["session_id"] if data.get("session_id") != f"{args.cli}:" else "")
-        trivial = is_trivial_prompt(prompt)
-        if trivial and not brief:
-            return 0
         data = defer_payload(data)
-        context = "" if trivial else hook_recall(prompt, data, db_path=db, timeout=2.5)[0]
+        context, _via = hook_recall(prompt, data, db_path=db, timeout=2.5)
         mode = format_mode()
         if context and mode != "current":
             context = apply_format(context, prompt, active_task_text(cwd), mode)
-        parts = [part for part in (brief, context) if part]
-        block, failure = (recall_block("\n".join(parts)) if parts else ""), "not_emitted"
+        block, failure = (recall_block(context) if context else ""), "not_emitted"
         try:
             if block:
                 sys.stdout.write(block)
                 sys.stdout.flush()
-            if brief:
-                mark_brief_delivered(data["session_id"])
-        except Exception:  # the plugin is gone: the claims (and the brief) stay retryable (T-2275)
+        except Exception:  # the plugin is gone: the claims stay retryable (T-2275)
             block, failure = "", "write_failure"
-        if not trivial:
-            confirm_turn(data, args.cli, emitted=block, query=prompt, failure=failure, db_path=db)
+        confirm_turn(data, args.cli, emitted=block, query=prompt, failure=failure, db_path=db)
     except Exception:
         pass
     return 0

@@ -75,11 +75,9 @@ def render(cli: str, cwd: str, db_path: str) -> str:
         out = run_hook("SessionStart", {"conversationId": sid, "workspacePaths": [cwd]}, db_path=db_path)
         return json.loads(out)["injectSteps"][0]["ephemeralMessage"] if out else ""
     if cli == "opencode":
-        from memorymaster.recall.delivery import recall_block
-        from memorymaster.surfaces.hook_recall import session_brief
+        from memorymaster.surfaces.hook_recall import session_brief  # the plugin's `--session-start` call
 
-        brief = session_brief(cwd, f"opencode:{sid}")
-        return recall_block(brief) if brief else ""
+        return session_brief(data, "opencode")
     raise ValueError(f"unknown cli {cli!r}")
 
 

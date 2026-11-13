@@ -248,6 +248,20 @@ def _persisted_skip_hint(config, cheap: tuple) -> bool:
             (not boundary or now < datetime.fromisoformat(boundary.replace("Z", "+00:00"))))
 
 
+def _publish_degraded(config, manifest, previous) -> bool:
+    """Brief on: an incomplete legacy source still publishes, because the brief states its own coverage per source.
+
+    A complete publication younger than 30 minutes is kept instead, so a transient read failure never replaces
+    a good view; a persistent one publishes before the 60-minute read TTL would leave nothing at all.
+    """
+    if not (config.brief and manifest.get("brief")):
+        return False
+    if not previous or not previous.get("source_complete"):
+        return True
+    checked = datetime.fromisoformat(previous["checked_at"].replace("Z", "+00:00"))
+    return (datetime.now(timezone.utc) - checked).total_seconds() > 1800
+
+
 def _refresh_one(config, *, skip: bool = False) -> dict:
     from memorymaster.profile.project_projection import (
         atomic_json,
@@ -262,7 +276,7 @@ def _refresh_one(config, *, skip: bool = False) -> dict:
     before = _cheap_hash(config)
     projection = build_project_projection(config)
     manifest = projection.manifest
-    if not manifest.get("source_complete", False):
+    if not manifest.get("source_complete", False) and not _publish_degraded(config, manifest, previous):
         return {"status": "pending"}
     after = _cheap_hash(config)
     if before != after:

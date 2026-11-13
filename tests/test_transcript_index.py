@@ -427,3 +427,13 @@ def test_t2077_l28_a_current_format_index_without_the_flag_is_migrated_not_dropp
     stats = ti.index_transcripts(root, idx, include_automated=True)
     assert stats["rebuilt"] == 0 and stats["files_indexed"] == 1 and stats["files_skipped"] == 1
     assert len(ti.search("ocelot gateway", idx)) == 2  # the skipped session is back, the human one kept
+
+
+def test_t2277_contract_hits_carry_their_source_and_stats_are_per_source(tmp_path):
+    """T-2277: the index serves several CLIs; an explicit root is the Claude root alone and hits say where they came from."""
+    root, idx = _setup(tmp_path)
+    stats = ti.index_transcripts(root, idx)
+    assert stats["claude_files_indexed"] == 2 and "codex_files_seen" not in stats and stats["sources_failed"] == 0
+    assert {h.source for h in ti.search("quokka timeout", idx)} == {"claude"}
+    with sqlite3.connect(idx) as con:
+        assert {row[0] for row in con.execute("SELECT source FROM fragments")} == {"claude"}
