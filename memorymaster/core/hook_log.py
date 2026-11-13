@@ -35,8 +35,25 @@ from typing import Any
 
 from memorymaster.core.text_safety import sanitize_text
 
-_STATE_DIR = Path(os.path.expanduser("~")) / ".memorymaster" / "hook_state"
-_LOG_FILE = _STATE_DIR / "hook.log"
+ENV_STATE_DIR = "MEMORYMASTER_HOOK_STATE_DIR"
+
+# Explicit overrides (tests patch these). None, the default, resolves on every call from the
+# environment and the current home, so a redirected HOME or state dir is honoured even when this
+# module was imported first.
+_STATE_DIR: Path | None = None
+_LOG_FILE: Path | None = None
+
+
+def state_dir() -> Path:
+    if _STATE_DIR is not None:
+        return _STATE_DIR
+    configured = os.environ.get(ENV_STATE_DIR, "").strip()
+    return Path(configured) if configured else Path(os.path.expanduser("~")) / ".memorymaster" / "hook_state"
+
+
+def log_file() -> Path:
+    """The file :func:`log_hook` appends to; readers of the shared log should use this too."""
+    return _LOG_FILE if _LOG_FILE is not None else state_dir() / "hook.log"
 
 
 def _fmt_value(v: Any) -> str:
@@ -54,7 +71,8 @@ def log_hook(hook: str, event: str, **fields: Any) -> None:
     Silent on any error — hooks must never fail because logging failed.
     """
     try:
-        _STATE_DIR.mkdir(parents=True, exist_ok=True)
+        path = log_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().astimezone().isoformat(timespec="seconds")
         parts = [f"[{ts}] hook={hook} event={event}"]
         for key, val in fields.items():
@@ -62,7 +80,7 @@ def log_hook(hook: str, event: str, **fields: Any) -> None:
                 continue
             parts.append(f"{key}={_fmt_value(val)}")
         line = sanitize_text(" ".join(parts)) + "\n"
-        with _LOG_FILE.open("a", encoding="utf-8") as fh:
+        with path.open("a", encoding="utf-8") as fh:
             fh.write(line)
     except Exception:
         # Hooks must never crash the event pipeline. Swallow.

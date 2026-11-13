@@ -377,7 +377,9 @@ def main(argv=None) -> int:
     parser.add_argument("--out", help="write the JSON report here (default: stdout)")
     args = parser.parse_args(argv)
     dense_log = args.dense_log or args.home / ".memorymaster" / "metrics" / "recall-dense.jsonl"
-    text = json.dumps(collect(args.db, args.ledger_db, args.home, dense_log, args.days, hook_log=args.hook_log),
+    state_override = os.environ.get("MEMORYMASTER_HOOK_STATE_DIR", "").strip()  # where log_hook writes when set
+    hook_log = args.hook_log or (Path(state_override) / "hook.log" if state_override else None)
+    text = json.dumps(collect(args.db, args.ledger_db, args.home, dense_log, args.days, hook_log=hook_log),
                       indent=2, sort_keys=True)
     if args.out:
         out = Path(args.out).expanduser()

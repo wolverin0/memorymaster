@@ -36,6 +36,11 @@ regenerate release metadata with `python scripts/generate_release_truth.py`, the
 run it with `--check`. Adding tests does not change it: the test-function count is
 printed at run time, not committed, so parallel PRs do not conflict on it.
 
+Hook log (T-2510): `log_hook` writes `$MEMORYMASTER_HOOK_STATE_DIR/hook.log`, default
+`~/.memorymaster/hook_state/hook.log`, resolved on every call. The suite never exports the variable
+(`tests/conftest.py::_hermetic_hook_log` clears it) and redirects HOME, so a test or probe that sets
+neither still logs inside its tmp tree; a probe that needs a fixed place sets the variable.
+
 ## One observable memory journey
 
 `python -m memorymaster --json demo` uses disposable SQLite, fixture providers,

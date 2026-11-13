@@ -36,7 +36,9 @@ _KV = re.compile(r"(\w+)=(?:\"([^\"]*)\"|(\S+))")
 
 def _default_log_path() -> Path:
     """Where :func:`log_hook` writes on Windows and POSIX."""
-    return Path(os.path.expanduser("~")) / ".memorymaster" / "hook_state" / "hook.log"
+    configured = os.environ.get("MEMORYMASTER_HOOK_STATE_DIR", "").strip()  # same override log_hook honours
+    base = Path(configured) if configured else Path(os.path.expanduser("~")) / ".memorymaster" / "hook_state"
+    return base / "hook.log"
 
 
 def _parse_fields(line: str) -> dict[str, str]:
