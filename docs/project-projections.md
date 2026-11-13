@@ -1,5 +1,5 @@
 <!-- doc-head: AO-3 configuration, incremental source cursor and local acceptance -->
-<!-- Covers: default-off gates, pilot limits, incremental reads, the opt-in project brief (sources, tags, stale window, roadmap_root) and dated source verification. -->
+<!-- Covers: default-off gates, pilot limits, incremental reads, the opt-in project brief (sources, tags, stale window, roadmap_root), refresh order (persisted checked_at + attempt stamp, future-dated stamps) and the read TTL (expired projection delivers only the refresh-pending notice), and dated source verification. -->
 <!-- Read when: reviewing or later authorizing the AO-3 pilot; no installation is implied. -->
 <!-- /doc-head -->
 # Project projections
@@ -148,6 +148,42 @@ claims: candidates and unsupported rows may later become eligible. An exceeded
 cap is partial. Reader support limits are 64 claims, 256 citations and 2 MiB
 shared source bytes, with a 25 ms SQLite busy timeout and cooperative 100 ms
 SQL deadline. OS filesystem stalls are not hard real-time bounded.
+
+## Refresh order and the read TTL
+
+The refresher runs as a new process on every Beat tick, so no in-process state survives between ticks. A tick
+walks the configured projects by one persisted key, oldest first: `max(checked_at, last attempt)`. `checked_at`
+comes from the manifest; the last attempt is a small stamp the refresher writes before every full refresh of a
+project, in `project-<slug>.attempt.json` beside the manifest (same context root, atomic replace, at most a
+few dozen bytes). A missing, unreadable, invalid, naive-timestamp or other-epoch manifest or stamp counts as
+"never" (the oldest possible), and so does an instant more than 60 seconds in the future (clock skew, a restored
+file, a bad write); reading them never fails the tick. The in-process rotation only breaks ties between equal
+keys. The 750 ms tick budget is unchanged and the first project of a tick always runs, so when every build
+exceeds the budget exactly one project is attempted per tick, and it then moves to the back whatever the
+outcome: with N projects no project waits more than N ticks, even while one of them keeps returning `pending`
+(it is retried once per round and the others are refreshed in between). N projects stay inside the 60-minute
+read TTL while N times the tick interval is under 60 minutes (four projects: 20 minutes at a 5-minute Beat;
+about 51 minutes at the 113 ticks a day once measured live, which is thin). Before this ordering the walk always
+began at the first project, and the last one was refreshed only when the earlier ones returned `unchanged`.
+
+Only the refresher reads the attempt stamp. It is outside the manifest and its digests, the session reader never
+opens it, and it never renews the read TTL: a project that keeps failing still expires after 60 minutes and
+delivers the refresh-pending notice below. A `pending` result (source incomplete without a brief, lock busy,
+source changed during the build) leaves `checked_at` alone; that is why the stamp exists. A project that keeps
+failing needs diagnosing, not reordering. A skip tick that rewrites the refresh hint also stamps `checked_at`
+(the write happens anyway after a complete validation).
+
+A manifest dated in the future is never served as fresh: the reader (`read_project_projection`) rejects a
+`checked_at` more than 60 seconds ahead of now, exactly as it rejects one older than 60 minutes, and the next
+validation (a full or skip tick) replaces it with the current instant.
+
+Read side: `read_project_projection` returns nothing for a projection whose `checked_at` is more than 60 minutes
+old. For a configured project (resolved from the cwd) `session_start_context` then delivers the generated
+envelope around the single line `Project context unavailable; refresh pending.` (162 bytes, plus the session
+delta and fitting profile lines when those are on) and no brief; because the consumer is enabled the SessionStart
+hook exits after writing it and legacy context is withheld. This is deliberate (fail closed: an expired
+projection is not revalidated at read time), so a stale refresher shows up as an empty brief, not an old one.
+(`tests/test_project_runtime.py::test_expired_projection_of_a_configured_project_delivers_only_the_refresh_pending_notice`.)
 
 ## Continuity and cheap refresh
 

@@ -31,6 +31,7 @@ from memorymaster.profile.project_repository import (
 SCHEMA = "memorymaster.project-projection.v1"
 SECTIONS = ("Purpose", "Constraints", "Decisions", "Open cards", "Gotchas")
 MAX_MANIFEST_BYTES = 256 * 1024
+CLOCK_SKEW_SECONDS = 60  # a stamp further in the future than this is invalid, never 'fresh'
 
 
 @dataclass(frozen=True)
@@ -621,7 +622,8 @@ def read_project_projection(config: ProjectProjectionConfig) -> ProjectProjectio
         return None
     try:
         checked = datetime.fromisoformat(manifest["checked_at"])
-        if checked.tzinfo is None or (datetime.now(timezone.utc) - checked).total_seconds() > 3600:
+        age = (datetime.now(timezone.utc) - checked).total_seconds() if checked.tzinfo else None
+        if age is None or age > 3600 or age < -CLOCK_SKEW_SECONDS:
             return None
     except (ValueError, TypeError, KeyError):
         return None

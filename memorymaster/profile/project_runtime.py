@@ -8,7 +8,7 @@ import os
 import sqlite3
 import time
 from itertools import islice
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from memorymaster.core.generated_artifacts import GENERATED_CLOSER, GENERATED_OPENER
@@ -19,6 +19,7 @@ _refresh_cache: dict[tuple, tuple] = {}
 MAX_PROJECTS = 8  # allowlisted projects, and read-only db connections cached; the 4-CLI x 4-project matrix needs 4
 _connections: dict[str, sqlite3.Connection] = {}
 _rotation = 0
+_NEVER = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def active(name: str) -> bool:
@@ -259,7 +260,14 @@ def _publish_degraded(config, manifest, previous) -> bool:
     if not previous or not previous.get("source_complete"):
         return True
     checked = datetime.fromisoformat(previous["checked_at"].replace("Z", "+00:00"))
-    return (datetime.now(timezone.utc) - checked).total_seconds() > 1800
+    return _renewable((datetime.now(timezone.utc) - checked).total_seconds())
+
+
+def _renewable(age: float) -> bool:
+    """Older than half the read TTL, or dated in the future (clock skew, restored file): not a valid check."""
+    from memorymaster.profile.project_projection import CLOCK_SKEW_SECONDS
+
+    return age > 1800 or age < -CLOCK_SKEW_SECONDS
 
 
 def _refresh_one(config, *, skip: bool = False) -> dict:
@@ -293,20 +301,63 @@ def _refresh_one(config, *, skip: bool = False) -> dict:
         # A complete source validation just ran, so the read TTL may be renewed even on a SKIP
         # tick; the write is still skipped while the stored check is fresh (half the 60-minute TTL).
         checked = datetime.fromisoformat(previous["checked_at"])
-        renew = (datetime.now(timezone.utc) - checked).total_seconds() > 1800
+        renew = _renewable((datetime.now(timezone.utc) - checked).total_seconds())
         if not skip or renew or previous.get("refresh_hint") != manifest["refresh_hint"]:
             _, path = projection_paths(config)
             with project_lock(path.with_suffix(".lock"), timeout=0) as acquired:
                 if not acquired or read_manifest(config) != previous:
                     return {"status": "pending"}
-                if not skip or renew:
-                    previous["checked_at"] = datetime.now(timezone.utc).isoformat()
+                # This write happens anyway and follows a complete validation: stamping it keeps the refresh
+                # order fair (a validated project must not stay the stalest and be rebuilt first every tick).
+                previous["checked_at"] = datetime.now(timezone.utc).isoformat()
                 previous["refresh_hint"] = manifest["refresh_hint"]
                 previous["next_temporal_boundary"] = boundary
                 atomic_json(path, previous)
         return {"status": "ok", "next_temporal_boundary": boundary}
     published = publish_project_projection(config, projection)
     return {"status": "ok" if published else "pending", "next_temporal_boundary": boundary}
+
+
+def _attempt_path(config) -> Path:
+    """Last-attempt stamp beside the manifest: written only by the refresher, read only to order it."""
+    from memorymaster.profile.project_projection import projection_paths
+
+    _, manifest_path = projection_paths(config)
+    return manifest_path.with_name(manifest_path.stem + ".attempt.json")
+
+
+def _record_attempt(config) -> None:
+    """Stamp before a full refresh so a build that ends `pending` (or is killed) still moves to the back."""
+    from memorymaster.profile.project_projection import atomic_json
+
+    try:
+        atomic_json(_attempt_path(config), {"attempted_at": datetime.now(timezone.utc).isoformat()})
+    except Exception:  # noqa: BLE001 - the stamp is advisory; it must never turn into a refresh failure
+        pass
+
+
+def _instant(read, limit: datetime) -> datetime | None:
+    """An aware instant that is not later than `limit` (clock-skew tolerance included), else None."""
+    try:
+        value = datetime.fromisoformat(read().replace("Z", "+00:00"))
+    except Exception:  # noqa: BLE001 - absent, unreadable, naive or garbage all mean "no usable instant"
+        return None
+    return value if value.tzinfo is not None and value <= limit else None
+
+
+def _attempted_at(config) -> str:
+    with _attempt_path(config).open("rb") as stream:
+        return json.loads(stream.read(1024))["attempted_at"]
+
+
+def _order_key(config) -> datetime:
+    """max(last persisted check, last attempt); anything missing, broken or future-dated counts as never (oldest)."""
+    from memorymaster.profile.project_projection import CLOCK_SKEW_SECONDS, read_manifest
+
+    limit = datetime.now(timezone.utc) + timedelta(seconds=CLOCK_SKEW_SECONDS)
+    checked = _instant(lambda: read_manifest(config)["checked_at"], limit)
+    attempted = _instant(lambda: _attempted_at(config), limit)
+    return max(checked or _NEVER, attempted or _NEVER)
 
 
 def refresh_project_projections(*, skip: bool = False) -> dict:
@@ -320,7 +371,12 @@ def refresh_project_projections(*, skip: bool = False) -> dict:
     offset = _rotation % len(configs)
     _rotation += 1
     results = []
-    for config in configs[offset:] + configs[:offset]:
+    # Every tick is a new process (the in-process rotation is always 0), so fairness comes from the persisted
+    # manifests: stalest first; the stable sort keeps the rotation order for equal ages.
+    ordered = configs[offset:] + configs[:offset]
+    if len(ordered) > 1:
+        ordered.sort(key=_order_key)
+    for config in ordered:
         if time.monotonic() - start >= .750:
             results.append({"status": "pending", "reason": "tick_budget"})
             break
@@ -335,6 +391,7 @@ def refresh_project_projections(*, skip: bool = False) -> dict:
             if skip and not cached and hasattr(config, "db_path") and _persisted_skip_hint(config, cheap):
                 results.append({"status": "unchanged"})
                 continue
+            _record_attempt(config)
             result = _refresh_one(config, skip=skip)
             if result["status"] == "ok":
                 seconds = 60.0
