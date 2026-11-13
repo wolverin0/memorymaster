@@ -1,5 +1,5 @@
 <!-- doc-head: AO-3 configuration, incremental source cursor and local acceptance -->
-<!-- Covers: default-off gates, pilot limits, incremental reads, the opt-in project brief (sources, tags, stale window, roadmap_root), refresh order and the read TTL (expired projection delivers only the refresh-pending notice), and dated source verification. -->
+<!-- Covers: default-off gates, pilot limits, incremental reads, the opt-in project brief (sources, tags, stale window, roadmap_root), refresh order (persisted checked_at + attempt stamp, future-dated stamps) and the read TTL (expired projection delivers only the refresh-pending notice), and dated source verification. -->
 <!-- Read when: reviewing or later authorizing the AO-3 pilot; no installation is implied. -->
 <!-- /doc-head -->
 # Project projections
@@ -152,21 +152,30 @@ SQL deadline. OS filesystem stalls are not hard real-time bounded.
 ## Refresh order and the read TTL
 
 The refresher runs as a new process on every Beat tick, so no in-process state survives between ticks. A tick
-walks the configured projects stalest first, judged by the persisted manifest (`checked_at`): a project with no
-manifest, an unreadable or invalid one, a naive timestamp or one from another epoch is the stalest of all. The
-in-process rotation only breaks ties between equal ages. Reading the manifests to order them never fails the
-tick. The 750 ms tick budget is unchanged and the first project of a tick always runs, so when every build
-exceeds the budget exactly one project is refreshed per tick, and it then moves to the back: with N projects no
-project waits more than N ticks, so N projects stay inside the 60-minute read TTL while N times the tick
-interval is under 60 minutes (four projects: 20 minutes at a 5-minute Beat; about 51 minutes at the 113 ticks a
-day once measured live, which is thin). Previously the walk always began at the first project, and the last
-one was refreshed only when the earlier ones returned `unchanged`.
+walks the configured projects by one persisted key, oldest first: `max(checked_at, last attempt)`. `checked_at`
+comes from the manifest; the last attempt is a small stamp the refresher writes before every full refresh of a
+project, in `project-<slug>.attempt.json` beside the manifest (same context root, atomic replace, at most a
+few dozen bytes). A missing, unreadable, invalid, naive-timestamp or other-epoch manifest or stamp counts as
+"never" (the oldest possible), and so does an instant more than 60 seconds in the future (clock skew, a restored
+file, a bad write); reading them never fails the tick. The in-process rotation only breaks ties between equal
+keys. The 750 ms tick budget is unchanged and the first project of a tick always runs, so when every build
+exceeds the budget exactly one project is attempted per tick, and it then moves to the back whatever the
+outcome: with N projects no project waits more than N ticks, even while one of them keeps returning `pending`
+(it is retried once per round and the others are refreshed in between). N projects stay inside the 60-minute
+read TTL while N times the tick interval is under 60 minutes (four projects: 20 minutes at a 5-minute Beat;
+about 51 minutes at the 113 ticks a day once measured live, which is thin). Before this ordering the walk always
+began at the first project, and the last one was refreshed only when the earlier ones returned `unchanged`.
 
-The bound assumes a refresh advances `checked_at`. A build that publishes does, and so does a complete validation
-that rewrites the manifest (including a skip tick that only renews the refresh hint). A `pending` result (source
-incomplete without a brief, lock busy, source changed during the build) does not: a project that keeps returning
-`pending` stays the stalest, is tried first on every tick and can spend the whole budget, as the first project
-could before. Diagnose that project, not the order.
+Only the refresher reads the attempt stamp. It is outside the manifest and its digests, the session reader never
+opens it, and it never renews the read TTL: a project that keeps failing still expires after 60 minutes and
+delivers the refresh-pending notice below. A `pending` result (source incomplete without a brief, lock busy,
+source changed during the build) leaves `checked_at` alone; that is why the stamp exists. A project that keeps
+failing needs diagnosing, not reordering. A skip tick that rewrites the refresh hint also stamps `checked_at`
+(the write happens anyway after a complete validation).
+
+A manifest dated in the future is never served as fresh: the reader (`read_project_projection`) rejects a
+`checked_at` more than 60 seconds ahead of now, exactly as it rejects one older than 60 minutes, and the next
+validation (a full or skip tick) replaces it with the current instant.
 
 Read side: `read_project_projection` returns nothing for a projection whose `checked_at` is more than 60 minutes
 old. For a configured project (resolved from the cwd) `session_start_context` then delivers the generated
