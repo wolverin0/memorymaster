@@ -299,14 +299,28 @@ def _refresh_one(config, *, skip: bool = False) -> dict:
             with project_lock(path.with_suffix(".lock"), timeout=0) as acquired:
                 if not acquired or read_manifest(config) != previous:
                     return {"status": "pending"}
-                if not skip or renew:
-                    previous["checked_at"] = datetime.now(timezone.utc).isoformat()
+                # This write happens anyway and follows a complete validation: stamping it keeps the refresh
+                # order fair (a validated project must not stay the stalest and be rebuilt first every tick).
+                previous["checked_at"] = datetime.now(timezone.utc).isoformat()
                 previous["refresh_hint"] = manifest["refresh_hint"]
                 previous["next_temporal_boundary"] = boundary
                 atomic_json(path, previous)
         return {"status": "ok", "next_temporal_boundary": boundary}
     published = publish_project_projection(config, projection)
     return {"status": "ok" if published else "pending", "next_temporal_boundary": boundary}
+
+
+def _checked_at(config) -> datetime:
+    """Persisted last-validation instant; absent, unreadable, naive or foreign-epoch manifests are the stalest."""
+    from memorymaster.profile.project_projection import read_manifest
+
+    try:
+        checked = datetime.fromisoformat(read_manifest(config)["checked_at"].replace("Z", "+00:00"))
+        if checked.tzinfo is not None:
+            return checked
+    except Exception:  # noqa: BLE001 - ordering must never fail the tick; a broken manifest is simply the stalest
+        pass
+    return datetime.min.replace(tzinfo=timezone.utc)
 
 
 def refresh_project_projections(*, skip: bool = False) -> dict:
@@ -320,7 +334,12 @@ def refresh_project_projections(*, skip: bool = False) -> dict:
     offset = _rotation % len(configs)
     _rotation += 1
     results = []
-    for config in configs[offset:] + configs[:offset]:
+    # Every tick is a new process (the in-process rotation is always 0), so fairness comes from the persisted
+    # manifests: stalest first; the stable sort keeps the rotation order for equal ages.
+    ordered = configs[offset:] + configs[:offset]
+    if len(ordered) > 1:
+        ordered.sort(key=_checked_at)
+    for config in ordered:
         if time.monotonic() - start >= .750:
             results.append({"status": "pending", "reason": "tick_budget"})
             break
