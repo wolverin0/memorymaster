@@ -10,7 +10,6 @@ import pytest
 from test_project_repository import project_config as _project_config
 
 from scripts import accept_project_brief as accept
-from memorymaster.profile import project_brief
 from memorymaster.profile.project_brief import BRIEF_MAX_BYTES, BriefInputs, Entry, render_brief
 from memorymaster.profile.project_projection import build_project_projection
 from memorymaster.profile.project_repository import load_ledger
