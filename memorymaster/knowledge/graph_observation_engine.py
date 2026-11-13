@@ -9,6 +9,7 @@ from typing import Any, Callable
 from memorymaster.core.lifecycle import transition_claim
 from memorymaster.core.llm_provider import call_llm
 from memorymaster.core.models import CitationInput
+from memorymaster.core.promotion_policy import PromotionPolicyBlocked
 from memorymaster.knowledge.graph_observation_repository import (
     GraphObservationRepository,
     ObservationJob,
@@ -319,13 +320,17 @@ def review_observation_candidates(
         eligible, reason = repo.observation_gate(claim_id)
         if eligible:
             if apply:
-                transition_claim(
-                    store,
-                    claim_id,
-                    "confirmed",
-                    "graph-observation deterministic support gate passed",
-                    event_type="deterministic_validator",
-                )
+                try:
+                    transition_claim(
+                        store,
+                        claim_id,
+                        "confirmed",
+                        "graph-observation deterministic support gate passed",
+                        event_type="deterministic_validator",
+                    )
+                except PromotionPolicyBlocked:
+                    # T-2112: it stays a candidate; one held observation must not abort the batch.
+                    continue
                 stats["confirmed"] += 1
             else:
                 stats["would_confirm"] += 1

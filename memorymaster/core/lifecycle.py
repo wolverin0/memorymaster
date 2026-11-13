@@ -105,7 +105,7 @@ def transition_claim(
     the steward resolution ``actor``, review F-21).
 
     Confirming a claim whose author is in the non-auto-promotable set, or that
-    has a predicate without a subject (``core.promotion_policy``), raises
+    has a predicate without a subject or states a customer balance (``core.promotion_policy``), raises
     :class:`PromotionPolicyBlocked` unless ``event_payload["actor"]`` marks an explicit decision (``operator``/``agent``).
 
     ``supersedes_claim_id`` confirms and retires a same-identity tuple rival
@@ -128,7 +128,7 @@ def transition_claim(
     ):
         raise PromotionPolicyBlocked(
             f"Claim {claim_id} is not auto-promotable (source_agent '{claim.source_agent}', "
-            "or a predicate without a subject); confirm it with an explicit operator/agent actor."
+            "a predicate without a subject, or a customer balance); confirm it with an explicit operator/agent actor."
         )
     extra = {"event_payload": event_payload} if event_payload else {}
     if supersedes_claim_id is not None:

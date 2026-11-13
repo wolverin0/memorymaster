@@ -32,6 +32,7 @@ from memorymaster.stores.claim_identity import content_fingerprint
 from memorymaster.core.promotion_policy import (
     auto_promotion_blocked,
     non_auto_promotable_sources,
+    states_customer_balance,
     structure_blocks_auto_promotion,
 )
 from memorymaster.core.security import sanitize_claim_input
@@ -502,6 +503,38 @@ def _archive_candidate_cas(
     return cur.rowcount > 0
 
 
+def _candidate_window(
+    conn: sqlite3.Connection, *, scope: str | None, policy_sql: str, blocked: list[str], want: int
+) -> tuple[list[sqlite3.Row], int]:
+    """The next ``want`` candidates by id that do not state a customer balance, and how many were held.
+
+    T-2112: a held candidate is judged here, on its own stored triple and text, before it can spend the
+    ``limit`` budget or be sent to the provider; paging past them keeps a backlog of them from starving the
+    rest. shortcut: a backlog of held candidates is rescanned (in-process, cheap) every cycle.
+    """
+    scope_sql = "AND scope = ? " if scope is not None else ""
+    kept: list[sqlite3.Row] = []
+    held = 0
+    after = 0
+    while len(kept) < want:
+        page = conn.execute(
+            "SELECT id, text, scope, version, tenant_id, visibility, source_agent, subject, predicate, object_value "
+            "FROM claims WHERE status = 'candidate' "
+            "AND COALESCE(claim_type, '') <> 'observation' "
+            f"AND text IS NOT NULL AND id > ? {scope_sql}{policy_sql}ORDER BY id LIMIT ?",
+            (after, *((scope,) if scope is not None else ()), *blocked, want),
+        ).fetchall()
+        if not page:
+            break
+        after = page[-1]["id"]
+        for row in page:
+            if states_customer_balance(row["subject"], row["predicate"], row["object_value"], row["text"]):
+                held += 1
+            elif len(kept) < want:
+                kept.append(row)
+    return kept, held
+
+
 def _confirm_candidate_cas(
     conn: sqlite3.Connection,
     *,
@@ -520,8 +553,11 @@ def _confirm_candidate_cas(
     if is_dream_claim(conn, claim_id):
         return False
     # Backstop for the candidate query's source policy filter (T-1354).
-    row = conn.execute("SELECT source_agent FROM claims WHERE id = ?", (claim_id,)).fetchone()
+    row = conn.execute("SELECT source_agent, text FROM claims WHERE id = ?", (claim_id,)).fetchone()
     if row is not None and auto_promotion_blocked(row[0]):
+        return False
+    # T-2112: a customer balance is never confirmed automatically, judged on the stored triple + text.
+    if row is not None and states_customer_balance(subject, predicate, object_value, row[1]):
         return False
     # T-1591: judge the triple that will be STORED (the LLM rewrites it), not the
     # one the candidate arrived with.
@@ -667,22 +703,9 @@ def run_steward(
         if blocked
         else ""
     )
-    if scope is not None:
-        candidates = conn.execute(
-            "SELECT id, text, scope, version, tenant_id, visibility, source_agent "
-            "FROM claims WHERE status = 'candidate' "
-            "AND COALESCE(claim_type, '') <> 'observation' "
-            f"AND text IS NOT NULL AND scope = ? {policy_sql}ORDER BY id LIMIT ?",
-            (scope, *blocked, limit * SCAN_FACTOR),
-        ).fetchall()
-    else:
-        candidates = conn.execute(
-            "SELECT id, text, scope, version, tenant_id, visibility, source_agent "
-            "FROM claims WHERE status = 'candidate' "
-            "AND COALESCE(claim_type, '') <> 'observation' "
-            f"AND text IS NOT NULL {policy_sql}ORDER BY id LIMIT ?",
-            (*blocked, limit * SCAN_FACTOR),
-        ).fetchall()
+    candidates, held_before_llm = _candidate_window(
+        conn, scope=scope, policy_sql=policy_sql, blocked=blocked, want=limit * SCAN_FACTOR
+    )
 
     confirmed_claim_ids: list[int] = []
 
@@ -703,6 +726,7 @@ def run_steward(
         "claims_extracted": 0,
         "claims_filtered_sensitive": 0,
         "egress_withheld": 0,
+        "held_by_customer_balance": held_before_llm,
         "provider": provider,
         "model": model,
         "key_count": key_rotator.key_count if key_rotator else 1,
@@ -858,6 +882,12 @@ def run_steward(
                         claim_id, ",".join(f_findings),
                     )
                     stats["claims_filtered_sensitive"] += 1
+                if states_customer_balance(f_subj, f_pred, f_obj, text):
+                    # T-2112: before the dup lookup, which would merge the amount into a confirmed row.
+                    # The candidate stays as it is (it is judged again next cycle: known limit).
+                    log.info("steward: held claim #%d, it states a customer balance", claim_id)
+                    stats["held_by_customer_balance"] += 1
+                    continue
                 if not dry_run:
                     # F-1 fix (mm-d53d, 2026-05-04): scope must match the source
                     # claim's scope, not the literal 'project' which never appears
@@ -913,6 +943,12 @@ def run_steward(
                                 "claim #%d [REDACTED findings=%s]",
                                 claim_id, ",".join(extra_findings),
                             )
+
+                        if states_customer_balance(subj, pred, obj_val, text):
+                            # T-2112: an extra extraction is inserted straight as confirmed.
+                            log.info("steward: dropped an extraction of claim #%d, it states a customer balance", claim_id)
+                            stats["held_by_customer_balance"] += 1
+                            continue
 
                         # F-1 fix (mm-d53d, 2026-05-04): same as above — scope
                         # is the source claim's scope, not the literal 'project'.

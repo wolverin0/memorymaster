@@ -22,7 +22,7 @@ from memorymaster.govern.llm_steward import (
     _parse_extractions,
 )
 from memorymaster.core.models import CitationInput
-from memorymaster.core.promotion_policy import auto_promotion_blocked
+from memorymaster.core.promotion_policy import auto_promotion_blocked, claim_auto_promotion_blocked
 from memorymaster.stores.claim_identity import identity_namespace_key
 
 log = logging.getLogger(__name__)
@@ -452,10 +452,11 @@ def run(
                 )
 
                 # Transition summary claim to confirmed status, unless its sources
-                # are all authors that never auto-promote (T-1354): it stays candidate.
+                # are all authors that never auto-promote (T-1354), or the summary itself
+                # states a customer balance (T-2112): it stays candidate.
                 from memorymaster.core.lifecycle import transition_claim
                 # Never auto-confirm a summary of non-public sources: it stays a candidate.
-                if sub_cluster[0].visibility == "public" and not auto_promotion_blocked(inherited_agent):
+                if sub_cluster[0].visibility == "public" and not claim_auto_promotion_blocked(summary_claim):
                     transition_claim(
                         store,
                         claim_id=summary_claim.id,

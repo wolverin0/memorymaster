@@ -589,7 +589,9 @@ def validate_now(service: Any, claim_id: int) -> dict[str, object]:
             if duplicate.action == "archive":
                 report["held"] = "near_duplicate"
             else:
-                validator.run(store, limit=1, claim_ids=[claim_id])
+                ruled = validator.run(store, limit=1, claim_ids=[claim_id])
+                if ruled.get("held_by_customer_balance"):
+                    report["held"] = "customer_balance"  # T-2112: stays a candidate, with its reason
         claim = store.get_claim(claim_id, include_citations=False)
         if claim is not None and claim.status == "confirmed":
             drained = curation_drain.drain_proposals(service, apply=True, replacement_claim_id=claim_id)
