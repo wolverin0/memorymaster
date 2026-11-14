@@ -69,6 +69,9 @@ def write_session(root: Path, name: str, records: list[dict], *, junk: bool = Fa
 
 
 def run(root: Path, **kw) -> dict:
+    # most fixtures pair a block-carrying turn with a plain one, so they use the wide pool; the tests that pin the
+    # default (block-carrying partners only) say so explicitly
+    kw.setdefault("partners", "any")
     return rb.analyze(root, **kw)
 
 
@@ -95,7 +98,7 @@ def test_shuffled_pairing_is_lower_than_observed_when_use_is_real(tmp_path):
         recs += turn(f"question number {i}", f"Answer mentions {w} explicitly",
                      (recall_text((f"mm-id{i:02d}", f"background about {w} component")),), n=i)
     write_session(tmp_path, "s1", recs)
-    t = run(tmp_path, controls=5)["overall"]["claims"]
+    t = run(tmp_path, controls=5, partners="injected")["overall"]["claims"]
     assert t["any_rate_observed"] == 1.0
     assert t["any_rate_shuffled"] == 0.0 and t["any_ctl_pairs"] == 5 * len(WORDS)
 
@@ -194,14 +197,16 @@ def test_never_used_ids_are_listed_by_injection_count(tmp_path):
 
 def test_session_without_other_turns_uses_project_pool(tmp_path):
     write_session(tmp_path, "solo", turn("q", f"uses {WORDS[0]}", (recall_text(("mm-p001", f"about {WORDS[0]}")),), n=1))
-    write_session(tmp_path, "other", turn("q2", "completely different answer", n=2) + turn("q3", "another one", n=3))
-    t = run(tmp_path)["overall"]["claims"]
+    other = turn("q2", "completely different answer", (recall_text(("mm-p002", f"about {WORDS[1]}")),), n=2)
+    write_session(tmp_path, "other", other + turn("q3", "another one", (recall_text(("mm-p003", f"about {WORDS[2]}")),), n=3))
+    t = run(tmp_path, partners="injected")["overall"]["claims"]
     assert t["any_obs"] == 1 and t["any_ctl_pairs"] >= 1 and t["any_ctl"] == 0
 
 
 def test_output_has_counts_and_ids_only(tmp_path, capsys):
     recs = turn(SECRET_PROMPT, "answer with confidential-answer-text and quasar",
-                (recall_text(("mm-o001", "quasar secretclaimbody")),), n=1) + turn("q2", "plain", n=2)
+                (recall_text(("mm-o001", "quasar secretclaimbody")),), n=1)
+    recs += turn("q2", "plain", (recall_text(("mm-o002", "nebula")),), n=2)
     write_session(tmp_path, "s1", recs)
     for argv in (["--root", str(tmp_path)], ["--root", str(tmp_path), "--json"]):
         assert rb.main(argv) == 0
@@ -223,3 +228,29 @@ def test_transcripts_are_not_modified(tmp_path):
     before = path.read_bytes()
     run(tmp_path)
     assert path.read_bytes() == before
+
+
+def test_shuffle_partners_are_block_carrying_turns_unless_widened(tmp_path):
+    # the plain turns echo the block word: only a pool widened to them can "explain" the observed use by chance
+    recs = turn("q1", f"uses {WORDS[0]}", (recall_text(("mm-w001", f"about {WORDS[0]}")),), n=1)
+    recs += turn("q2", f"uses {WORDS[1]}", (recall_text(("mm-w002", f"about {WORDS[1]}")),), n=2)
+    recs += turn("q3", f"{WORDS[0]} {WORDS[1]} echo", n=3) + turn("q4", f"{WORDS[0]} {WORDS[1]} echo", n=4)
+    write_session(tmp_path, "s1", recs)
+    narrow = run(tmp_path, partners="injected")["overall"]["claims"]
+    wide = run(tmp_path, partners="any")["overall"]["claims"]
+    assert narrow["any_rate_observed"] == 1.0 and narrow["any_rate_shuffled"] == 0.0
+    assert wide["any_rate_shuffled"] > 0.0
+
+
+def test_machine_notices_do_not_end_up_in_the_answer_or_the_pool(tmp_path):
+    notice = {"parentUuid": None, "isSidechain": False, "type": "user", "uuid": "n1", "cwd": "C:/w/demo",
+              "message": {"role": "user", "content": "You have 1 orchestration message(s). Run `orca orchestration check --run run_x`."}}
+    reply = {"parentUuid": None, "isSidechain": False, "type": "assistant", "uuid": "n2",
+             "message": {"role": "assistant", "content": [{"type": "text", "text": f"checking {WORDS[0]} inbox"}]}}
+    recs = turn("q1", "plain answer", (recall_text(("mm-n001", f"about {WORDS[0]}")),), n=1) + [notice, reply]
+    recs += turn("q2", "other plain", (recall_text(("mm-n002", f"about {WORDS[1]}")),), n=2)
+    write_session(tmp_path, "s1", recs)
+    rep = run(tmp_path, partners="injected")
+    assert rep["overall"]["claims"]["any_obs"] == 0  # the reply to the notice is not q1's answer
+    assert rep["overall"]["claims"]["any_ctl"] == 0  # nor a shuffle partner
+    assert rep["input"]["machine_prompts"] == 1

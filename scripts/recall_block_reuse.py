@@ -11,16 +11,21 @@ plus whether the answer cites an injected ``[mm-id]``.
 
 Controls (the number means nothing without them):
   1. prompt words are removed before counting;
-  2. chance: every block is also scored against the answers of other turns (same session when it has one, else
-     the same project; seeded, ``--controls`` partners per block). The headline is observed rate vs shuffled rate.
+  2. chance: every block is also scored against the answers of other turns that ALSO carried a block (same session
+     when it has one, else the same project; seeded, ``--controls`` partners per block; ``--partners any`` widens the
+     pool to every answered turn). The headline is observed rate vs shuffled rate.
+Machine traffic (transport notices, internal prompts, command output) never starts a scored turn: it ends the previous
+turn and its own answer is discarded, so it neither truncates real answers nor pads the shuffle pool.
 
 Every figure is split by part (claims / excerpts / residual / all) and by project (last cwd segment). Output is
 counts, rates and mm-ids only: no prompt, answer or block text, no paths, session ids are never printed.
 Transcripts are opened for reading only; nothing is written except stdout (and ``--out``).
 
-It cannot tell: a block that informed an answer without sharing a word; overlap that is coincidence the shuffle
-under- or over-estimates (same-session partners share vocabulary, so the shuffle is conservative); anything
-outside Claude Code transcripts.
+The observed-minus-shuffled gap is an ASSOCIATION, not proof of use: blocks are retrieved by overlap with the prompt,
+so an answer to that prompt shares topic words with the block whether or not the block was read, and the shuffle
+breaks that topic link too. It also cannot tell: a block that informed an answer without sharing a word; overlap that
+is coincidence in ways the shuffle misses (partners differ in length and topic); anything outside Claude Code
+transcripts.
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ if str(REPO_ROOT) not in sys.path:
 from memorymaster.recall import recall_format, residual, transcript_fallback  # noqa: E402
 from memorymaster.recall.context_hook import RECALL_HEADER  # noqa: E402
 from memorymaster.recall.delivery import RECALL_PREFIX  # noqa: E402
+from memorymaster.recall.machine_traffic import is_internal_prompt, is_transport_notice  # noqa: E402
 
 RECALL_MARK = RECALL_PREFIX.strip()
 RESIDUAL_MARK = residual.HEADER.split("]")[0] + "]"
@@ -185,6 +191,10 @@ class Acc:
     def unit(self, project: str, blk: dict, answer: frozenset[str], cited: set[str], controls: list[tuple]) -> None:
         """``controls`` = [(answer keys, cited ids)] of the shuffled partners."""
         ids = {cid for cid, _ in blk["claims"]}
+        self.counts["answer_tokens_observed"] += len(answer)
+        self.counts["answer_tokens_shuffled"] += sum(len(a) for a, _ in controls)
+        self.counts["shuffled_answers"] += len(controls)
+        self.counts["units_scored"] += 1
         proj = self.by_project.setdefault(project, {p: Tally() for p in PARTS})
         for part in PARTS:
             if part != "all" and part not in blk["present"]:
@@ -206,7 +216,12 @@ class Acc:
 
     def report(self) -> dict:
         never = sorted(((n, cid) for cid, (n, used) in self.claim_ids.items() if not used), key=lambda t: (-t[0], t[1]))
+        c = self.counts
         return {
+            "answer_tokens_mean": {  # distinct tokens per answer: a size mismatch would bias the comparison
+                "observed": round(c["answer_tokens_observed"] / c["units_scored"], 1) if c["units_scored"] else None,
+                "shuffled": round(c["answer_tokens_shuffled"] / c["shuffled_answers"], 1) if c["shuffled_answers"] else None,
+            },
             "overall": {p: t.out() for p, t in self.overall.items()},
             "by_project": {
                 name: {p: t.out() for p, t in parts.items() if t.c["units"]}
@@ -239,7 +254,14 @@ def _lines(path: Path, counts: Counter):
 
 def project_of(cwd: object) -> str:
     parts = [p for p in re.split(r"[\\/]", cwd.rstrip("\\/")) if p] if isinstance(cwd, str) else []
-    return parts[-1][:40] if parts else "(unknown)"
+    if not parts:
+        return "(unknown)"
+    return "(home)" if parts[-1] == Path.home().name else parts[-1][:40]  # never print the account name
+
+
+def is_machine_prompt(text: str) -> bool:
+    head = text.lstrip()
+    return is_transport_notice(head) or is_internal_prompt(head) or head.startswith(("<command-", "<local-command"))
 
 
 def _prompt_text(rec: dict) -> str | None:
@@ -266,10 +288,11 @@ def _assistant_text(rec: dict) -> str:
 
 
 class _Turn:
-    __slots__ = ("prompt_keys", "blocks", "answer", "cited", "project", "chars")
+    __slots__ = ("prompt_keys", "blocks", "answer", "cited", "project", "chars", "machine")
 
     def __init__(self, text: str, project: str) -> None:
-        self.prompt_keys = _tokens(text[:PROMPT_CAP])
+        self.machine = is_machine_prompt(text)
+        self.prompt_keys = frozenset() if self.machine else _tokens(text[:PROMPT_CAP])
         self.blocks: list[dict] = []
         self.answer: list[str] = []
         self.cited: set[str] = set()
@@ -277,7 +300,7 @@ class _Turn:
         self.chars = 0
 
     def add_answer(self, text: str) -> None:
-        if text and self.chars < ANSWER_CAP:
+        if text and not self.machine and self.chars < ANSWER_CAP:
             self.answer.append(text[: ANSWER_CAP - self.chars])
             self.chars += len(text)
             self.cited.update(_MM_ID.findall(text))
@@ -291,7 +314,7 @@ def _reservoir(pool: list, seen: int, item: object, cap: int, rng: random.Random
 
 
 def analyze(root: Path, *, since: str | None = None, project: str | None = None, min_words: int = 3,
-            seed: int = 0, controls: int = 5, max_files: int | None = None) -> dict:
+            seed: int = 0, controls: int = 5, max_files: int | None = None, partners: str = "injected") -> dict:
     files = sorted(
         (p for d in sorted(root.iterdir()) if d.is_dir() for p in d.glob("*.jsonl")),
         key=lambda p: (-p.stat().st_mtime, p.name),
@@ -306,6 +329,7 @@ def analyze(root: Path, *, since: str | None = None, project: str | None = None,
         files = files[:max_files]
     acc = Acc(min_words)
     acc.counts = counts
+    injected_only = partners != "any"
     seen_attachments: set[str] = set()
     project_pool: dict[str, list] = {}
     project_seen: Counter = Counter()
@@ -314,25 +338,26 @@ def analyze(root: Path, *, since: str | None = None, project: str | None = None,
     for file_idx, path in enumerate(files):
         try:
             _scan_file(path, file_idx, acc, since, project, controls, seed, seen_attachments, project_pool,
-                       project_seen, deferred, rng)
+                       project_seen, deferred, rng, injected_only)
             counts["files_read"] += 1
         except OSError:
             counts["files_unreadable"] += 1
     for file_idx, proj, blk, answer, cited in deferred:
-        pool = [e for e in project_pool.get(proj, []) if e[0] != file_idx]
-        partners = random.Random(f"{seed}:{proj}:{len(pool)}:{len(blk['claims'])}").sample(pool, min(controls, len(pool)))
-        if partners:
-            acc.unit(proj, blk, answer, cited, [(e[1], e[2]) for e in partners])
+        pool = [e for e in project_pool.get(proj, []) if e[0] != file_idx and (e[3] or not injected_only)]
+        picked = random.Random(f"{seed}:{proj}:{len(pool)}:{len(blk['claims'])}").sample(pool, min(controls, len(pool)))
+        if picked:
+            acc.unit(proj, blk, answer, cited, [(e[1], e[2]) for e in picked])
         else:
             counts["units_without_control"] += 1
     return {
         "schema": 1,
         "params": {"since": since, "project": project, "min_words": min_words, "seed": seed, "controls": controls,
-                   "max_files": max_files},
+                   "max_files": max_files, "partners": partners},
         "controls_applied": [
             "prompt words removed from the block before counting",
             "block framing (headers, labels, ids, dates) removed",
-            f"shuffled: each block scored against up to {controls} answers of other turns (same session, else project)",
+            f"shuffled: each block scored against up to {controls} answers of other "
+            f"{'block-carrying ' if injected_only else ''}turns (same session, else project)",
         ],
         "input": {k: int(v) for k, v in sorted(counts.items())},
         **acc.report(),
@@ -346,10 +371,10 @@ def _day_epoch(day: str) -> float:
 
 def _scan_file(path: Path, file_idx: int, acc: Acc, since: str | None, project_filter: str | None, controls: int,
                seed: int, seen_attachments: set[str], project_pool: dict, project_seen: Counter, deferred: list,
-               rng: random.Random) -> None:
+               rng: random.Random, injected_only: bool) -> None:
     counts = acc.counts
     turns: list[tuple[_Turn, frozenset[str]]] = []  # finished turns that have an answer: (turn, answer keys)
-    pool: list[tuple[int, frozenset[str], set[str]]] = []  # (turn index, answer keys, cited ids)
+    pool: list[tuple[int, frozenset[str], set[str], bool]] = []  # (turn index, answer keys, cited ids, carried a block)
     answered = 0
     cur: _Turn | None = None
     cwd = None
@@ -362,10 +387,11 @@ def _scan_file(path: Path, file_idx: int, acc: Acc, since: str | None, project_f
         idx = len(turns)
         if keys:
             answered += 1
-            _reservoir(pool, answered, (idx, keys, cur.cited), POOL_CAP, rng)
+            injected = bool(cur.blocks)
+            _reservoir(pool, answered, (idx, keys, cur.cited, injected), POOL_CAP, rng)
             proj = cur.project
             project_seen[proj] += 1
-            _reservoir(project_pool.setdefault(proj, []), project_seen[proj], (file_idx, keys, cur.cited),
+            _reservoir(project_pool.setdefault(proj, []), project_seen[proj], (file_idx, keys, cur.cited, injected),
                        PROJECT_POOL_CAP, rng)
         elif cur.blocks:
             counts["blocks_in_turns_without_answer"] += len(cur.blocks)
@@ -401,12 +427,16 @@ def _scan_file(path: Path, file_idx: int, acc: Acc, since: str | None, project_f
                 continue
             finish()
             cur = _Turn(text, project_of(cwd))
+            counts["machine_prompts"] += cur.machine
         elif kind == "assistant":
             if cur is not None:
                 cur.add_answer(_assistant_text(rec))
         else:
             att = rec.get("attachment")
             if cur is None or not isinstance(att, dict) or att.get("hookEvent") != "UserPromptSubmit":
+                continue
+            if cur.machine:
+                counts["blocks_on_machine_prompts"] += 1
                 continue
             sections = split_block(_content_text(att.get("content")))
             if not sections:
@@ -429,12 +459,12 @@ def _scan_file(path: Path, file_idx: int, acc: Acc, since: str | None, project_f
         for blk in turn.blocks:
             counts["blocks_analysed"] += 1
             acc.claim_usage(blk, keys, turn.cited)
-            others = [e for e in pool if e[0] != idx]
+            others = [e for e in pool if e[0] != idx and (e[3] or not injected_only)]
             if not others:
                 deferred.append((file_idx, turn.project, blk, keys, turn.cited))
                 continue
-            pick = random.Random(f"{seed}:{path.name}:{idx}").sample(others, min(controls, len(others)))
-            acc.unit(turn.project, blk, keys, turn.cited, [(e[1], e[2]) for e in pick])
+            picked = random.Random(f"{seed}:{path.name}:{idx}").sample(others, min(controls, len(others)))
+            acc.unit(turn.project, blk, keys, turn.cited, [(e[1], e[2]) for e in picked])
 
 
 # --- output -------------------------------------------------------------------------------------------------------
@@ -474,12 +504,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--min-words", type=int, default=3, help="distinct block words for strong use (default 3)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--controls", type=int, default=5, help="shuffled partner answers per block (default 5)")
+    ap.add_argument("--partners", choices=("injected", "any"), default="injected",
+                    help="shuffle pool: other turns that carried a block (default) or every answered turn")
     ap.add_argument("--max-files", type=int, help="read only the N most recently modified files")
     ap.add_argument("--json", action="store_true", help="print the JSON document instead of the table")
     ap.add_argument("--out", type=Path, help="also write the JSON document here")
     args = ap.parse_args(argv)
     rep = analyze(args.root, since=args.since, project=args.project, min_words=max(1, args.min_words), seed=args.seed,
-                  controls=max(1, args.controls), max_files=args.max_files)
+                  controls=max(1, args.controls), max_files=args.max_files, partners=args.partners)
     doc = json.dumps(rep, indent=2, sort_keys=True)
     if args.out:
         args.out.write_text(doc + "\n", encoding="utf-8")
