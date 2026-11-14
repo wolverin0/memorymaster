@@ -7,6 +7,11 @@ and stores it here. The UserPromptSubmit recall hook then injects it as ONE
 bounded block on the first prompt after the compaction and consumes it. The
 residual is delivered by session id, never by similarity search.
 
+Delivery does not delete the marker: it is renamed to a sibling "carried" file so the NEXT
+PreCompact can hand the still-open items back to the extractor. The harness's own summary and the
+turns after the boundary never contain a delivered residual, so without that an item that only
+lives in it would die at the second compaction.
+
 Stdlib only: the recall hook imports this module on every prompt.
 """
 from __future__ import annotations
@@ -25,6 +30,8 @@ MAX_ITEMS = 10
 MAX_CHARS = 1500
 MAX_ITEM_CHARS = 220
 TTL_SECONDS = 6 * 3600  # a residual not delivered within hours belongs to a compaction that never happened
+CARRY_TTL_SECONDS = 3 * 24 * 3600  # a delivered residual stays offered to the next capture for days, not forever
+MAX_CARRIES = 2  # an item carried through this many compactions without being restated is dropped
 
 HEADER = "[MemoryMaster residual] Context was just compacted. These facts from before it may be missing from the summary:"
 CARD_RE = re.compile(r"^T-\d{3,5}$")
@@ -50,6 +57,11 @@ def state_dir() -> Path:
 
 def residual_path(session_id: object, directory: Path | None = None) -> Path:
     return (directory or state_dir()) / f"residual_{safe_session(session_id)}.json"
+
+
+def carried_path(session_id: object, directory: Path | None = None) -> Path:
+    # Own prefix, not residual_*: safe_session allows "_", so "residual_carried_x" could be a real session's marker.
+    return (directory or state_dir()) / f"carried_{safe_session(session_id)}.json"
 
 
 def _clip(text: object, limit: int = MAX_ITEM_CHARS) -> str:
@@ -193,15 +205,76 @@ def pending_block(
         payload = json.loads(path.read_text(encoding="utf-8"))
         age = (time.time() if now is None else now) - float(payload["created_at"])
         if age > TTL_SECONDS:
-            consume(session_id, directory=directory)  # an expired marker is dead weight: delete it, do not re-parse it
+            consume(session_id, directory=directory, keep=False)  # an expired marker is dead weight: delete it, do not re-parse it
             return ""
         return render_block(_fit([i for i in payload["items"] if i.get("kind") in KINDS and i.get("text")]))
     except (OSError, ValueError, TypeError, KeyError):
         return ""
 
 
-def consume(session_id: object, *, directory: Path | None = None) -> None:
+def consume(session_id: object, *, directory: Path | None = None, keep: bool = True) -> None:
+    """Retire the pending marker after delivery. ``keep`` renames it to the carried file; never raises."""
+    pending = residual_path(session_id, directory)
     try:
-        residual_path(session_id, directory).unlink(missing_ok=True)
+        if keep:
+            os.replace(pending, carried_path(session_id, directory))  # atomic; keeps the saved timestamp
+        else:
+            pending.unlink(missing_ok=True)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        try:
+            pending.unlink(missing_ok=True)  # a marker that cannot be kept must still not be delivered twice
+        except OSError:
+            pass
+
+
+def previous_items(
+    session_id: object,
+    *,
+    directory: Path | None = None,
+    now: float | None = None,
+) -> list[dict[str, Any]]:
+    """Items of the latest residual of this session, for the next capture; ``[]`` on anything unreadable.
+
+    An undelivered marker is newer than a carried one (it was built after it), so it wins. Each item
+    keeps its ``carried`` counter (compactions it has already crossed without being restated).
+    """
+    current = time.time() if now is None else now
+    for path, ttl in ((residual_path(session_id, directory), TTL_SECONDS), (carried_path(session_id, directory), CARRY_TTL_SECONDS)):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if current - float(payload["created_at"]) > ttl:
+                continue
+            out = []
+            for item in payload["items"]:
+                if item.get("kind") in KINDS and isinstance(item.get("text"), str) and item["text"].strip():
+                    count = item.get("carried")
+                    out.append({"kind": item["kind"], "text": item["text"], "carried": count if isinstance(count, int) and count > 0 else 0})
+            if out:
+                return out
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            continue
+    return []
+
+
+def retire_carried(session_id: object, *, directory: Path | None = None) -> None:
+    """Drop the carried file once a capture answered: its items were re-saved with new counters or let go."""
+    try:
+        carried_path(session_id, directory).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def sweep_carried(*, directory: Path | None = None, now: float | None = None) -> None:
+    """Delete carried files past their TTL (called at capture time, never on the prompt path)."""
+    cutoff = (time.time() if now is None else now) - CARRY_TTL_SECONDS
+    try:
+        for path in (directory or state_dir()).glob("carried_*.json"):
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
     except OSError:
         pass

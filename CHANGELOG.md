@@ -8,6 +8,24 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### PreCompact residual: open items cross a second compaction (T-2548)
+
+- An open item that existed only in the residual delivered after compaction N used to die at compaction N+1:
+  the harness summary dropped it, no later turn restated it, and the delivered hook attachment is not a
+  `user`/`assistant` turn, so the extractor never saw it. Delivery (`recall.residual.consume`) now renames the
+  marker to `~/.memorymaster/hook_state/carried_<session>.json` instead of deleting it (an expired, undelivered
+  marker is still just deleted), and the next capture offers those items to the same single LLM call as a
+  `previously open` block, reserved first inside the input budget (at most a fifth of it, never at the cost of
+  the newest turn, ahead of the previous summary). Same sensitivity scrub and `export_lines` gate; no new env
+  flag, behind `MEMORYMASTER_PRECOMPACT_RESIDUAL`.
+- The prompt asks for a kept item verbatim; the capture then maps any copy (case/whitespace, clipped, near-identical,
+  even under another key) back to the carried kind and text, so the ingest idempotency key is unchanged and the
+  item stays ONE claim. A carried copy is not ingested again. An item carried through two compactions without
+  the conversation restating it (card id or text in the turns) is not offered a third time. A missing or corrupt
+  carry file means no carry; the file survives a skipped or failed capture and is retired after an answer; files
+  older than three days are swept at capture time. Only the Claude Code hooks use the residual; the Codex,
+  agy and OpenCode adapters do not.
+
 ### Stop-hook extraction no longer sends sensitive text to the provider (T-2274)
 
 - `_run_gemini_extraction` (optional `MEMORYMASTER_STOP_EXTRACT`) now runs each assistant message through
