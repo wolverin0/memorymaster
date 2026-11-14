@@ -530,4 +530,5 @@ def test_the_client_never_sends_the_lookup_as_a_query_or_the_session():
     assert seen["body"] == {"file_hint": {"query": "a.py core", "tail": ["core", "a.py"]},
                             "hook_data": {"cwd": "G:/repo"}}
     assert seen["timeout"] == remote.FILE_HINT_TIMEOUT_SECONDS < 4.0
-    assert remote.remote_file_hint("a", "b", ["b"], environ={}) == remote.RemoteHint(None, False)
+    off = {"MEMORYMASTER_HOOK_RECALL_REMOTE": "0"}  # not environ={}: on Windows the token falls back to the registry
+    assert remote.remote_file_hint("a", "b", ["b"], environ=off, opener=opener) == remote.RemoteHint(None, False)
