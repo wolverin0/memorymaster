@@ -91,6 +91,8 @@ on. A skipped prompt shows `via=off` in the hook path and injects nothing.
 Measure the effect with `scripts/eval_prompt_recall.py` (fixed 200-prompt set,
 dense and lexical) and, after a week, with `scripts/review_recall_citations.py`
 (citation rate and injected characters per prompt, lanes on vs off).
+`scripts/recall_block_reuse.py` (read-only, Claude Code transcripts) measures whether the injected block's distinctive words
+reappear in the answer, observed vs shuffled-answer control, by part and project; counts and mm-ids only (T-2548).
 
 ## Recall self-check (T-1875)
 
