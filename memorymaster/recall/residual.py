@@ -7,10 +7,11 @@ and stores it here. The UserPromptSubmit recall hook then injects it as ONE
 bounded block on the first prompt after the compaction and consumes it. The
 residual is delivered by session id, never by similarity search.
 
-Delivery does not delete the marker: it is renamed to a sibling "carried" file so the NEXT
-PreCompact can hand the still-open items back to the extractor. The harness's own summary and the
-turns after the boundary never contain a delivered residual, so without that an item that only
-lives in it would die at the second compaction.
+Delivery does not delete the marker: it is renamed to a sibling "carried" file. The next PreCompact
+appends its still-young items, byte for byte, to the new residual (``carry_forward``): the model never
+sees them, so nothing it answers can change their text, their age or how many claims they cause. An item
+is carried through at most ``MAX_CARRIES`` answered captures. Known cost: an item that was actually
+closed can be shown again, up to twice, under a heading that says it may already be closed.
 
 Stdlib only: the recall hook imports this module on every prompt.
 """
@@ -30,10 +31,11 @@ MAX_ITEMS = 10
 MAX_CHARS = 1500
 MAX_ITEM_CHARS = 220
 TTL_SECONDS = 6 * 3600  # a residual not delivered within hours belongs to a compaction that never happened
-CARRY_TTL_SECONDS = 3 * 24 * 3600  # a delivered residual stays offered to the next capture for days, not forever
-MAX_CARRIES = 2  # an item carried through this many compactions without being restated is dropped
+CARRY_TTL_SECONDS = 3 * 24 * 3600  # a delivered residual stays available to the next capture for days, not forever
+MAX_CARRIES = 2  # answered captures an item is carried through before it is dropped
 
 HEADER = "[MemoryMaster residual] Context was just compacted. These facts from before it may be missing from the summary:"
+CARRIED_HEADING = "Possibly still open (from before the previous compaction; may already be closed):"
 CARD_RE = re.compile(r"^T-\d{3,5}$")
 
 # kind -> (render heading, order). Order is also the drop priority when the block is over budget.
@@ -135,8 +137,9 @@ def render_block(items: list[dict[str, str]]) -> str:
     if not items:
         return ""
     lines = [HEADER]
+    carried = [item for item in items if item.get("carried")]
     for kind, heading in KINDS.items():
-        group = [item["text"] for item in items if item["kind"] == kind]
+        group = [item["text"] for item in items if item["kind"] == kind and not item.get("carried")]
         if not group:
             continue
         if kind == "card":
@@ -146,15 +149,25 @@ def render_block(items: list[dict[str, str]]) -> str:
         else:
             lines.append(f"{heading}:")
             lines.extend(f"- {text}" for text in group)
+    if carried:
+        lines.append(CARRIED_HEADING)
+        lines.extend(f"- {item['kind']}: {item['text']}" for item in carried)
     return "\n".join(lines)
 
 
 def _fit(items: list[dict[str, str]]) -> list[dict[str, str]]:
-    """Drop the lowest-priority items until count and rendered size fit the caps."""
+    """Drop the lowest-priority items until count and rendered size fit the caps.
+
+    Fresh items take the caps first; carried ones (``carried`` > 0) fill what is left, the oldest dropped first.
+    """
     rank = {kind: index for index, kind in enumerate(KINDS)}
-    kept = sorted(items, key=lambda item: rank[item["kind"]])[:MAX_ITEMS]
+    kept = sorted((item for item in items if not item.get("carried")), key=lambda item: rank[item["kind"]])[:MAX_ITEMS]
     while kept and len(render_block(kept)) > MAX_CHARS:
         kept.pop()
+    for item in sorted((item for item in items if item.get("carried")), key=lambda item: item["carried"]):
+        if len(kept) >= MAX_ITEMS or len(render_block([*kept, item])) > MAX_CHARS:
+            break  # strictly oldest-last: nothing older than a dropped item survives
+        kept.append(item)
     return kept
 
 
@@ -245,12 +258,11 @@ def previous_items(
     *,
     directory: Path | None = None,
     now: float | None = None,
-) -> tuple[list[dict[str, Any]], int | None]:
-    """Items of the latest residual of this session and the compaction count it was captured at.
+) -> list[dict[str, Any]]:
+    """Items of this session's latest residual, for the next capture; ``[]`` on anything unreadable.
 
-    For the next capture; ``([], None)`` on anything unreadable. An undelivered marker is newer than a
-    carried one (it was built after it), so it wins. Each item keeps its ``carried`` counter
-    (compactions it has already crossed without being restated).
+    An undelivered marker is newer than a carried one (it was built after it), so it wins. Every item is
+    revalidated (kind, text, card id) and clipped, and at most MAX_ITEMS are returned, whatever the file holds.
     """
     current = time.time() if now is None else now
     for path, ttl in ((residual_path(session_id, directory), TTL_SECONDS), (carried_path(session_id, directory), CARRY_TTL_SECONDS)):
@@ -258,21 +270,49 @@ def previous_items(
             payload = json.loads(path.read_text(encoding="utf-8"))
             if current - float(payload["created_at"]) > ttl:
                 continue
-            out = []
+            out: list[dict[str, Any]] = []
             for item in payload["items"]:
-                if item.get("kind") in KINDS and isinstance(item.get("text"), str) and item["text"].strip():
-                    count = item.get("carried")
-                    out.append({"kind": item["kind"], "text": item["text"], "carried": count if isinstance(count, int) and count > 0 else 0})
+                if len(out) >= MAX_ITEMS:
+                    break
+                if not isinstance(item, dict) or item.get("kind") not in KINDS or not isinstance(item.get("text"), str):
+                    continue
+                text = _clip(item["text"])
+                age = item.get("carried") or 0
+                if not isinstance(age, int) or not 0 <= age <= MAX_CARRIES:
+                    continue  # a tampered age never extends a life: the item is dropped
+                if text and (item["kind"] != "card" or CARD_RE.match(text)):
+                    out.append({"kind": item["kind"], "text": text, "carried": age})
             if out:
-                boundaries = (payload.get("meta") or {}).get("boundaries")
-                return out, boundaries if isinstance(boundaries, int) else None
+                return out
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             continue
-    return [], None
+    return []
+
+
+def _same(item: dict[str, Any]) -> tuple[str, str]:
+    """Identity for the exact-duplicate rule: kind plus the text ignoring case and whitespace (cards: the id)."""
+    return item["kind"], " ".join(item["text"].lower().split())
+
+
+def carry_forward(fresh: list[dict[str, Any]], previous: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The new residual: the fresh items, then the previous items that are still young, copied as they are.
+
+    Called once per ANSWERED capture, so the age goes up by one there and nowhere else. A previous item is
+    dropped once it would be carried through more than ``MAX_CARRIES`` captures, or when a fresh item (or an
+    earlier carried one) is exactly the same kind and text; nothing fuzzy, so a wrong match is impossible.
+    """
+    taken = {_same(item) for item in fresh}
+    carried: list[dict[str, Any]] = []
+    for item in previous:
+        age = int(item.get("carried") or 0) + 1
+        if age <= MAX_CARRIES and _same(item) not in taken:
+            taken.add(_same(item))
+            carried.append({"kind": item["kind"], "text": item["text"], "carried": age})
+    return _fit([*fresh, *carried])
 
 
 def retire_carried(session_id: object, *, directory: Path | None = None) -> None:
-    """Drop the carried file once a capture answered: its items were re-saved with new counters or let go."""
+    """Drop the carried file once its items live on in a saved marker or have aged out."""
     try:
         carried_path(session_id, directory).unlink(missing_ok=True)
     except OSError:

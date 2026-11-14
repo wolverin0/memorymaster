@@ -10,35 +10,29 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ### PreCompact residual: open items cross a second compaction (T-2548)
 
-- An open item that existed only in the residual delivered after compaction N used to die at compaction N+1:
-  the harness summary dropped it, no later turn restated it, and the delivered hook attachment is not a
-  `user`/`assistant` turn, so the extractor never saw it. Delivery (`recall.residual.consume`) now renames the
-  marker to `~/.memorymaster/hook_state/carried_<session>.json` instead of deleting it (an expired, undelivered
-  marker is still just deleted), and the next capture offers those items to the same single LLM call as a
-  `previously open` block, reserved first inside the input budget (at most a fifth of it, never at the cost of
-  the newest turn, ahead of the previous summary). Same sensitivity scrub and `export_lines` gate; no new env
-  flag, behind `MEMORYMASTER_PRECOMPACT_RESIDUAL`.
-- The prompt asks for a kept item verbatim, but the lineage is bounded whatever the model does with the text. An
-  item of the answer is a copy of a carried one (equal, a same-kind clipped prefix, or near-identical, ratio >= 0.7
-  with the same numbers and negation; maps back to the carried kind and text, so the ingest key is unchanged); stated
-  in the turns after the boundary (genuinely new: age 0, ingested); or ungrounded, and then a rewrite of an
-  unmatched carried item of its kind when their content tokens overlap by at least 0.3 (it is that item: carried
-  text, no ingest, age + 1), or, below the floor for all of them (for example an item lifted from the previous
-  summary), its own text, ingested once, inheriting age + 1 from the oldest such carried item whose lineage ends
-  there. So a model that rewrites beyond recognition every round mints at most two extra claims and the item is
-  gone after two unstated compactions. The age counter ticks only on a real compaction (the marker records the
-  compaction count); an item the turns state again (card id, or token overlap for an item with at least three
-  content tokens; a short item never resets its age) starts again. Carried items that did not fit the bounded block
-  are not judged: they ride along, aged. A missing or corrupt carry file means no carry; the file survives a
-  skipped, failed or unparseable capture and an answer with none of the expected keys (`{}`, an error object); it is
-  retired only after a verdict is saved (or says nothing is open). If the delivery rename fails the stale carried
-  copy is removed instead of surviving. Carried files older than three days are swept at capture time only.
-  Known trade-offs: an unstated change of a number or a negation is ignored (a stated one is a new item); the
-  near ratio 0.7 can collapse a new item worded like a carried one; unoffered carried items are dropped when the
-  marker is full.
-- Coverage: only the Claude Code PreCompact hook captures a residual. The Codex recall adapter runs the same shared
-  recall template and would deliver a marker for its session, but no Codex hook writes one; agy and OpenCode do not
-  use the residual.
+- An open item that existed only in the residual delivered after compaction N used to die at compaction N+1: the
+  harness summary dropped it, no later turn restated it, and the delivered hook attachment is not a
+  `user`/`assistant` turn, so the extractor never saw it (on 191 real consecutive pairs of delivered blocks, 97% of
+  the items were absent from the next one; "absent" is an upper bound on loss, some were closed).
+- Extraction is unchanged: the model still sees only the turns and the previous summary, in one call. The carry
+  happens in code afterwards. Delivery (`recall.residual.consume`) now renames the marker to
+  `~/.memorymaster/hook_state/carried_<session>.json` instead of deleting it (an expired, undelivered marker is
+  still just deleted). At the next ANSWERED capture (a parsed object with at least one expected key; `{}`, an error
+  object, garbage, a skipped or failed capture do not count and leave the carry untouched) the items of the last
+  residual are appended byte for byte to the new one under the heading "Possibly still open (from before the
+  previous compaction; may already be closed)". Fresh items take MAX_ITEMS / MAX_CHARS first, carried ones fill what
+  is left, the oldest dropped first. A carried item has a counter stored with it, up by one per answered capture,
+  never reset, and it is dropped after two. A fresh item with exactly the same kind and text (case/whitespace; a
+  card by id) replaces the carried copy; nothing fuzzy. Carried copies are never ingested: only fresh items are,
+  as before. No model answer can change a carried item's text, age or the claims it causes.
+- A missing, corrupt, huge or wrong-type carry file means no carry (items are revalidated, clipped and capped; a
+  tampered age drops the item); carried text goes through the sensitivity scrub before it is shown again; a failed
+  delivery rename removes the stale carried copy instead of leaving it; carried files older than three days are
+  swept at capture time only. No new flag, no second LLM call.
+- Known cost: an item that was actually closed can be shown again, up to twice, under the "may already be closed"
+  heading. Coverage: only the Claude Code PreCompact hook captures a residual; the Codex recall adapter runs the
+  same shared recall template and would deliver a marker for its session, but no Codex hook writes one; agy and
+  OpenCode do not use the residual.
 
 ### Stop-hook extraction no longer sends sensitive text to the provider (T-2274)
 
