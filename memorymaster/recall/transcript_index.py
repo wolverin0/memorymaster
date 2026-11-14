@@ -46,6 +46,7 @@ Design
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
@@ -57,7 +58,7 @@ from dataclasses import asdict, dataclass
 from functools import lru_cache
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, NamedTuple
+from typing import Any, BinaryIO, Callable, NamedTuple
 
 from memorymaster.core.scope_utils import scope_from_cwd
 from memorymaster.core.security import sanitize_persisted_text
@@ -164,8 +165,13 @@ def source_root(name: str) -> Path | None:
     }[name]
 
 
+def _rel_posix(root: Path, path: Path) -> str:
+    """The key of a transcript under its root: a compressed rollout (``.jsonl.zst``) shares the key of its plain form."""
+    return path.relative_to(root).as_posix().removesuffix(".zst")
+
+
 def session_id_for(root: Path, path: Path, source: str = "claude") -> str:
-    rel = path.relative_to(root).as_posix()
+    rel = _rel_posix(root, path)
     return hashlib.sha256((rel if source == "claude" else f"{source}:{rel}").encode()).hexdigest()[:16]
 
 
@@ -395,6 +401,33 @@ _DIALECTS = {
 }
 
 
+@lru_cache(maxsize=1)
+def _zstd_backend() -> Callable[[Path], BinaryIO] | None:
+    """How to open a ``.zst`` as a stream of decompressed bytes: stdlib ``compression.zstd`` (Python 3.14+), else the
+    optional ``zstandard`` package (extra ``zstd``), else ``None`` (the caller counts ``skipped_no_zstd``)."""
+    try:
+        import compression.zstd as zstd
+
+        return lambda path: zstd.open(path, "rb")
+    except ImportError:
+        pass
+    try:
+        import zstandard
+    except ImportError:
+        return None
+
+    def open_zstandard(path: Path) -> BinaryIO:
+        reader = zstandard.ZstdDecompressor().stream_reader(path.open("rb"), read_across_frames=True, closefd=True)
+        return io.BufferedReader(reader)  # type: ignore[arg-type]
+
+    return open_zstandard
+
+
+def _open_transcript(path: Path) -> BinaryIO:
+    backend = _zstd_backend() if path.suffix == ".zst" else None
+    return backend(path) if backend else path.open("rb")
+
+
 def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, skip_automated: bool,
                      hasher, scopes: dict[str, str], dialect: _Dialect = _DIALECTS["claude"],
                      state: dict | None = None):
@@ -411,8 +444,9 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, 
     """
     state = {} if state is None else state
     packer = _Packer()
-    with path.open("rb") as fh:
-        fh.seek(offset)
+    with _open_transcript(path) as fh:
+        if offset:
+            fh.seek(offset)  # never a compressed file: it is parsed whole
         for raw in fh:
             if not raw.endswith(b"\n"):
                 break  # unterminated (even if it parses): re-read next time, so line numbers stay put
@@ -509,7 +543,9 @@ def _index_jsonl(run: _Run, source: str, root: Path, paths: list[Path]) -> None:
     conn, stats = run.conn, run.stats
     dialect = _DIALECTS[source]
     prefix = "" if source == "claude" else f"{source}:"
-    _drop_gone(conn, stats, source, {prefix + path.relative_to(root).as_posix() for path in paths})
+    # a compressed rollout counts as existing whether or not it can be read, so it never purges a session that was
+    # indexed while plain
+    _drop_gone(conn, stats, source, {prefix + _rel_posix(root, path) for path in paths})
     for path in paths:
         if run.full(source):
             break
@@ -520,8 +556,15 @@ def _index_jsonl(run: _Run, source: str, root: Path, paths: list[Path]) -> None:
             continue
         if run.cutoff is not None and st.st_mtime < run.cutoff:
             continue
+        zst = path.suffix == ".zst"
+        if zst and _zstd_backend() is None:
+            _tick(stats, source, "skipped_no_zstd")  # nothing is written: the session keeps whatever it has
+            if stats["skipped_no_zstd"] == 1:
+                logger.warning("transcript_index: compressed rollouts are skipped: no zstd decompressor "
+                               "(Python 3.14+ or `pip install memorymaster[zstd]`)")
+            continue
         _tick(stats, source, "files_seen")
-        rel = prefix + path.relative_to(root).as_posix()
+        rel = prefix + _rel_posix(root, path)
         sid = session_id_for(root, path, source)
         row = conn.execute("SELECT * FROM files WHERE rel = ?", (rel,)).fetchone()
         # a session skipped as automated stored no fragments: --include-automated must re-parse it, and an
@@ -534,7 +577,7 @@ def _index_jsonl(run: _Run, source: str, root: Path, paths: list[Path]) -> None:
         offset, line_no = 0, 0
         state: dict = {}
         try:
-            resumable = row and st.st_size >= row["offset"] and not was_automated
+            resumable = row and not zst and st.st_size >= row["offset"] and not was_automated  # a .zst is immutable
             hasher = _verified_prefix(path, row["offset"], row["prefix_sha"]) if resumable else None
             if hasher is not None:
                 offset, line_no, state = row["offset"], row["lines"], {"scope": row["state"]}
@@ -544,8 +587,10 @@ def _index_jsonl(run: _Run, source: str, root: Path, paths: list[Path]) -> None:
                 path, offset, line_no, _mtime_iso(st.st_mtime_ns), not run.include_automated, hasher, run.scopes,
                 dialect, state,
             )
-        except OSError as exc:
-            logger.warning("transcript_index: cannot read %s: %s", rel, exc)
+        except Exception as exc:  # noqa: BLE001 - a corrupt .zst raises the backend's own error type
+            if not (isinstance(exc, OSError) or zst):
+                raise
+            logger.warning("transcript_index: cannot read %s: %s", rel, type(exc).__name__)
             _tick(stats, source, "errors")
             continue
         if offset == 0 and new_lines and not state.get("records"):
@@ -672,6 +717,18 @@ def _index_opencode(run: _Run, root: Path) -> None:
             stats["fragments_added"] += len(frags)
 
 
+def _rollout_paths(source: str, root: Path) -> list[Path]:
+    """Transcript files of a JSONL source in key order.  Codex compresses a rollout once it is some days old: those
+    ``.jsonl.zst`` are read too, except one whose plain twin still exists."""
+    if source == "claude":
+        return sorted(root.glob("*/*.jsonl"))
+    pattern = "*/*/*/rollout-*.jsonl"
+    plain = sorted(root.glob(pattern))
+    twins = {path.as_posix() for path in plain}
+    packed = [path for path in root.glob(pattern + ".zst") if path.as_posix().removesuffix(".zst") not in twins]
+    return sorted([*plain, *packed], key=lambda path: _rel_posix(root, path))
+
+
 def _plan(root: Path | None) -> tuple[list[tuple[str, Path]], list[str]]:
     """``(sources to scan with their existing roots, sources switched off)``.  An explicit ``root`` is the Claude
     root alone: the other sources are neither scanned nor touched."""
@@ -704,7 +761,7 @@ def index_transcripts(
     plan, switched_off = _plan(root)
     stats = {"files_seen": 0, "files_indexed": 0, "files_skipped": 0, "fragments_added": 0, "files_automated": 0,
              "files_removed": 0, "rebuilt": 0, "errors": 0, "skipped_no_workspace": 0, "skipped_oversized": 0, "skipped_unreadable": 0,
-             "sources_failed": 0}
+             "skipped_no_zstd": 0, "sources_failed": 0}
     for name, _ in plan:
         stats.update({f"{name}_{key}": 0 for key in _PER_SOURCE})
     if not plan:
@@ -723,8 +780,7 @@ def index_transcripts(
                 elif name == "opencode":
                     _index_opencode(run, source_dir)
                 else:
-                    pattern = "*/*.jsonl" if name == "claude" else "*/*/*/rollout-*.jsonl"
-                    _index_jsonl(run, name, source_dir, sorted(source_dir.glob(pattern)))
+                    _index_jsonl(run, name, source_dir, _rollout_paths(name, source_dir))
             except Exception as exc:  # noqa: BLE001 - one CLI's unreadable store never aborts the others
                 logger.warning("transcript_index: source %s failed: %s", name, type(exc).__name__)
                 _tick(stats, name, "errors")
