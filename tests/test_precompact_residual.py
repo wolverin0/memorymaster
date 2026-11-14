@@ -606,3 +606,50 @@ def test_residual_excerpt_is_gated_line_by_line_and_the_outcome_reports_what_was
         db_path=str(tmp_path / "x.db"), llm=lambda p, t: "{}", state_directory=tmp_path / "state",
     )
     assert outcome["egress_withheld"] == 0
+
+
+# --- carry-over: an open item must survive the second compaction -----------------------------
+
+OPEN_MARK = "OPENQ"
+OPEN_TURN = "should the sync retry use jitter? OPENQ still undecided"
+
+
+def _echo_open_lines(prompt, text):
+    """A fake model that can only return what the text it is given carries: any line with the marker."""
+    found = [line.split(": ", 1)[-1].strip() for line in text.splitlines() if OPEN_MARK in line]
+    return json.dumps({"decisions": found})
+
+
+def _append_rows(path, rows):
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(json.dumps(r) for r in rows) + "\n")
+
+
+def _compaction(path, summary):
+    _append_rows(path, [{"type": "system", "subtype": "compact_boundary"}, _msg("user", summary, isCompactSummary=True)])
+
+
+def _capture(tmp_path, transcript, llm, *, db="x.db"):
+    return pr.capture_residual(
+        {"session_id": "sess-carry", "transcript_path": str(transcript), "cwd": str(tmp_path)},
+        db_path=str(tmp_path / db), llm=llm, state_directory=tmp_path / "state",
+    )
+
+
+def _deliver(tmp_path):
+    """What the prompt hook does on the first prompt after a compaction."""
+    assert state.pending_block("sess-carry", directory=tmp_path / "state")
+    state.consume("sess-carry", directory=tmp_path / "state")
+
+
+def test_an_open_item_only_in_the_delivered_residual_survives_the_next_compaction(tmp_path):
+    transcript = tmp_path / "t.jsonl"
+    _write_rows(transcript, [_msg("user", "start"), _msg("assistant", OPEN_TURN), _msg("user", "go on")])
+    first = _capture(tmp_path, transcript, _echo_open_lines)
+    assert first["items"] == 1
+    _deliver(tmp_path)
+    # Compaction 1 kept nothing of it, and nothing after the boundary restates it.
+    _compaction(transcript, "Summary: the session worked on the sync worker.")
+    _append_rows(transcript, [_msg("user", "now the logging format"), _msg("assistant", "logging uses json lines")])
+    second = _capture(tmp_path, transcript, _echo_open_lines)
+    assert second["items"] == 1, "the open item delivered after compaction 1 never reached the extractor"
