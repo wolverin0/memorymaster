@@ -80,8 +80,8 @@ The asking session is never quoted back to itself: the payload's `session_id` (C
 session's fragments are left out in SQL, before the candidate limit, so other sessions' fragments fill the
 window. An unknown, missing or unmatched id excludes nothing (fail open); the
 `recall/transcript_fallback` log line carries `asker=1` when a session was left out, `0` otherwise, never
-the id. Known limits: the index is refreshed hourly, so a session not yet in it has nothing to exclude; a resumed or forked session is a new file with a new id that copies the old turns, so
-the older file stays eligible (it is quoted as another session); Claude sub-agent turns are not indexed at all.
+the id. Known limits: the index is refreshed hourly, so a session not yet in it has nothing to exclude; a resumed or forked session may be a new file with a new id that copies the old turns, so
+the older file would stay eligible (quoted as another session; none seen on the live index); Claude sub-agent turns are not indexed at all.
 
 Turn the hook off for some projects, default on, without touching code or
 restarting anything: write `~/.memorymaster/recall-hook.json`. The wisp lane:

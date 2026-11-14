@@ -740,8 +740,8 @@ def _asker_sessions(conn: sqlite3.Connection, native: str) -> list[str]:
     Index ids are opaque hashes, so the match runs on ``files.rel``, which keeps the native id in every source's
     own shape: Claude ``<project>/<id>.jsonl``, Codex ``codex:<y>/<m>/<d>/rollout-<stamp>-<id>.jsonl``, agy
     ``agy:<id>``, OpenCode ``opencode:<id>`` (the hook already sends it prefixed).  Nothing here depends on how the
-    OS spells a path.  Known limit: a resumed/forked session is a NEW file with a new id that copies the old turns,
-    so the older file is another session here and stays eligible.
+    OS spells a path.  Known limit: a resumed/forked session may be a NEW file with a new id that copies the old turns,
+    so the older file would be another session here and stay eligible (not observed on the live index).
     """
     if len(native) < MIN_ASKER_ID_CHARS:
         return []
