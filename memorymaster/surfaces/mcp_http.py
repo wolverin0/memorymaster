@@ -162,7 +162,7 @@ def create_http_app(
         if file_hint is not None:
             # Candidates only: no seen ids, accesses, receipts or transcript fallback (see recall/file_hint.py).
             run = partial(pre_edit_hint.lookup, str(file_hint.get("query") or "")[:pre_edit_hint.LOOKUP_MAX_CHARS],
-                          db_path=resolved_db, hook_data=hook_data)
+                          db_path=resolved_db, hook_data=hook_data, tail=file_hint.get("tail"))
         else:
             run = partial(recall, query, db_path=resolved_db, skip_qdrant=True, **extra)
 

@@ -35,12 +35,13 @@ HOOK = "pre-edit-hint"
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 MAX_BYTES = 500  # the whole additionalContext, header included, in UTF-8
 MAX_CLAIMS = 2
-CANDIDATES = 8  # rows the server fetches per file
-CANDIDATE_TEXT_CHARS = 2000  # a claim naming the file further in is not seen; bounded wire size
+POOL = 40  # rows the server searches per file: lexical rank cannot tell ``hook_log.py`` from "hook log"
+CANDIDATES = 8  # rows it sends back, after the same naming gate the hook applies
+CANDIDATE_TEXT_CHARS = 2000  # bounded wire size (the naming gate runs on the full text before this cut)
 LOOKUP_MAX_CHARS = 200
 
 # Names every project has: the basename alone says nothing about WHICH file, so a claim must also carry the
-# parent directory (``core/utils.py``). Kept short on purpose; anything else is matched by basename.
+# parent directory (``core/utils.py``). Kept short on purpose; anything else with an extension is matched by basename.
 GENERIC_BASENAMES = frozenset({
     "__init__.py", "__main__.py", "conftest.py", "setup.py", "main.py", "app.py", "utils.py",
     "index.js", "index.ts", "index.tsx", "index.jsx", "main.js", "main.ts",
@@ -78,7 +79,8 @@ def names_file(text: str, parts: list[str]) -> bool:
         return False
     text = text.replace("\\", "/")
     base = parts[-1]
-    if base.lower() in GENERIC_BASENAMES:
+    # No extension (``run``, ``LICENSE``, ``.env``): the bare word is the stem, so the parent tail is needed too.
+    if base.lower() in GENERIC_BASENAMES or "." not in base.lstrip("."):
         return len(parts) > 1 and _token(f"{parts[-2]}/{base}").search(text) is not None
     return _token(base).search(text) is not None
 
@@ -145,7 +147,7 @@ def hint_for_edit(data: dict) -> str | None:
     key = file_key(parts)
     if key in hook_policy.hinted_files(session):
         return skip("already-hinted")
-    answer = remote.remote_file_hint(lookup_text(parts)[:LOOKUP_MAX_CHARS], cwd)
+    answer = remote.remote_file_hint(lookup_text(parts)[:LOOKUP_MAX_CHARS], cwd, parts[-2:])
     if answer.claims is None:
         return skip("server-busy" if answer.reachable else "server-unreachable")
     candidates = _clean(answer.claims)
@@ -163,8 +165,11 @@ def hint_for_edit(data: dict) -> str | None:
     return render(parts[-1], picked)
 
 
-def lookup(query: str, *, db_path: str, hook_data: dict | None) -> list[dict]:
+def lookup(query: str, *, db_path: str, hook_data: dict | None, tail: list | None = None) -> list[dict]:
     """Authorized candidate claims for ``query`` (a file's basename and parent), recording nothing.
+
+    ``tail`` is the file's last two path components: when given, only claims that name the file are kept, so a
+    crowd of look-alikes in the pool cannot push the one claim that names it past :data:`CANDIDATES`.
 
     ``[]`` without a cwd: the project scope is resolved from it and the default scope must not stand in.
     The rows come from the trusted prompt planner (confirmed, in scope, public, temporally current, not
@@ -182,11 +187,14 @@ def lookup(query: str, *, db_path: str, hook_data: dict | None) -> list[dict]:
     try:
         db = db_path or os.environ.get("MEMORYMASTER_DEFAULT_DB") or "memorymaster.db"
         svc = MemoryService(db_target=db, workspace_root=Path.cwd(), read_only=True)
-        rows = context_hook._governed_prompt_rows(svc, query, limit=CANDIDATES)
+        rows = context_hook._governed_prompt_rows(svc, query, limit=POOL)
         rows = hook_lexical.apply_truth_eligibility(rows, svc)
     finally:
         context_hook._REQUEST_SCOPE.reset(scope_token)
         context_hook._REQUEST_SHARED_SCOPES.reset(shared_token)
-    return [{"id": claim.id, "human_id": getattr(claim, "human_id", None),
-             "text": claim.text[:CANDIDATE_TEXT_CHARS]}
-            for claim in (row.get("claim") for row in rows) if isinstance(getattr(claim, "id", None), int)]
+    parts = [t for t in tail if isinstance(t, str) and t] if isinstance(tail, list) else []
+    claims = [claim for claim in (row.get("claim") for row in rows) if isinstance(getattr(claim, "id", None), int)]
+    if parts:
+        claims = [claim for claim in claims if names_file(claim.text, parts)]
+    return [{"id": claim.id, "human_id": getattr(claim, "human_id", None), "text": claim.text[:CANDIDATE_TEXT_CHARS]}
+            for claim in claims[:CANDIDATES]]

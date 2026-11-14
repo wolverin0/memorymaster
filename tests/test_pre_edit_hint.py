@@ -68,6 +68,17 @@ def test_a_generic_basename_needs_its_parent_directory(text, names):
     assert file_hint.names_file(text, ["memorymaster", "core", "__init__.py"]) is names
 
 
+@pytest.mark.parametrize("name, text, names", [
+    ("run", "run the job twice", False),  # a bare word is the stem: no extension, no match on its own
+    ("run", "scripts/run is executable", True),
+    ("LICENSE", "the license file is MIT", False),
+    (".env", "the .env file holds secrets", False),
+    (".env", "app/.env holds secrets", True),
+])
+def test_a_file_with_no_extension_needs_its_parent_directory(name, text, names):
+    assert file_hint.names_file(text, ["repo", "scripts" if name == "run" else "app", name]) is names
+
+
 def test_a_generic_file_with_no_parent_never_matches():
     assert file_hint.names_file("README.md says things", ["README.md"]) is False
 
@@ -101,7 +112,7 @@ def server(monkeypatch):
     """``remote.remote_file_hint`` replaced by a recorder; ``recall`` turned into a tripwire (never a cold recall)."""
     box = {"claims": [dict(CLAIM)], "reachable": True, "calls": []}
 
-    def fake(lookup, cwd, **_):
+    def fake(lookup, cwd, tail, **_):
         box["calls"].append((lookup, cwd))
         return remote.RemoteHint(box["claims"], box["reachable"])
 
@@ -237,6 +248,7 @@ class _Fake(http.server.BaseHTTPRequestHandler):
 def fake(tmp_path):
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Fake)
     httpd.handle_error = lambda *_a: None  # a client that gave up on a slow answer is the point of a test
+    httpd.daemon_threads, httpd.block_on_close = True, False  # teardown must not wait for a slow handler
     httpd.requests, httpd.delay, httpd.answer = [], 0.0, {"claims": [dict(CLAIM)]}
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
@@ -306,7 +318,8 @@ def test_an_edit_gets_one_hint_with_the_claim_and_no_prompt_or_session_on_the_wi
     assert out["hookEventName"] == "PreToolUse" and "mm-aaaa" in out["additionalContext"]
     assert len(out["additionalContext"].encode("utf-8")) <= file_hint.MAX_BYTES
     (body, auth), = fake.requests
-    assert body == {"file_hint": {"query": "hook_log.py core"}, "hook_data": {"cwd": CWD}}  # no query, no session
+    expected = {"query": "hook_log.py core", "tail": ["core", "hook_log.py"]}
+    assert body == {"file_hint": expected, "hook_data": {"cwd": CWD}}  # no top-level query, no session
     assert auth == "Bearer t"
     assert "COLD=False" in done.stderr  # recall (the cold path) was never imported
 
@@ -324,16 +337,18 @@ def test_an_unreachable_server_is_silent_and_fast(hook, tmp_path):
     started = time.monotonic()
     done, took = _run(hook, _payload(), tmp_path, port=1, edit_flag="1")
     assert done.returncode == 0 and done.stdout == "" and "COLD=False" in done.stderr
-    assert "reason=server-unreachable" in (tmp_path / "state" / "hook.log").read_text(encoding="utf-8")
+    # a refused loopback connect can take longer than the timeout on Windows: either reason is silence
+    log = (tmp_path / "state" / "hook.log").read_text(encoding="utf-8")
+    assert "reason=server-unreachable" in log or "reason=server-busy" in log
     assert time.monotonic() - started < 20  # generous: interpreter start on a loaded runner
 
 
 def test_a_slow_server_is_given_up_on_inside_the_registered_timeout(hook, fake, tmp_path):
-    fake.delay = 4.0
+    fake.delay = 10.0
     done, took = _run(hook, _payload(), tmp_path, port=fake.server_address[1], edit_flag="1")
     assert done.returncode == 0 and done.stdout == "" and "COLD=False" in done.stderr
     assert "reason=server-busy" in (tmp_path / "state" / "hook.log").read_text(encoding="utf-8")
-    assert took < 4.0  # it gave up at the hint timeout rather than waiting for the answer
+    assert took < 8.0  # it gave up at the hint timeout (1.5 s) rather than waiting for the 10 s answer
 
 
 def test_an_older_server_without_the_field_is_silent(hook, fake, tmp_path):
@@ -407,12 +422,33 @@ def test_lookup_records_nothing_but_the_prompt_path_does(db, tmp_path):
     cwd = str(tmp_path / "pubgclone")
     file_hint.lookup("hook_log.py core", db_path=path, hook_data={"cwd": cwd})
     assert spool.claim_files(path) == [] and _count(path, ids["mine"]) == 0
-    assert not (tmp_path / "seen").exists() and hook_policy.seen_ids("s") == frozenset()
+    seen_dir = Path(os.environ["MEMORYMASTER_RECALL_SEEN_DIR"])  # the directory the prompt hook writes
+    assert list(seen_dir.iterdir()) == [] and hook_policy.seen_ids("s") == frozenset()
+    assert "event=receipt" not in _log()
     # control: the prompt path with the same DB does leave a trace, so the silence above means something
     context_hook.recall("what is known about hook_log.py core", db_path=path, skip_qdrant=True,
                         hook_data={"cwd": cwd, "session_id": "s"})
     assert spool.claim_files(path) != [] or _count(path, ids["mine"]) > 0
-    assert ids["mine"] in hook_policy.seen_ids("s")
+    assert ids["mine"] in hook_policy.seen_ids("s") and list(seen_dir.iterdir()) != []
+
+
+def test_the_claim_naming_the_file_survives_a_crowd_of_lookalikes(db, tmp_path):
+    """Thirty in-scope claims sharing the query's words outrank the one claim that names the file (it is last in
+    the lexical pool): the pool is searched deeper than the cap and gated on the name before the cap applies."""
+    path, ids = db
+    svc = MemoryService(path, workspace_root=tmp_path)
+    for n in range(30):
+        claim = svc.store.create_claim(
+            text=f"core core core hook log core hook log {n} hook_log.js hook_log.pyc core py logging core",
+            citations=[CitationInput(source=f"test://hint/{n}")],  # distinct sources: recall caps rows per source
+            scope="project:pubgclone")
+        lifecycle.transition_claim(svc.store, claim.id, "confirmed", reason="fixture", event_type="validator")
+    only = svc.store.create_claim(text="hook_log.py must never cache its path", scope="project:pubgclone",
+                                  citations=[CitationInput(source="test://hint")])
+    lifecycle.transition_claim(svc.store, only.id, "confirmed", reason="fixture", event_type="validator")
+    cwd = {"cwd": str(tmp_path / "pubgclone")}
+    found = file_hint.lookup("hook_log.py core", db_path=path, hook_data=cwd, tail=["core", "hook_log.py"])
+    assert {c["id"] for c in found} == {only.id, ids["mine"]}  # only the claims that name the file, none of the crowd
 
 
 # --- the shared server's route ------------------------------------------------------------------------------
@@ -434,11 +470,13 @@ def test_the_route_serves_candidates_for_a_file_hint_and_never_runs_the_prompt_p
     monkeypatch.setattr(file_hint, "lookup", lambda q, **kw: got.update(q=q, **kw) or [dict(CLAIM)])
     monkeypatch.setattr(context_hook, "recall", lambda *a, **k: pytest.fail("the prompt path must not run"))
     client = _client(monkeypatch)
-    body = {"file_hint": {"query": "hook_log.py core"}, "hook_data": {"cwd": "G:/repo"}}
+    hint = {"query": "hook_log.py core", "tail": ["core", "hook_log.py"]}
+    body = {"file_hint": hint, "hook_data": {"cwd": "G:/repo"}}
     assert client.post("/hook/recall", json=body).status_code == 401
     response = client.post("/hook/recall", json=body, headers=AUTH)
     assert response.status_code == 200 and response.json() == {"claims": [CLAIM]}
-    assert got == {"q": "hook_log.py core", "db_path": "test.db", "hook_data": {"cwd": "G:/repo"}}
+    assert got == {"q": "hook_log.py core", "db_path": "test.db", "hook_data": {"cwd": "G:/repo"},
+                   "tail": ["core", "hook_log.py"]}
     assert client.post("/hook/recall", json={"file_hint": [1]}, headers=AUTH).status_code == 400
 
 
@@ -487,8 +525,9 @@ def test_the_client_never_sends_the_lookup_as_a_query_or_the_session():
         return _Resp()
 
     env = {"MEMORYMASTER_MCP_HTTP_TOKEN": "t", "MEMORYMASTER_SHARED_MCP_URL": "http://127.0.0.1:1/mcp"}
-    answer = remote.remote_file_hint("a.py core", "G:/repo", environ=env, opener=opener)
+    answer = remote.remote_file_hint("a.py core", "G:/repo", ["core", "a.py"], environ=env, opener=opener)
     assert answer == remote.RemoteHint([], True)
-    assert seen["body"] == {"file_hint": {"query": "a.py core"}, "hook_data": {"cwd": "G:/repo"}}
+    assert seen["body"] == {"file_hint": {"query": "a.py core", "tail": ["core", "a.py"]},
+                            "hook_data": {"cwd": "G:/repo"}}
     assert seen["timeout"] == remote.FILE_HINT_TIMEOUT_SECONDS < 4.0
-    assert remote.remote_file_hint("a", "b", environ={}) == remote.RemoteHint(None, False)
+    assert remote.remote_file_hint("a", "b", ["b"], environ={}) == remote.RemoteHint(None, False)

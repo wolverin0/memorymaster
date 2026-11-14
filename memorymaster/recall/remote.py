@@ -91,6 +91,7 @@ def remote_recall(
 def remote_file_hint(
     lookup: str,
     cwd: str,
+    tail: list[str],
     *,
     timeout: float = FILE_HINT_TIMEOUT_SECONDS,
     environ=os.environ,
@@ -103,7 +104,7 @@ def remote_file_hint(
     the session id. ``claims`` is None when no usable answer came back; the caller stays silent then, it
     never recalls cold.
     """
-    answer, reachable = _post({"file_hint": {"query": lookup}, "hook_data": {"cwd": cwd}},
+    answer, reachable = _post({"file_hint": {"query": lookup, "tail": tail}, "hook_data": {"cwd": cwd}},
                               timeout=timeout, environ=environ, opener=opener)
     claims = answer.get("claims") if isinstance(answer, dict) else None  # an older server answers {"ctx": ""}
     return RemoteHint(claims if isinstance(claims, list) else None, reachable)
