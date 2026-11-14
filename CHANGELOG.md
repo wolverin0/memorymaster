@@ -18,13 +18,17 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
   `previously open` block, reserved first inside the input budget (at most a fifth of it, never at the cost of
   the newest turn, ahead of the previous summary). Same sensitivity scrub and `export_lines` gate; no new env
   flag, behind `MEMORYMASTER_PRECOMPACT_RESIDUAL`.
-- The prompt asks for a kept item verbatim; the capture then maps any copy (case/whitespace, clipped, near-identical,
-  even under another key) back to the carried kind and text, so the ingest idempotency key is unchanged and the
-  item stays ONE claim. A carried copy is not ingested again. An item carried through two compactions without
-  the conversation restating it (card id or text in the turns) is not offered a third time. A missing or corrupt
-  carry file means no carry; the file survives a skipped or failed capture and is retired after an answer; files
-  older than three days are swept at capture time. Only the Claude Code hooks use the residual; the Codex,
-  agy and OpenCode adapters do not.
+- The prompt asks for a kept item verbatim; the capture then maps any copy (case/whitespace, clipped, near-identical
+  with the same numbers and negation, even under another key) back to the carried kind and text, so the ingest
+  idempotency key is unchanged and the item stays ONE claim. A carried copy is not ingested again. An item carried
+  through two real compactions (the marker records the compaction count, so a repeated capture of the same stretch
+  does not age it) without the conversation restating it (card id or verbatim text in the turns) is not offered a
+  third time. A missing or corrupt carry file means no carry; the file survives a skipped, failed or unparseable
+  capture and is retired only after a parsed answer is saved (or is empty); files older than three days are swept at
+  capture time.
+- Coverage: only the Claude Code PreCompact hook captures a residual. The Codex recall adapter runs the same shared
+  recall template and would deliver a marker for its session, but no Codex hook writes one; agy and OpenCode do not
+  use the residual.
 
 ### Stop-hook extraction no longer sends sensitive text to the provider (T-2274)
 

@@ -713,7 +713,7 @@ def test_an_item_nobody_restates_is_dropped_after_two_compactions(svc, tmp_path)
     kwargs = {"db": "residual.db", "cwd": cwd}
     seen = [_capture(tmp_path, transcript, _echo_open_lines, **kwargs)["items"]]
     for _ in range(3):  # a model that always keeps what it is shown
-        if state.previous_items("sess-carry", directory=tmp_path / "state"):
+        if state.previous_items("sess-carry", directory=tmp_path / "state")[0]:
             _deliver(tmp_path)
         compact()
         seen.append(_capture(tmp_path, transcript, _echo_open_lines, **kwargs)["items"])
@@ -833,8 +833,8 @@ def test_delivery_keeps_the_marker_as_carried_while_an_expired_one_is_just_delet
     state.consume("s", directory=tmp_path)
     assert not state.residual_path("s", tmp_path).exists() and state.carried_path("s", tmp_path).exists()
     assert state.pending_block("s", directory=tmp_path) == ""  # delivered once, never again
-    assert [i["text"] for i in state.previous_items("s", directory=tmp_path, now=1000.0 + 60)] == ["keep WAL on"]
-    assert state.previous_items("s", directory=tmp_path, now=1000.0 + state.CARRY_TTL_SECONDS + 1) == []
+    assert [i["text"] for i in state.previous_items("s", directory=tmp_path, now=1000.0 + 60)[0]] == ["keep WAL on"]
+    assert state.previous_items("s", directory=tmp_path, now=1000.0 + state.CARRY_TTL_SECONDS + 1) == ([], None)
     state.save_residual("e", items, directory=tmp_path, now=1000.0)
     assert state.pending_block("e", directory=tmp_path, now=1000.0 + state.TTL_SECONDS + 1) == ""  # expired: never delivered
     assert not state.carried_path("e", tmp_path).exists()
@@ -847,10 +847,58 @@ def test_an_undelivered_marker_wins_over_an_older_carried_one_and_old_carried_fi
     state.save_residual("s", old, directory=tmp_path, now=now - 100)
     state.consume("s", directory=tmp_path)
     state.save_residual("s", new, directory=tmp_path, now=now - 50)
-    assert [i["text"] for i in state.previous_items("s", directory=tmp_path)] == ["new one"]
+    assert [i["text"] for i in state.previous_items("s", directory=tmp_path)[0]] == ["new one"]
     stale = state.carried_path("other", tmp_path)
     stale.write_text("{}", encoding="utf-8")
     long_ago = now - state.CARRY_TTL_SECONDS - 10
     os.utime(stale, (long_ago, long_ago))
     state.sweep_carried(directory=tmp_path)
     assert not stale.exists() and state.carried_path("s", tmp_path).exists()
+
+
+@pytest.mark.parametrize("answer", ["", '{"decisions": ["x', "no json here", '["a plain string"]'])
+def test_a_failed_or_unparseable_answer_does_not_settle_the_carried_items(tmp_path, answer):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo_open_lines)
+    _deliver(tmp_path)
+    compact()
+    carried = state.carried_path("sess-carry", tmp_path / "state")
+    assert _capture(tmp_path, transcript, lambda p, t: answer)["items"] == 0
+    assert carried.exists()  # the provider failed: nothing was judged, the item is still owed
+    assert _capture(tmp_path, transcript, _echo_open_lines)["carried"] == 1
+
+
+def test_a_repeated_capture_of_the_same_stretch_does_not_age_the_carried_items(tmp_path):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo_open_lines)
+    _deliver(tmp_path)
+    compact()
+    state_dir = tmp_path / "state"
+    assert _capture(tmp_path, transcript, _echo_open_lines)["carried"] == 1
+    assert _capture(tmp_path, transcript, _echo_open_lines)["carried"] == 1  # no compaction in between: still 1
+    assert state.previous_items("sess-carry", directory=state_dir)[0][0]["carried"] == 1
+    _deliver(tmp_path)
+    compact()  # a real second compaction
+    assert _capture(tmp_path, transcript, _echo_open_lines)["carried"] == 1
+    assert state.previous_items("sess-carry", directory=state_dir)[0][0]["carried"] == 2
+
+
+def test_a_copy_clipped_by_the_model_maps_back_to_the_full_carried_text(tmp_path):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo_open_lines)
+    _deliver(tmp_path)
+    compact()
+    assert _capture(tmp_path, transcript, _echo(lambda text: text[:45] + "…"))["carried"] == 1
+    assert OPEN_TURN in state.pending_block("sess-carry", directory=tmp_path / "state")
+
+
+def test_a_changed_number_or_an_added_negation_is_a_new_item_not_a_silent_merge():
+    carried = [{"kind": "decision", "text": "retry the sync 3 times before giving up on the upstream call", "carried": 0}]
+    for text in (
+        "retry the sync 5 times before giving up on the upstream call",
+        "do not retry the sync 3 times before giving up on the upstream call",
+    ):
+        out = pr.reconcile_carried([{"kind": "decision", "text": text}], carried, "")
+        assert out == [{"kind": "decision", "text": text}]  # not mapped back, so not carried
+    same = pr.reconcile_carried([{"kind": "decision", "text": "Retry the sync 3 times before giving up on the upstream call!"}], carried, "")
+    assert same == [{"kind": "decision", "text": carried[0]["text"], "carried": 1}]

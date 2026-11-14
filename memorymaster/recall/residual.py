@@ -234,11 +234,12 @@ def previous_items(
     *,
     directory: Path | None = None,
     now: float | None = None,
-) -> list[dict[str, Any]]:
-    """Items of the latest residual of this session, for the next capture; ``[]`` on anything unreadable.
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Items of the latest residual of this session and the compaction count it was captured at.
 
-    An undelivered marker is newer than a carried one (it was built after it), so it wins. Each item
-    keeps its ``carried`` counter (compactions it has already crossed without being restated).
+    For the next capture; ``([], None)`` on anything unreadable. An undelivered marker is newer than a
+    carried one (it was built after it), so it wins. Each item keeps its ``carried`` counter
+    (compactions it has already crossed without being restated).
     """
     current = time.time() if now is None else now
     for path, ttl in ((residual_path(session_id, directory), TTL_SECONDS), (carried_path(session_id, directory), CARRY_TTL_SECONDS)):
@@ -252,10 +253,11 @@ def previous_items(
                     count = item.get("carried")
                     out.append({"kind": item["kind"], "text": item["text"], "carried": count if isinstance(count, int) and count > 0 else 0})
             if out:
-                return out
+                boundaries = (payload.get("meta") or {}).get("boundaries")
+                return out, boundaries if isinstance(boundaries, int) else None
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             continue
-    return []
+    return [], None
 
 
 def retire_carried(session_id: object, *, directory: Path | None = None) -> None:

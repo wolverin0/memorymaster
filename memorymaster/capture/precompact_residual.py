@@ -97,13 +97,14 @@ def _message_text(entry: dict, limit: int = MESSAGE_CHARS) -> tuple[str, str]:
     return str(role), text
 
 
-def _read_turns(transcript_path: str) -> tuple[list[str], str]:
-    """Turns after the last compaction boundary and the previous compact summary; ``([], "")`` when unreadable."""
+def _read_turns(transcript_path: str) -> tuple[list[str], str, int]:
+    """Turns after the last boundary, the previous compact summary and how many compactions the file shows."""
     path = Path(os.path.expanduser(str(transcript_path or "")))
     if not path.is_file():
-        return [], ""
+        return [], "", 0
     turns: list[str] = []
     previous_summary = ""
+    boundaries = 0
     try:
         with path.open(encoding="utf-8", errors="replace") as handle:
             for line in handle:
@@ -115,6 +116,7 @@ def _read_turns(transcript_path: str) -> tuple[list[str], str]:
                     continue
                 if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
                     turns, previous_summary = [], ""
+                    boundaries += 1
                     continue
                 if entry.get("isCompactSummary"):  # judged with its own limit, never the per-message one
                     previous_summary = _message_text(entry, PREVIOUS_SUMMARY_CHARS)[1]
@@ -124,8 +126,8 @@ def _read_turns(transcript_path: str) -> tuple[list[str], str]:
                     continue
                 turns.append(f"{role}: {text}")
     except OSError:
-        return [], ""
-    return turns, previous_summary
+        return [], "", 0
+    return turns, previous_summary, boundaries
 
 
 def _carry_block(carried: list[dict], room: int) -> tuple[str, list[dict]]:
@@ -183,7 +185,7 @@ def slice_turns(transcript_path: str, max_chars: int | None = None) -> str:
     Tool results and sub-agent turns are skipped. The previous compaction's
     summary, when present, leads the excerpt so earlier facts can be carried on.
     """
-    turns, previous_summary = _read_turns(transcript_path)
+    turns, previous_summary, _ = _read_turns(transcript_path)
     return _assemble(turns, previous_summary, max_chars if max_chars is not None else _input_chars())[0]
 
 
@@ -285,15 +287,24 @@ def extract_residual(
         return []
     with use_call_scoped_env(overrides):
         answer = call(PROMPT, safe_excerpt)
-    if stats is not None:
-        stats["answered"] = 1  # the provider call returned: an empty answer still settles the carried items
-    if not answer:
+    if not answer:  # a failed call (the shared client returns "") judged nothing
         return []
-    return drop_sensitive(residual_state.bound_residual(_scrub_raw(parse_json_response(answer))))
+    parsed = parse_json_response(answer)
+    if stats is not None and any(isinstance(entry, dict) for entry in parsed):
+        stats["answered"] = 1  # a parsed object, even an empty one, is a judgment; garbage or a cut-off answer is not
+    return drop_sensitive(residual_state.bound_residual(_scrub_raw(parsed)))
 
 
 def _norm(text: str) -> str:
     return " ".join(text.lower().split()).rstrip("….").strip()
+
+
+_NEGATION = re.compile(r"\b(?:not|no|never|without|nunca|sin)\b|n't")
+
+
+def _meaning(text: str) -> tuple[list[str], bool]:
+    """What a near-identical match must not change: the numbers and whether the line negates."""
+    return re.findall(r"\d+(?:[.,]\d+)*", text), _NEGATION.search(text) is not None
 
 
 def _same_item(item: dict, carried: dict) -> bool:
@@ -306,7 +317,8 @@ def _same_item(item: dict, carried: dict) -> bool:
     short, long_ = sorted((a, b), key=len)
     if len(short) >= CARRY_MIN_PREFIX and long_.startswith(short):
         return True
-    return difflib.SequenceMatcher(None, a, b).ratio() >= CARRY_NEAR_RATIO
+    # shortcut: a changed number or an added "not" is a different item and mints a new claim, never a silent merge
+    return _meaning(a) == _meaning(b) and difflib.SequenceMatcher(None, a, b).ratio() >= CARRY_NEAR_RATIO
 
 
 def _restated(item: dict, turns_norm: str) -> bool:
@@ -320,12 +332,14 @@ def carry_candidates(carried: list[dict]) -> list[dict]:
     return drop_sensitive([c for c in carried if c.get("carried", 0) < residual_state.MAX_CARRIES])
 
 
-def reconcile_carried(items: list[dict], offered: list[dict], turns_text: str) -> list[dict]:
+def reconcile_carried(items: list[dict], offered: list[dict], turns_text: str, *, ticked: bool = True) -> list[dict]:
     """Map every model item that is a copy of an offered one back to the offered item's exact kind and text.
 
     The ingest key is built from kind and text, so a paraphrase would mint a new claim at every
     compaction. A copy keeps a ``carried`` counter (one more compaction crossed) unless the
     conversation itself still shows it, which resets it; an item over the limit is not offered again.
+    ``ticked`` is False when no compaction happened since the capture that wrote the counters (a repeated
+    capture of the same stretch), so the counters stay.
     """
     if not offered:
         return items
@@ -340,7 +354,7 @@ def reconcile_carried(items: list[dict], offered: list[dict], turns_text: str) -
             kept = item
         else:
             pool.remove(match)
-            count = 0 if _restated(match, turns_norm) else match.get("carried", 0) + 1
+            count = 0 if _restated(match, turns_norm) else match.get("carried", 0) + int(ticked)
             kept = {"kind": match["kind"], "text": match["text"], **({"carried": count} if count else {})}
         key = (kept["kind"], kept["text"].lower())
         if key not in seen:
@@ -444,8 +458,9 @@ def capture_residual(
     config = provider_config()
     outcome: dict[str, Any] = {"session": session_id, "provider": config["provider"], "note": config["note"], "items": 0, "ingested": 0}
     residual_state.sweep_carried(directory=state_directory)
-    carried = carry_candidates(residual_state.previous_items(session_id, directory=state_directory))
-    turns, previous_summary = _read_turns(str(data.get("transcript_path") or ""))
+    previous, previous_boundaries = residual_state.previous_items(session_id, directory=state_directory)
+    carried = carry_candidates(previous)
+    turns, previous_summary, boundaries = _read_turns(str(data.get("transcript_path") or ""))
     excerpt, turns_text, offered = _assemble(turns, previous_summary, _input_chars(), carried)
     outcome["excerpt_chars"] = len(excerpt)
     outcome["carry_offered"] = len(offered)
@@ -465,7 +480,7 @@ def capture_residual(
         items = extract_residual(excerpt, llm=llm, config=config, stats=egress)
         outcome["egress_withheld"] = egress.get("egress_withheld", 0)
         if egress.get("answered"):
-            items = reconcile_carried(items, offered, turns_text)
+            items = reconcile_carried(items, offered, turns_text, ticked=previous_boundaries is None or boundaries > previous_boundaries)
     except Exception as exc:  # swallow-ok: provider outage or quota must never block a compaction; recorded below
         outcome["skipped"] = "llm-error"
         outcome["error"] = type(exc).__name__
@@ -476,22 +491,24 @@ def capture_residual(
         ledger.finish_llm(reservation, input_bytes=len(excerpt), output_bytes=sum(len(i["text"]) for i in items), outcome="ok")
     outcome["items"] = len(items)
     outcome["carried"] = sum(1 for i in items if i.get("carried"))
-    if egress.get("answered"):  # the carried items were judged: re-saved below with new counters, or let go
-        residual_state.retire_carried(session_id, directory=state_directory)
     if not items:
+        if egress.get("answered"):  # judged and nothing is open: the carried items are let go
+            residual_state.retire_carried(session_id, directory=state_directory)
         outcome["skipped"] = "empty-residual"
         return outcome
     try:
         saved = residual_state.save_residual(
             session_id,
             items,
-            meta={"provider": config["provider"], "model": config["model"], "trigger": str(data.get("trigger") or "")},
+            meta={"provider": config["provider"], "model": config["model"], "trigger": str(data.get("trigger") or ""), "boundaries": boundaries},
             directory=state_directory,
         )
     except Exception as exc:  # swallow-ok: a marker that cannot be written must not abort the claim ingestion below
         saved = None
         outcome["save_error"] = type(exc).__name__
     outcome["saved"] = saved is not None
+    if saved is not None and egress.get("answered"):  # re-saved with new counters: the old copy has served
+        residual_state.retire_carried(session_id, directory=state_directory)
     try:
         # A carried copy is already a claim from the capture that found it: no second write, no revival churn.
         fresh = [i for i in items if not i.get("carried")]
