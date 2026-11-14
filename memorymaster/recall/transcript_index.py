@@ -731,6 +731,31 @@ def index_transcripts(
     return stats
 
 
+MIN_ASKER_ID_CHARS = 8  # shorter ids are not session uuids: they would match unrelated rel suffixes
+
+
+def _asker_sessions(conn: sqlite3.Connection, native: str) -> list[str]:
+    """Index session ids of the asking session, from the id its CLI sends (``session_id`` of the hook payload).
+
+    Index ids are opaque hashes, so the match runs on ``files.rel``, which keeps the native id in every source's
+    own shape: Claude ``<project>/<id>.jsonl``, Codex ``codex:<y>/<m>/<d>/rollout-<stamp>-<id>.jsonl``, agy
+    ``agy:<id>``, OpenCode ``opencode:<id>`` (the hook already sends it prefixed).  Nothing here depends on how the
+    OS spells a path.  Known limit: a resumed/forked session is a NEW file with a new id that copies the old turns,
+    so the older file is another session here and stays eligible.
+    """
+    if len(native) < MIN_ASKER_ID_CHARS:
+        return []
+    try:
+        rows = conn.execute("SELECT rel, session_id FROM files WHERE instr(rel, ?) > 0", (native,)).fetchall()
+    except sqlite3.Error:  # fail open: an asker that cannot be resolved excludes nothing
+        return []
+    ids = []
+    for rel, sid in rows:
+        if rel in (native, f"agy:{native}", f"{native}.jsonl") or rel.endswith((f"/{native}.jsonl", f"-{native}.jsonl")):
+            ids.append(sid)
+    return ids
+
+
 def _fts_query(query: str) -> str:
     tokens = list(dict.fromkeys(_candidate_tokens(query)))[:MAX_QUERY_TOKENS]
     # Quote each token so FTS5 operators in user text (-, :, *) stay literal.
@@ -762,6 +787,8 @@ def search(
     since: str | None = None,
     excerpt_chars: int = EXCERPT_CHARS,
     deadline_ms: float | None = None,
+    asker: str | None = None,
+    excluded: list[str] | None = None,
 ) -> list[TranscriptHit]:
     """Search the sidecar index; return redacted, dated, cited fragments.
 
@@ -772,6 +799,9 @@ def search(
     cut from the already-redacted text so a window edge cannot split a secret.
     ``deadline_ms`` aborts the query once that wall-clock budget is spent
     (returns ``[]``), for callers on a latency budget such as the prompt hook.
+    ``asker`` is the native session id of the session asking (see :func:`_asker_sessions`): its own fragments
+    are left out in SQL, before the top-k cut, so the other sessions' fragments fill the window instead.  An
+    asker that does not resolve excludes nothing; ``excluded``, when given, receives the index ids left out.
     """
     index_path = index_path or default_index_path()
     started = time.perf_counter()
@@ -794,8 +824,8 @@ def search(
     if since:
         sql += " AND f.date >= ?"
         args.append(since)
-    sql += " ORDER BY x.rank LIMIT ?"
-    args.append(max(limit * 10, 50))
+    tail = " ORDER BY x.rank LIMIT ?"
+    limit_arg = max(limit * 10, 50)
     try:
         # the connect/busy wait is bounded by what is left of the deadline, not by the 2 s reader default
         wait = {} if expires is None else {"query_ms": max(1, int((expires - time.perf_counter()) * 1000))}
@@ -810,6 +840,14 @@ def search(
             sql = sql.format(source="f.source" if "source" in _columns(conn, "fragments") else "'claude'")
             if expires is not None:
                 conn.set_progress_handler(lambda: 1 if time.perf_counter() > expires else 0, 5000)
+            own = _asker_sessions(conn, asker) if isinstance(asker, str) else []
+            if own:  # before the candidate LIMIT: filtering after it would leave nothing when the asker owns the window
+                sql += f" AND f.session_id NOT IN ({','.join('?' * len(own))})"
+                args.extend(own)
+            if excluded is not None:
+                excluded.extend(own)
+            sql += tail
+            args.append(limit_arg)
             rows = conn.execute(sql, args).fetchall()
     except sqlite3.OperationalError as exc:
         # an expired deadline is the caller's budget working, not a fault

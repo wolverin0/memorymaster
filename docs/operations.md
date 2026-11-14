@@ -75,6 +75,14 @@ finds nothing or fails, that stream still runs. The index is sanitised before it
 stored and carries a format version: an index built by an older version is not served
 until `memorymaster transcript-index` rebuilds it. Measurement: `scripts/bench_hook_recall.py`.
 
+The asking session is never quoted back to itself: the payload's `session_id` (Claude, Codex, agy;
+`opencode:<id>` for OpenCode) is matched against `files.rel` inside the same read-only connection and the
+session's fragments are left out in SQL, before the candidate limit, so other sessions' fragments fill the
+window. An unknown, missing or unmatched id excludes nothing (fail open); the
+`recall/transcript_fallback` log line carries `asker=1` when a session was left out, `0` otherwise, never
+the id. Known limits: the index is refreshed hourly, so a session not yet in it has nothing to exclude; a resumed or forked session is a new file with a new id that copies the old turns, so
+the older file stays eligible (it is quoted as another session); Claude sub-agent turns are not indexed at all.
+
 Turn the hook off for some projects, default on, without touching code or
 restarting anything: write `~/.memorymaster/recall-hook.json`. The wisp lane:
 

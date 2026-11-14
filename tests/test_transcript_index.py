@@ -437,3 +437,27 @@ def test_t2277_contract_hits_carry_their_source_and_stats_are_per_source(tmp_pat
     assert {h.source for h in ti.search("quokka timeout", idx)} == {"claude"}
     with sqlite3.connect(idx) as con:
         assert {row[0] for row in con.execute("SELECT source FROM fragments")} == {"claude"}
+
+
+def test_t2548_asker_is_resolved_from_the_native_id_in_every_sources_own_shape(tmp_path):
+    """``files.rel`` keeps the id each CLI sends: Claude <proj>/<id>.jsonl, Codex rollout-<stamp>-<id>.jsonl, agy, opencode."""
+    native = "0b9f5c7e-3a41-4c8e-9d52-7f1e2a6b8c34"
+    shapes = [
+        ("claude", f"proj-a/{native}.jsonl", native),
+        ("codex", f"codex:2026/11/02/rollout-2026-11-02T10-00-00-{native}.jsonl", native),
+        ("agy", f"agy:{native}", native),
+        ("opencode", f"opencode:ses_{native}", f"opencode:ses_{native}"),  # the OpenCode hook already sends the prefix
+    ]
+    for source, rel, sent in shapes:
+        idx = tmp_path / f"{source}.db"
+        conn, _ = ti._connect(idx)
+        with conn:
+            for n, (rel_n, sid) in enumerate([(rel, "mine"), (f"other/1111111{source[0]}-aaaa-4bbb-8ccc-dddddddddddd.jsonl", "theirs")]):
+                frag = [("project:alpha-app", f"2026-0{n + 1}-01T00:00:00Z", 0, 1, "assistant: the quokka timeout fix")]
+                ti._write_session(conn, source, rel_n, sid, frag, replace=False, size=1, mtime_ns=1)
+        conn.close()
+        assert {h.session_id for h in ti.search("quokka timeout", idx)} == {"mine", "theirs"}
+        excluded: list[str] = []
+        left = ti.search("quokka timeout", idx, asker=sent, excluded=excluded)
+        assert [h.session_id for h in left] == ["theirs"] and excluded == ["mine"], source
+        assert {h.session_id for h in ti.search("quokka timeout", idx, asker=native[:-1] + "0")} == {"mine", "theirs"}

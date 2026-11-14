@@ -606,3 +606,101 @@ def test_d5_correction_check_cost_with_eight_pointer_claims_is_under_5ms(world, 
         assert check(LATER) is False
     ms = (time.perf_counter() - started) * 1000 / 20
     assert ms < 5.0, f"correction check with 8 pointer claims took {ms:.3f} ms (limit 5 ms)"
+
+
+# --- the asking session never receives fragments of itself (T-2548) -------------------------------------------
+
+SESSION_A = "0b9f5c7e-3a41-4c8e-9d52-7f1e2a6b8c34"
+SESSION_B = "5d2e8a10-77c3-4b1f-a6e9-c4d03b9f1e72"
+UNKNOWN = "ffffffff-0000-4000-8000-000000000000"
+# lower-case drive letter and backslashes: how a Windows hook spells the path; the resolution must not care
+WIN_SPELLING = "\\".join(["c:", "Users", "someone", ".claude", "projects", "p", SESSION_A + ".jsonl"])
+
+
+def _sessions(world, tmp_path: Path, sessions: dict[str, list[tuple[str, str]]]) -> None:
+    """One Claude-shaped transcript ``p/<uuid>.jsonl`` per session, all in the hook's project, then index them."""
+    root = tmp_path / "projects"
+    (root / "p").mkdir(parents=True, exist_ok=True)
+    for sid, turns in sessions.items():
+        (root / "p" / f"{sid}.jsonl").write_text(
+            "\n".join(_rec("assistant", text, ts, world.cwd) for text, ts in turns) + "\n", encoding="utf-8")
+    ti.index_transcripts(root, world.index)
+
+
+def _two_sessions(world, tmp_path: Path) -> None:
+    # A is the newer match: it would lead every ranking without the exclusion
+    _sessions(world, tmp_path, {
+        SESSION_A: [(_long("Own notes. ", "The router firmware version chosen was 7.18.2 marker-alpha."), "2026-08-02T00:00:00Z")],
+        SESSION_B: [(_long("Other notes. ", "The router firmware version we chose was 7.18.2 marker-bravo."), "2026-08-01T00:00:00Z")],
+    })
+
+
+def test_t2548_the_asking_session_gets_the_other_sessions_fragments_not_its_own(world, tmp_path) -> None:
+    _two_sessions(world, tmp_path)
+    own, _ = world.ask(session_id=SESSION_A, transcript_path=WIN_SPELLING)
+    assert "marker-bravo" in own and "marker-alpha" not in own
+    other, _ = world.ask(session_id=SESSION_B)
+    assert "marker-alpha" in other and "marker-bravo" not in other
+
+
+@pytest.mark.parametrize("hook", [{}, {"session_id": UNKNOWN}, {"session_id": ""}, {"session_id": 7}, {"session_id": "short"}])
+def test_t2548_no_unknown_or_malformed_session_fails_open_and_nothing_is_excluded(world, tmp_path, hook) -> None:
+    _two_sessions(world, tmp_path)
+    text, _ = world.ask(**hook)
+    assert "marker-alpha" in text and "marker-bravo" in text
+
+
+def test_t2548_the_filter_runs_before_the_candidate_limit(world, tmp_path) -> None:
+    """The asker owns every row of the candidate window (50): cutting afterwards would return nothing at all."""
+    dense = "router firmware version " * 40
+    _sessions(world, tmp_path, {
+        SESSION_A: [(f"{dense}own-{n} " + "pad " * 350, f"2026-08-{n % 28 + 1:02d}T00:00:00Z") for n in range(60)],
+        SESSION_B: [("The router firmware version we chose was 7.18.2 marker-bravo. " + "tail " * 30, "2026-07-01T00:00:00Z")],
+    })
+    import sqlite3
+
+    root = tmp_path / "projects"
+    mine = ti.session_id_for(root, root / "p" / f"{SESSION_A}.jsonl")
+    with sqlite3.connect(world.index) as con:  # the premise: the asker owns the whole 50-row candidate window
+        window = con.execute("SELECT f.session_id FROM fragments_fts x JOIN fragments f ON f.id = x.rowid "
+                             "WHERE fragments_fts MATCH ? ORDER BY x.rank LIMIT 50", (ti._fts_query(ASK),)).fetchall()
+    assert len(window) == 50 and {sid for (sid,) in window} == {mine}
+    found = transcript_fallback.fragments(ASK, "project:here", 2, asker=SESSION_A)
+    assert found and all("marker-bravo" in hit.excerpt for hit in found)
+    unfiltered = transcript_fallback.fragments(ASK, "project:here", 2)  # without the exclusion the asker fills the slots
+    assert unfiltered and all("marker-bravo" not in hit.excerpt for hit in unfiltered)
+
+
+def test_t2548_the_shared_server_route_carries_the_session_and_excludes_it(world, tmp_path, monkeypatch) -> None:
+    starlette_testclient = pytest.importorskip("starlette.testclient")
+    from memorymaster.surfaces import mcp_http
+
+    _two_sessions(world, tmp_path)
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
+    app = mcp_http.create_http_app(token="secret", db_target=world.db, workspace=str(tmp_path))
+    client = starlette_testclient.TestClient(app)
+    auth = {"Authorization": "Bearer secret"}
+    hook = {"cwd": world.cwd, "session_id": SESSION_A, "transcript_path": WIN_SPELLING}
+    asked = client.post("/hook/recall", headers=auth, json={"query": ASK, "hook_data": hook})
+    assert asked.status_code == 200 and "marker-bravo" in asked.json()["ctx"] and "marker-alpha" not in asked.json()["ctx"]
+    anonymous = client.post("/hook/recall", headers=auth, json={"query": ASK, "hook_data": {"cwd": world.cwd}})
+    assert "marker-alpha" in anonymous.json()["ctx"] and "marker-bravo" in anonymous.json()["ctx"]
+
+
+def test_t2548_the_local_path_of_the_hook_client_carries_the_session_too(world, tmp_path, monkeypatch) -> None:
+    from memorymaster.recall import remote
+
+    _two_sessions(world, tmp_path)
+    monkeypatch.setenv("MEMORYMASTER_HOOK_RECALL_REMOTE", "0")  # no shared server: the hook recalls in-process
+    ctx, via = remote.hook_recall(ASK, {"cwd": world.cwd, "session_id": SESSION_A}, db_path=world.db)
+    assert via == "local" and "marker-bravo" in ctx and "marker-alpha" not in ctx
+
+
+def test_t2548_the_run_log_says_whether_an_asker_was_left_out_and_never_who(world, tmp_path, hook_log_file) -> None:
+    _two_sessions(world, tmp_path)
+    transcript_fallback.fragments(ASK, "project:here", 2, asker=SESSION_A)
+    transcript_fallback.fragments(ASK, "project:here", 2, asker=UNKNOWN)
+    transcript_fallback.fragments(ASK, "project:here", 2)
+    lines = _fallback_lines(hook_log_file)
+    assert [ln.split("asker=")[1].split()[0] for ln in lines] == ["1", "0", "0"]
+    assert all(SESSION_A[:8] not in ln for ln in lines)
