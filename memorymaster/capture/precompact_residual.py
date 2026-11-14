@@ -167,7 +167,12 @@ def _newest_turns(turns: list[str], budget: int) -> tuple[list[str], int]:
 def _assemble(
     turns: list[str], previous_summary: str, budget: int, carried: list[dict] | None = None
 ) -> tuple[str, str, list[dict]]:
-    """``(excerpt, conversation text without the carry block, carried items offered)``; ``""`` without a turn."""
+    """``(excerpt, text of the turns kept, carried items offered)``; the excerpt is ``""`` without a turn.
+
+    The turns after the boundary are the only ground a carried item is judged against: neither the carry
+    block nor the previous summary (a model that rewrites a carried item would otherwise find it "stated"
+    there and mint a new claim every compaction).
+    """
     if not turns:  # nothing happened after the boundary: the old summary alone is not worth a call
         return "", "", []
     # Carried items are reserved first (at most a fifth of the budget): a full excerpt is the normal case, and
@@ -183,7 +188,7 @@ def _assemble(
     room = min(PREVIOUS_SUMMARY_CHARS, budget // 5, budget - used - len(carry) - len(label) - 1)
     prefix = f"{label}{previous_summary[:room]}\n" if previous_summary and room > 0 else ""
     body = "\n".join(reversed(kept))
-    return carry + prefix + body, prefix + body, offered  # the middle value is what the carry is judged against
+    return carry + prefix + body, body, offered  # the middle value is what the carry is judged against: the turns only
 
 
 def slice_turns(transcript_path: str, max_chars: int | None = None) -> str:
@@ -339,7 +344,7 @@ def _same_item(item: dict, carried: dict) -> bool:
 
 
 def _stated(item: dict, ground_norm: str, ground_tokens: set[str], *, short_by_substring: bool) -> bool:
-    """Does the conversation (summary + turns, never the carry block) say this item?
+    """Do the turns after the boundary (never the carry block or the previous summary) say this item?
 
     Cards: the exact id. Text: token overlap, and only for an item with enough content; a short one
     ("run tests") is found by a raw substring only when ``short_by_substring`` (grounding a NEW item),
@@ -361,7 +366,7 @@ def carry_candidates(carried: list[dict]) -> list[dict]:
 def reconcile_carried(
     items: list[dict],
     offered: list[dict],
-    ground_text: str,
+    turns_text: str,
     *,
     ticked: bool = True,
     unoffered: list[dict] | tuple = (),
@@ -372,15 +377,15 @@ def reconcile_carried(
     maps back to the offered kind and text, so the ingest key is unchanged); a REWRITE of an offered
     item (not a copy and not stated in the conversation while offered items of its kind went
     unmatched: it takes that item's place, text included); or genuinely new (stated in the
-    conversation, or nothing left to attribute it to: ingested as before, age 0). Copies and rewrites
+    turns, or nothing left to attribute it to: ingested as before, age 0). Copies and rewrites
     keep the ``carried`` counter plus one real compaction (``ticked``), reset when the conversation
     states the item itself; variants of one carried item collapse into it. Items that did not fit the
     carried block were never judged: they ride along, aged, while there is room.
     """
     if not offered and not unoffered:
         return items
-    ground_norm = _norm(ground_text)
-    ground_tokens = _tokens(ground_text)
+    ground_norm = _norm(turns_text)
+    ground_tokens = _tokens(turns_text)
 
     def aged(carried: dict) -> dict:
         count = 0 if _stated(carried, ground_norm, ground_tokens, short_by_substring=False) else carried.get("carried", 0) + int(ticked)
@@ -520,7 +525,7 @@ def capture_residual(
     previous, previous_boundaries = residual_state.previous_items(session_id, directory=state_directory)
     carried = carry_candidates(previous)
     turns, previous_summary, boundaries = _read_turns(str(data.get("transcript_path") or ""))
-    excerpt, ground_text, offered = _assemble(turns, previous_summary, _input_chars(), carried)
+    excerpt, turns_text, offered = _assemble(turns, previous_summary, _input_chars(), carried)
     unoffered = [c for c in carried if not any(c is o for o in offered)]  # no room in the block: not judged, not lost
     outcome["excerpt_chars"] = len(excerpt)
     outcome["carry_offered"] = len(offered)
@@ -541,7 +546,7 @@ def capture_residual(
         outcome["egress_withheld"] = egress.get("egress_withheld", 0)
         if egress.get("answered"):
             ticked = previous_boundaries is None or boundaries > previous_boundaries
-            items = reconcile_carried(items, offered, ground_text, ticked=ticked, unoffered=unoffered)
+            items = reconcile_carried(items, offered, turns_text, ticked=ticked, unoffered=unoffered)
     except Exception as exc:  # swallow-ok: provider outage or quota must never block a compaction; recorded below
         outcome["skipped"] = "llm-error"
         outcome["error"] = type(exc).__name__

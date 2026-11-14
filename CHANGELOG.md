@@ -21,8 +21,8 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 - The prompt asks for a kept item verbatim, but the lineage is bounded whatever the model does with the text. An
   item of the answer is a copy of a carried one (equal, a same-kind clipped prefix, or near-identical, ratio >= 0.7
   with the same numbers and negation; maps back to the carried kind and text, so the ingest key is unchanged), a
-  rewrite of one (not a copy and not stated in the summary/turns while carried items of its kind went unmatched: it
-  takes that item's place and text), or genuinely new (stated in the conversation: ingested, age 0). Copies and
+  rewrite of one (not a copy and not stated in the turns after the boundary, never the summary, while carried items of its kind went unmatched: it
+  takes that item's place and text), or genuinely new (stated in the turns: ingested, age 0). Copies and
   rewrites are not ingested again, variants collapse into one line, and the age counter ticks only on a real
   compaction (the marker records the compaction count). An item carried through two compactions without the
   conversation stating it again (card id, or token overlap for an item with at least three content tokens; a short

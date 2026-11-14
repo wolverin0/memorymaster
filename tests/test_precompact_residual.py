@@ -668,8 +668,8 @@ def _session(tmp_path, *, text=OPEN_TURN):
     transcript = tmp_path / "t.jsonl"
     _write_rows(transcript, [_msg("user", "start"), _msg("assistant", text), _msg("user", "go on")])
 
-    def compact(*turns):
-        _compaction(transcript, "Summary: the session worked on the sync worker.")
+    def compact(*turns, summary="Summary: the session worked on the sync worker."):
+        _compaction(transcript, summary)
         _append_rows(transcript, [_msg("user", t) for t in (turns or ("now the logging format", "logging uses json lines"))])
 
     return transcript, compact
@@ -976,18 +976,36 @@ def test_a_rewritten_carried_item_keeps_its_text_but_a_new_item_stated_in_the_tu
     assert texts == sorted([OPEN_TURN, new_turn])
 
 
+@pytest.mark.parametrize("transform", [_rotate, _heavy])
+def test_a_summary_that_keeps_the_carried_wording_does_not_make_the_rewrite_look_stated(svc, tmp_path, transform):
+    cwd = str(tmp_path / "workspace" / "SyncWorker")
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": cwd}
+    _capture(tmp_path, transcript, _echo_open_lines, **kwargs)
+    llm = _rewriter(transform)
+    seen = []
+    for _ in range(6):
+        if state.previous_items("sess-carry", directory=tmp_path / "state")[0]:
+            _deliver(tmp_path)
+        compact(summary="Summary: still undecided whether the sync retry should use jitter")  # the harness kept the wording; the turns do not
+        outcome = _capture(tmp_path, transcript, llm, **kwargs)
+        seen.append((outcome["items"], outcome["ingested"]))
+    assert seen == [(1, 0), (1, 0), (0, 0), (0, 0), (0, 0), (0, 0)]
+    assert len(_claims_of(svc.db_target)) == 1
+
+
 def test_a_short_carried_item_does_not_get_its_age_reset_by_a_substring_in_any_later_turn(tmp_path):
     transcript, compact = _session(tmp_path, text="run tests OPENQ")
     verbatim_carry_only = _rewriter(lambda text, n: text)
     _capture(tmp_path, transcript, lambda p, t: json.dumps({"decisions": ["run tests OPENQ"]}))
     seen = []
-    for _ in range(5):
+    for _ in range(6):
         if state.previous_items("sess-carry", directory=tmp_path / "state")[0]:
             _deliver(tmp_path)
         compact("we should run tests OPENQ again at some point")  # contains the short item verbatim
         carry_only = lambda p, t: verbatim_carry_only(p, "\n".join(x for x in t.splitlines() if x.startswith("- ")))  # noqa: E731
         seen.append(_capture(tmp_path, transcript, carry_only)["items"])
-    assert seen == [1, 1, 0, 0, 0]
+    assert seen == [1, 1, 0, 0, 0, 0]
 
 
 def test_unoffered_carried_items_are_not_judged_and_keep_aging(tmp_path, monkeypatch):
