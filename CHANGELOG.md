@@ -8,6 +8,36 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 
 ## [Unreleased]
 
+### PreCompact residual: open items cross a second compaction (T-2548)
+
+- An open item that existed only in the residual delivered after compaction N used to die at compaction N+1: the
+  harness summary dropped it, no later turn restated it, and the delivered hook attachment is not a
+  `user`/`assistant` turn, so the extractor never saw it (on 191 real consecutive pairs of delivered blocks, 97% of
+  the items were absent from the next one; "absent" is an upper bound on loss, some were closed).
+- Extraction is unchanged: the model still sees only the turns and the previous summary, in one call. The carry
+  happens in code afterwards. Delivery (`recall.residual.consume`) now renames the marker to
+  `~/.memorymaster/hook_state/carried_<session>.json` instead of deleting it (an expired, undelivered marker is
+  still just deleted); saving a marker also mirrors it to that file, so one that expires undelivered still leaves
+  its items and their ages. At the next ANSWERED capture (a parsed object with at least one expected key; `{}`, an error
+  object, garbage, a skipped or failed capture do not count and leave the carry untouched) the items of the last
+  residual are appended byte for byte to the new one under the heading "Possibly still open (from before the
+  previous compaction; may already be closed)". Fresh items take MAX_ITEMS / MAX_CHARS first, carried ones fill what
+  is left, the oldest dropped first. A carried item has a counter stored with it, up by one per real compaction
+  (the marker records how many compaction boundaries the transcript showed, so a retry or a duplicate hook firing
+  over the same stretch does not age it), never reset, and it is dropped after two. A fresh item with exactly the same kind and text (case/whitespace; a
+  card by id) replaces the carried copy; nothing fuzzy. Carried copies are never ingested: only fresh items are,
+  as before. No model answer can change a carried item's text, age or the claims it causes.
+- A missing, corrupt, huge or wrong-type carry file means no carry (items are revalidated, clipped and capped; a
+  tampered age drops the item); carried text goes through the sensitivity scrub before it is shown again; a failed
+  delivery rename removes the stale carried copy instead of leaving it; carried files older than three days are
+  swept at capture time only. No new flag, no second LLM call.
+- Known cost: an item that was actually closed can be shown again, up to twice, under the "may already be closed"
+  heading. Same as before this change: an undelivered older marker can be delivered later; a model's rewrite of an
+  item is shown beside the carried original; a carried copy is never ingested, so an item whose first ingest
+  failed gets no claim. Coverage: only the Claude Code PreCompact hook captures a residual; the Codex recall adapter runs the
+  same shared recall template and would deliver a marker for its session, but no Codex hook writes one; agy and
+  OpenCode do not use the residual.
+
 ### Stop-hook extraction no longer sends sensitive text to the provider (T-2274)
 
 - `_run_gemini_extraction` (optional `MEMORYMASTER_STOP_EXTRACT`) now runs each assistant message through

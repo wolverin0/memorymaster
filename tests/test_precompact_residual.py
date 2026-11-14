@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import runpy
 import sqlite3
 import sys
@@ -606,3 +607,365 @@ def test_residual_excerpt_is_gated_line_by_line_and_the_outcome_reports_what_was
         db_path=str(tmp_path / "x.db"), llm=lambda p, t: "{}", state_directory=tmp_path / "state",
     )
     assert outcome["egress_withheld"] == 0
+
+
+# --- carry-over: a delivered residual is carried by code, never by the model -------------------------------
+
+OPEN_MARK = "OPENQ"
+OPEN_TURN = "should the sync retry use jitter? OPENQ still undecided"
+NOTHING_OPEN = json.dumps({"decisions": [], "rejected": [], "assumptions": [], "cards": [], "next_step": ""})
+
+
+def _echo(prompt, text):
+    """A fake model that can only return what the text it is given carries: any line with the marker."""
+    found = [line.split(": ", 1)[-1].strip() for line in text.splitlines() if OPEN_MARK in line]
+    return json.dumps({"decisions": found})
+
+
+def _append_rows(path, rows):
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(json.dumps(r) for r in rows) + "\n")
+
+
+def _session(tmp_path, *, text=OPEN_TURN):
+    """A transcript whose first stretch states an open item, plus a way to compact it with unrelated turns."""
+    transcript = tmp_path / "t.jsonl"
+    _write_rows(transcript, [_msg("user", "start"), _msg("assistant", text), _msg("user", "go on")])
+
+    def compact(*turns):
+        _append_rows(transcript, [{"type": "system", "subtype": "compact_boundary"}, _msg("user", "Summary: the session worked on the sync worker.", isCompactSummary=True)])
+        _append_rows(transcript, [_msg("user", t) for t in (turns or ("now the logging format", "logging uses json lines"))])
+
+    return transcript, compact
+
+
+def _capture(tmp_path, transcript, llm, *, db="x.db", cwd=None, **extra):
+    return pr.capture_residual(
+        {"session_id": "sess-carry", "transcript_path": str(transcript), "cwd": cwd or str(tmp_path)},
+        db_path=str(tmp_path / db), llm=llm, state_directory=tmp_path / "state", **extra,
+    )
+
+
+def _deliver(tmp_path):
+    """What the prompt hook does on the first prompt after a compaction; returns the delivered block."""
+    block = state.pending_block("sess-carry", directory=tmp_path / "state")
+    assert block
+    state.consume("sess-carry", directory=tmp_path / "state")
+    return block
+
+
+def _previous(tmp_path):
+    return state.previous_items("sess-carry", directory=tmp_path / "state")[0]
+
+
+def _claim_texts(db):
+    return [r["text"] for r in _claims(str(db)) if r["source_agent"] == pr.SOURCE_AGENT]
+
+
+def _cwd(tmp_path):
+    return str(tmp_path / "workspace" / "SyncWorker")
+
+
+def test_an_open_item_only_in_the_delivered_residual_survives_two_more_compactions_then_ends(svc, tmp_path):
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": _cwd(tmp_path)}
+    assert _capture(tmp_path, transcript, _echo, **kwargs)["ingested"] == 1
+    carried_line = f"- decision: {OPEN_TURN}"
+    for age in (1, 2):
+        block = _deliver(tmp_path)
+        compact()  # nothing after the boundary restates the item and the summary dropped it
+        outcome = _capture(tmp_path, transcript, _echo, **kwargs)
+        assert OPEN_TURN in state.pending_block("sess-carry", directory=tmp_path / "state"), "the open item was lost at this compaction"
+        assert outcome["items"] == 0 and outcome["carried"] == 1 and outcome["ingested"] == 0  # the model returned nothing
+        assert _previous(tmp_path) == [{"kind": "decision", "text": OPEN_TURN, "carried": age}]
+        assert state.CARRIED_HEADING in state.pending_block("sess-carry", directory=tmp_path / "state")
+        assert carried_line in state.pending_block("sess-carry", directory=tmp_path / "state")
+        assert (block.count(OPEN_TURN) == 1)
+    _deliver(tmp_path)
+    compact()
+    assert _capture(tmp_path, transcript, _echo, **kwargs)["skipped"] == "empty-residual"  # carried through two: gone
+    assert _previous(tmp_path) == [] and not state.carried_path("sess-carry", tmp_path / "state").exists()
+    assert _claim_texts(svc.db_target) == [OPEN_TURN]  # one claim for the whole life of the item
+
+
+def _rotate(text):
+    words = text.split()
+    return " ".join(words[2:] + words[:2])
+
+
+ADVERSARIES = {
+    "rotate_words": lambda n, original: {"decisions": [_rotate(original)]},
+    "kind_swap_and_rewrite": lambda n, original: {"assumptions": [_rotate(original) + f" v{n}"]},
+    "split": lambda n, original: {"decisions": [original[:20] + f" part a{n}", original[20:] + f" part b{n}"]},
+    "invented_extras": lambda n, original: {"decisions": [f"invented extra number {n} about the caching layer", f"another invented thing {n} entirely"]},
+    "topical_chatter": lambda n, original: {"decisions": [f"we talked about the sync retry and jitter again in round {n}"]},
+    "near_miss": lambda n, original: {"decisions": [original.replace("sync", "audit")]},
+}
+
+
+@pytest.mark.parametrize("name", sorted(ADVERSARIES))
+def test_no_model_answer_can_change_a_carried_items_text_age_or_ingests(svc, tmp_path, name):
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": _cwd(tmp_path)}
+    _capture(tmp_path, transcript, _echo, **kwargs)
+    emitted: list[str] = []
+
+    def adversary(round_no):
+        def llm(prompt, text):
+            answer = ADVERSARIES[name](round_no, OPEN_TURN)
+            emitted.extend(t for v in answer.values() for t in v)
+            return json.dumps(answer)
+
+        return llm
+
+    for round_no in (2, 3, 4):
+        _deliver(tmp_path)
+        compact()
+        _capture(tmp_path, transcript, adversary(round_no), **kwargs)
+        original = [i for i in _previous(tmp_path) if i["text"] == OPEN_TURN]
+        if round_no < 4:  # byte-identical text, the age the CODE counted, whatever the model answered
+            assert original == [{"kind": "decision", "text": OPEN_TURN, "carried": round_no - 1}]
+        else:
+            assert original == []  # nothing is alive past two answered compactions
+    assert _claim_texts(svc.db_target).count(OPEN_TURN) == 1
+    assert sorted(_claim_texts(svc.db_target)) == sorted({OPEN_TURN, *emitted})  # only what the model itself said is ingested
+
+
+def test_a_near_miss_new_item_stated_in_the_turns_is_ingested_and_shown_as_its_own_line(svc, tmp_path):
+    old, new = "claims store should use WAL mode OPENQ", "audit store should use WAL mode OPENQ"
+    transcript, compact = _session(tmp_path, text=old)
+    kwargs = {"db": "residual.db", "cwd": _cwd(tmp_path)}
+    _capture(tmp_path, transcript, _echo, **kwargs)
+    _deliver(tmp_path)
+    compact("we also looked at the other database", new)
+    outcome = _capture(tmp_path, transcript, _echo, **kwargs)
+    assert outcome["ingested"] == 1 and outcome["items"] == 1 and outcome["carried"] == 1
+    block = state.pending_block("sess-carry", directory=tmp_path / "state")
+    fresh_part, carried_part = block.split(state.CARRIED_HEADING)
+    assert f"- {new}" in fresh_part and f"- decision: {old}" in carried_part
+    assert sorted(_claim_texts(svc.db_target)) == sorted([old, new])
+
+
+def test_the_model_never_sees_the_carried_items_and_the_call_is_still_one(tmp_path):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo)
+    _deliver(tmp_path)
+    compact()
+    sent = []
+    _capture(tmp_path, transcript, lambda p, t: sent.append((p, t)) or NOTHING_OPEN)
+    assert len(sent) == 1 and OPEN_TURN not in sent[0][1] and "previously open" not in sent[0][0]
+    assert [i["text"] for i in _previous(tmp_path)] == [OPEN_TURN]  # but the next residual carries it
+
+
+def _item(kind, text, age=0):
+    return {"kind": kind, "text": text, **({"carried": age} if age else {})}
+
+
+def test_fresh_items_take_the_caps_first_and_the_oldest_carried_item_is_dropped_first():
+    fresh = [_item("decision", f"fresh {i}") for i in range(4)]
+    previous = [_item("assumption", f"old {i}", age=1 if i % 2 else 0) for i in range(10)]
+    out = state.carry_forward(fresh, previous)
+    assert len(out) == state.MAX_ITEMS and [i["text"] for i in out[:4]] == [f"fresh {i}" for i in range(4)]
+    assert all(i["carried"] in (1, 2) for i in out[4:]) and sum(1 for i in out[4:] if i["carried"] == 1) == 5  # the younger ones first
+    assert len(state.render_block(out)) <= state.MAX_CHARS
+    assert [i for i in state.carry_forward([_item("decision", f"f{i}") for i in range(10)], previous) if i.get("carried")] == []
+
+
+def test_the_carried_items_fill_only_what_the_char_cap_leaves_and_never_skip_an_older_one_in():
+    fresh = [_item("decision", "f" * 170 + str(i)) for i in range(7)]
+    younger, older = _item("assumption", "y" * 200, 1), _item("assumption", "short old", 2)
+    assert len(state.render_block([*fresh, younger])) > state.MAX_CHARS >= len(state.render_block([*fresh, older]))  # the scenario
+    kept = state._fit([*fresh, older, younger])
+    assert kept == fresh  # the younger item does not fit, so the older one is not let in behind it
+    assert len(state.render_block(state.carry_forward(fresh, [_item("assumption", "tiny", 0)]))) <= state.MAX_CHARS
+
+
+def test_an_exact_duplicate_drops_only_the_carried_copy_and_nothing_fuzzy_matches():
+    previous = [_item("decision", "Keep  WAL on"), _item("card", "T-1234"), _item("assumption", "other thing"), _item("decision", "use WAL mode everywhere", 1)]
+    fresh = [_item("decision", "keep wal ON"), _item("card", "T-1234"), _item("decision", "use WAL mode everywhere now")]
+    out = state.carry_forward(fresh, previous)
+    assert sorted(i["text"] for i in out if not i.get("carried")) == sorted(["keep wal ON", "T-1234", "use WAL mode everywhere now"])  # fresh text kept
+    assert sorted(i["text"] for i in out if i.get("carried")) == ["other thing", "use WAL mode everywhere"]  # the near one stays carried
+    assert state.carry_forward([_item("assumption", "Keep WAL on")], [_item("decision", "keep wal on")])[1]["carried"] == 1  # other kind: no match
+
+
+@pytest.mark.parametrize("answer", ["", '{"decisions": ["x', "no json here", '["a plain string"]', "{}", '{"error": {"code": 500}}'])
+def test_a_failed_or_unparseable_answer_leaves_the_carry_untouched(tmp_path, answer):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo)
+    _deliver(tmp_path)
+    compact()
+    carried = state.carried_path("sess-carry", tmp_path / "state")
+    before = carried.read_bytes()
+    assert _capture(tmp_path, transcript, lambda p, t: answer)["items"] == 0
+    assert carried.read_bytes() == before and not state.residual_path("sess-carry", tmp_path / "state").exists()
+    assert _capture(tmp_path, transcript, _echo)["carried"] == 1  # the next answered capture still carries it, age 1
+
+
+def test_the_carry_survives_a_budget_skip_and_a_provider_error(tmp_path):
+    from memorymaster.core.capture_control import CaptureLedger, CaptureLimits
+
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo)
+    _deliver(tmp_path)
+    compact()
+    carried = state.carried_path("sess-carry", tmp_path / "state")
+    before = carried.read_bytes()
+
+    def boom(prompt, text):
+        raise RuntimeError("provider down")
+
+    assert _capture(tmp_path, transcript, boom)["skipped"] == "llm-error" and carried.read_bytes() == before
+    ledger = CaptureLedger(tmp_path / "cap.db", limits=CaptureLimits(global_daily_calls=0))
+    assert _capture(tmp_path, transcript, _echo, ledger=ledger)["skipped"] == "capture-budget" and carried.read_bytes() == before
+
+
+def test_an_answered_capture_that_finds_nothing_new_still_carries_and_ages_the_old_items(tmp_path):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo)
+    _deliver(tmp_path)
+    compact()
+    outcome = _capture(tmp_path, transcript, lambda p, t: NOTHING_OPEN)
+    assert outcome["items"] == 0 and outcome["carried"] == 1 and "skipped" not in outcome
+    assert _previous(tmp_path) == [{"kind": "decision", "text": OPEN_TURN, "carried": 1}]
+
+
+def test_carried_items_pass_the_sensitivity_scrub_before_they_are_shown_again(tmp_path):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo)
+    _deliver(tmp_path)
+    path = state.carried_path("sess-carry", tmp_path / "state")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["items"].append({"kind": "decision", "text": "deploy with key " + probe.SECRET})
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    compact()
+    _capture(tmp_path, transcript, lambda p, t: NOTHING_OPEN)
+    block = state.pending_block("sess-carry", directory=tmp_path / "state")
+    assert probe.SECRET not in block and OPEN_TURN in block
+
+
+def _junk_payloads():
+    now = time.time()
+    return [
+        "", "{not json", "[]", json.dumps({"created_at": "x", "items": 5}), json.dumps({"created_at": now, "items": [None, 3, "x", []]}),
+        json.dumps({"created_at": now, "items": [{"kind": "card", "text": "not a card id"}, {"kind": "nope", "text": "x"}, {"kind": "decision", "text": 5}]}),
+        json.dumps({"created_at": now, "items": [{"kind": "decision", "text": "old", "carried": 99}]}),
+    ]
+
+
+@pytest.mark.parametrize("junk", range(7))
+def test_a_corrupt_or_wrong_type_carry_file_means_no_carry_never_an_error(tmp_path, junk):
+    transcript, compact = _session(tmp_path)
+    compact()
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    state.carried_path("sess-carry", state_dir).write_text(_junk_payloads()[junk], encoding="utf-8")
+    assert _previous(tmp_path) == []
+    outcome = _capture(tmp_path, transcript, lambda p, t: NOTHING_OPEN)
+    assert "error" not in outcome and outcome.get("carried", 0) == 0
+
+
+def test_a_huge_carry_file_is_bounded_and_every_item_is_clipped(tmp_path):
+    items = [{"kind": "decision", "text": "w" * 400 + str(i), "carried": 1} for i in range(3000)]
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    state.carried_path("sess-carry", state_dir).write_text(json.dumps({"created_at": time.time(), "items": items}), encoding="utf-8")
+    got = _previous(tmp_path)
+    assert len(got) == state.MAX_ITEMS and all(len(i["text"]) <= state.MAX_ITEM_CHARS for i in got)
+    assert len(state.render_block(state._fit(state.carry_forward([], got)))) <= state.MAX_CHARS
+
+
+def test_delivery_keeps_the_marker_as_carried_while_an_expired_one_is_just_deleted(tmp_path):
+    items = state.bound_residual({"decisions": ["keep WAL on"]})
+    state.save_residual("s", items, directory=tmp_path, now=1000.0)
+    state.consume("s", directory=tmp_path)
+    assert not state.residual_path("s", tmp_path).exists() and state.carried_path("s", tmp_path).exists()
+    assert state.pending_block("s", directory=tmp_path) == ""  # delivered once, never again
+    assert [i["text"] for i in state.previous_items("s", directory=tmp_path, now=1000.0 + 60)[0]] == ["keep WAL on"]
+    assert state.previous_items("s", directory=tmp_path, now=1000.0 + state.CARRY_TTL_SECONDS + 1)[0] == []
+    state.save_residual("e", items, directory=tmp_path, now=1000.0)
+    assert state.pending_block("e", directory=tmp_path, now=1000.0 + state.TTL_SECONDS + 1) == ""  # expired: never delivered
+    assert not state.residual_path("e", tmp_path).exists()
+    assert [i["text"] for i in state.previous_items("e", directory=tmp_path, now=1000.0 + state.TTL_SECONDS + 1)[0]] == ["keep WAL on"]
+
+
+def test_an_undelivered_marker_wins_over_an_older_carried_one_and_old_carried_files_are_swept(tmp_path):
+    now = time.time()
+    state.save_residual("s", state.bound_residual({"decisions": ["old one"]}), directory=tmp_path, now=now - 100)
+    state.consume("s", directory=tmp_path)
+    state.save_residual("s", state.bound_residual({"decisions": ["new one"]}), directory=tmp_path, now=now - 50)
+    assert [i["text"] for i in state.previous_items("s", directory=tmp_path)[0]] == ["new one"]
+    stale = state.carried_path("other", tmp_path)
+    stale.write_text("{}", encoding="utf-8")
+    os.utime(stale, (now - state.CARRY_TTL_SECONDS - 10, now - state.CARRY_TTL_SECONDS - 10))
+    state.sweep_carried(directory=tmp_path)
+    assert not stale.exists() and state.carried_path("s", tmp_path).exists()
+
+
+def test_a_failed_rename_never_leaves_the_stale_carried_copy_behind(tmp_path, monkeypatch):
+    state.save_residual("s", state.bound_residual({"decisions": ["old one"]}), directory=tmp_path)
+    state.consume("s", directory=tmp_path)  # carried: old one
+    state.save_residual("s", state.bound_residual({"decisions": ["new one"]}), directory=tmp_path)
+
+    def boom(src, dst):
+        raise PermissionError("held open")
+
+    monkeypatch.setattr(state.os, "replace", boom)
+    state.consume("s", directory=tmp_path)  # must not raise
+    monkeypatch.undo()
+    assert not state.carried_path("s", tmp_path).exists() and not state.residual_path("s", tmp_path).exists()
+    assert state.previous_items("s", directory=tmp_path)[0] == []
+
+
+def test_a_marker_that_expires_undelivered_does_not_take_the_carry_with_it(tmp_path):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo)
+    _deliver(tmp_path)
+    compact()
+    assert _capture(tmp_path, transcript, _echo)["carried"] == 1  # age 1, saved, never delivered
+    assert state.pending_block("sess-carry", directory=tmp_path / "state", now=time.time() + state.TTL_SECONDS + 1) == ""
+    assert not state.residual_path("sess-carry", tmp_path / "state").exists()  # the expired marker is gone, the lineage is not
+    compact()
+    assert _capture(tmp_path, transcript, _echo)["carried"] == 1
+    assert _previous(tmp_path) == [{"kind": "decision", "text": OPEN_TURN, "carried": 2}]  # the count stayed strict
+
+
+@pytest.mark.parametrize("echo", [lambda text: text, lambda text: text.upper(), lambda text: "  ".join(text.split())])
+def test_a_model_that_re_emits_the_exact_text_makes_a_fresh_item_never_a_second_claim_or_a_carried_one(svc, tmp_path, echo):
+    # Rule 5: only an exact (case/whitespace-insensitive) duplicate of a carried item replaces the carried copy. The
+    # model never sees carried text, so it can only do this when the turns state the item again; it is then a fresh
+    # item exactly as on main (age 0, shown as its own line, one claim), not something the carry keeps alive.
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": _cwd(tmp_path)}
+    _capture(tmp_path, transcript, _echo, **kwargs)
+    for _ in range(4):
+        _deliver(tmp_path)
+        compact()
+        _capture(tmp_path, transcript, lambda p, t: json.dumps({"decisions": [echo(OPEN_TURN)]}), **kwargs)
+        block = state.pending_block("sess-carry", directory=tmp_path / "state")
+        assert state.CARRIED_HEADING not in block and block.lower().count("openq") == 1
+        assert all(not i["carried"] for i in _previous(tmp_path))
+    assert len(_claim_texts(svc.db_target)) == 1
+
+
+def test_a_repeated_capture_of_the_same_stretch_does_not_age_the_carry(tmp_path):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo)
+    _deliver(tmp_path)
+    compact()
+    assert _capture(tmp_path, transcript, _echo)["carried"] == 1
+    for answer in (_echo, lambda p, t: NOTHING_OPEN, lambda p, t: json.dumps({"decisions": ["something else entirely"]})):
+        assert _capture(tmp_path, transcript, answer)["carried"] == 1  # a retry or a duplicate hook firing: no compaction since
+        assert [i["carried"] for i in _previous(tmp_path) if i["text"] == OPEN_TURN] == [1]  # whatever the model answered
+    _deliver(tmp_path)
+    compact()  # the real second compaction
+    _capture(tmp_path, transcript, _echo)
+    assert [i["carried"] for i in _previous(tmp_path) if i["text"] == OPEN_TURN] == [2]  # carried once more
+    _deliver(tmp_path)
+    compact()
+    assert not [i for i in _previous_after_capture(tmp_path, transcript) if i["text"] == OPEN_TURN]  # then gone
+
+
+def _previous_after_capture(tmp_path, transcript):
+    _capture(tmp_path, transcript, _echo)
+    return _previous(tmp_path)

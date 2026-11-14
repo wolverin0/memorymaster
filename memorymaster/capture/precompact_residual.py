@@ -8,6 +8,10 @@ and ingests each item as a ``candidate`` claim with
 ``source_agent="precompact-residual"``. That author is in the non-auto-promotable
 set (``core.promotion_policy``), so nothing here is ever confirmed automatically.
 
+A delivered residual is kept (``recall.residual.consume`` renames it) and the next capture appends its
+still-young items to the new residual in code (``residual.carry_forward``), after the one LLM call: the model
+never sees them. Only fresh items are ingested.
+
 Every path is best effort: a failure here must never block or break a compaction.
 """
 from __future__ import annotations
@@ -32,6 +36,11 @@ ANTHROPIC_PROVIDERS = frozenset({"anthropic", "claude", "claude_cli", "claude-cl
 DEFAULT_INPUT_CHARS = 30_000
 MESSAGE_CHARS = 1500
 PREVIOUS_SUMMARY_CHARS = 2500
+
+ANSWER_KEYS = frozenset({
+    "decisions", "open_decisions", "rejected", "rejected_options", "assumptions", "unverified_assumptions",
+    "cards", "in_flight_cards", "next_step", "next",
+})
 
 PREDICATES = {
     "decision": ("decision", "open_decision"),
@@ -93,12 +102,18 @@ def slice_turns(transcript_path: str, max_chars: int | None = None) -> str:
     Tool results and sub-agent turns are skipped. The previous compaction's
     summary, when present, leads the excerpt so earlier facts can be carried on.
     """
+    return _slice(transcript_path, max_chars)[0]
+
+
+def _slice(transcript_path: str, max_chars: int | None = None) -> tuple[str, int]:
+    """``slice_turns`` plus how many compaction boundaries the transcript shows (what ages the carry)."""
     budget = max_chars if max_chars is not None else _input_chars()
     path = Path(os.path.expanduser(str(transcript_path or "")))
     if not path.is_file():
-        return ""
+        return "", 0
     turns: list[str] = []
     previous_summary = ""
+    boundaries = 0
     try:
         with path.open(encoding="utf-8", errors="replace") as handle:
             for line in handle:
@@ -110,6 +125,7 @@ def slice_turns(transcript_path: str, max_chars: int | None = None) -> str:
                     continue
                 if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
                     turns, previous_summary = [], ""
+                    boundaries += 1
                     continue
                 if entry.get("isCompactSummary"):  # judged with its own limit, never the per-message one
                     previous_summary = _message_text(entry, PREVIOUS_SUMMARY_CHARS)[1]
@@ -119,9 +135,9 @@ def slice_turns(transcript_path: str, max_chars: int | None = None) -> str:
                     continue
                 turns.append(f"{role}: {text}")
     except OSError:
-        return ""
+        return "", boundaries
     if not turns:  # nothing happened after the boundary: the old summary alone is not worth a call
-        return ""
+        return "", boundaries
     # The newest turns are reserved first; the previous summary only gets what is left (and counts against the budget).
     kept: list[str] = []
     used = 0
@@ -131,11 +147,11 @@ def slice_turns(transcript_path: str, max_chars: int | None = None) -> str:
         kept.append(turn)
         used += len(turn) + 1
     if not kept:  # not even the newest turn fits: the old summary alone is not worth a call
-        return ""
+        return "", boundaries
     label = "previous summary: "
     room = min(PREVIOUS_SUMMARY_CHARS, budget // 5, budget - used - len(label) - 1)
     prefix = f"{label}{previous_summary[:room]}\n" if previous_summary and room > 0 else ""
-    return prefix + "\n".join(reversed(kept))
+    return prefix + "\n".join(reversed(kept)), boundaries
 
 
 def _input_chars() -> int:
@@ -236,9 +252,13 @@ def extract_residual(
         return []
     with use_call_scoped_env(overrides):
         answer = call(PROMPT, safe_excerpt)
-    if not answer:
+    if not answer:  # a failed call (the shared client returns "") judged nothing
         return []
-    return drop_sensitive(residual_state.bound_residual(_scrub_raw(parse_json_response(answer))))
+    parsed = parse_json_response(answer)
+    top = next((entry for entry in parsed if isinstance(entry, dict)), {})
+    if stats is not None and ANSWER_KEYS & set(top):
+        stats["answered"] = 1  # an object with the expected keys, even all empty, is a verdict; {} / an error object / garbage is not
+    return drop_sensitive(residual_state.bound_residual(_scrub_raw(parsed)))
 
 
 def _claim_args(item: dict[str, str], *, scope: str, session_id: str, subject: str) -> dict[str, Any]:
@@ -335,7 +355,8 @@ def capture_residual(
     cwd = str(data.get("cwd") or cwd_from_transcript(data.get("transcript_path")) or "")
     config = provider_config()
     outcome: dict[str, Any] = {"session": session_id, "provider": config["provider"], "note": config["note"], "items": 0, "ingested": 0}
-    excerpt = slice_turns(str(data.get("transcript_path") or ""))
+    residual_state.sweep_carried(directory=state_directory)
+    excerpt, compactions = _slice(str(data.get("transcript_path") or ""))
     outcome["excerpt_chars"] = len(excerpt)
     if not excerpt:
         outcome["skipped"] = "no-turns"
@@ -360,15 +381,27 @@ def capture_residual(
         return outcome
     if reservation is not None:
         ledger.finish_llm(reservation, input_bytes=len(excerpt), output_bytes=sum(len(i["text"]) for i in items), outcome="ok")
-    outcome["items"] = len(items)
+    outcome["items"] = len(items)  # what the model returned, as before the carry
+    if egress.get("answered"):  # only an answered capture ages the carry; the model never sees it
+        try:
+            previous, previous_compactions = residual_state.previous_items(session_id, directory=state_directory)
+            # The age goes up only when the transcript shows a compaction since the marker was written: a retry or a
+            # duplicate hook firing over the same stretch must not age the carry. Nothing the model says is involved.
+            ticked = previous_compactions is None or compactions > previous_compactions
+            items = residual_state.carry_forward(items, drop_sensitive(previous), ticked=ticked)
+        except Exception:  # swallow-ok: a carry that cannot be built must not discard the fresh items
+            outcome["carry_error"] = True
+    outcome["carried"] = sum(1 for item in items if item.get("carried"))
     if not items:
+        if egress.get("answered"):  # a verdict with nothing left, carried items included: the carry is over
+            residual_state.retire_carried(session_id, directory=state_directory)
         outcome["skipped"] = "empty-residual"
         return outcome
     try:
         saved = residual_state.save_residual(
             session_id,
             items,
-            meta={"provider": config["provider"], "model": config["model"], "trigger": str(data.get("trigger") or "")},
+            meta={"provider": config["provider"], "model": config["model"], "trigger": str(data.get("trigger") or ""), "compactions": compactions},
             directory=state_directory,
         )
     except Exception as exc:  # swallow-ok: a marker that cannot be written must not abort the claim ingestion below
@@ -376,7 +409,8 @@ def capture_residual(
         outcome["save_error"] = type(exc).__name__
     outcome["saved"] = saved is not None
     try:
-        outcome["ingested"] = ingest_residual(items, db_path=db_path, session_id=session_id, cwd=cwd, spool=spool)
+        fresh = [item for item in items if not item.get("carried")]  # a carried copy is already a claim
+        outcome["ingested"] = ingest_residual(fresh, db_path=db_path, session_id=session_id, cwd=cwd, spool=spool)
     except Exception as exc:  # swallow-ok: the residual file already protects the session; ingest is the durable extra
         outcome["ingest_error"] = type(exc).__name__
     return outcome
