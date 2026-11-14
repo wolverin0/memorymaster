@@ -17,7 +17,8 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
 - Extraction is unchanged: the model still sees only the turns and the previous summary, in one call. The carry
   happens in code afterwards. Delivery (`recall.residual.consume`) now renames the marker to
   `~/.memorymaster/hook_state/carried_<session>.json` instead of deleting it (an expired, undelivered marker is
-  still just deleted). At the next ANSWERED capture (a parsed object with at least one expected key; `{}`, an error
+  still just deleted); saving a marker also mirrors it to that file, so one that expires undelivered still leaves
+  its items and their ages. At the next ANSWERED capture (a parsed object with at least one expected key; `{}`, an error
   object, garbage, a skipped or failed capture do not count and leave the carry untouched) the items of the last
   residual are appended byte for byte to the new one under the heading "Possibly still open (from before the
   previous compaction; may already be closed)". Fresh items take MAX_ITEMS / MAX_CHARS first, carried ones fill what

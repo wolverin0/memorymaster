@@ -675,7 +675,8 @@ def test_an_open_item_only_in_the_delivered_residual_survives_two_more_compactio
         block = _deliver(tmp_path)
         compact()  # nothing after the boundary restates the item and the summary dropped it
         outcome = _capture(tmp_path, transcript, _echo, **kwargs)
-        assert outcome["items"] == 1 and outcome["carried"] == 1 and outcome["ingested"] == 0
+        assert OPEN_TURN in state.pending_block("sess-carry", directory=tmp_path / "state"), "the open item was lost at this compaction"
+        assert outcome["items"] == 0 and outcome["carried"] == 1 and outcome["ingested"] == 0  # the model returned nothing
         assert _previous(tmp_path) == [{"kind": "decision", "text": OPEN_TURN, "carried": age}]
         assert state.CARRIED_HEADING in state.pending_block("sess-carry", directory=tmp_path / "state")
         assert carried_line in state.pending_block("sess-carry", directory=tmp_path / "state")
@@ -738,7 +739,7 @@ def test_a_near_miss_new_item_stated_in_the_turns_is_ingested_and_shown_as_its_o
     _deliver(tmp_path)
     compact("we also looked at the other database", new)
     outcome = _capture(tmp_path, transcript, _echo, **kwargs)
-    assert outcome["ingested"] == 1 and outcome["items"] == 2
+    assert outcome["ingested"] == 1 and outcome["items"] == 1 and outcome["carried"] == 1
     block = state.pending_block("sess-carry", directory=tmp_path / "state")
     fresh_part, carried_part = block.split(state.CARRIED_HEADING)
     assert f"- {new}" in fresh_part and f"- decision: {old}" in carried_part
@@ -825,9 +826,8 @@ def test_an_answered_capture_that_finds_nothing_new_still_carries_and_ages_the_o
     _deliver(tmp_path)
     compact()
     outcome = _capture(tmp_path, transcript, lambda p, t: NOTHING_OPEN)
-    assert outcome["items"] == 1 and outcome["carried"] == 1 and "skipped" not in outcome
+    assert outcome["items"] == 0 and outcome["carried"] == 1 and "skipped" not in outcome
     assert _previous(tmp_path) == [{"kind": "decision", "text": OPEN_TURN, "carried": 1}]
-    assert not state.carried_path("sess-carry", tmp_path / "state").exists()  # replaced by the saved marker
 
 
 def test_carried_items_pass_the_sensitivity_scrub_before_they_are_shown_again(tmp_path):
@@ -885,7 +885,8 @@ def test_delivery_keeps_the_marker_as_carried_while_an_expired_one_is_just_delet
     assert state.previous_items("s", directory=tmp_path, now=1000.0 + state.CARRY_TTL_SECONDS + 1) == []
     state.save_residual("e", items, directory=tmp_path, now=1000.0)
     assert state.pending_block("e", directory=tmp_path, now=1000.0 + state.TTL_SECONDS + 1) == ""  # expired: never delivered
-    assert not state.carried_path("e", tmp_path).exists()
+    assert not state.residual_path("e", tmp_path).exists()
+    assert [i["text"] for i in state.previous_items("e", directory=tmp_path, now=1000.0 + state.TTL_SECONDS + 1)] == ["keep WAL on"]
 
 
 def test_an_undelivered_marker_wins_over_an_older_carried_one_and_old_carried_files_are_swept(tmp_path):
@@ -914,3 +915,34 @@ def test_a_failed_rename_never_leaves_the_stale_carried_copy_behind(tmp_path, mo
     monkeypatch.undo()
     assert not state.carried_path("s", tmp_path).exists() and not state.residual_path("s", tmp_path).exists()
     assert state.previous_items("s", directory=tmp_path) == []
+
+
+def test_a_marker_that_expires_undelivered_does_not_take_the_carry_with_it(tmp_path):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo)
+    _deliver(tmp_path)
+    compact()
+    assert _capture(tmp_path, transcript, _echo)["carried"] == 1  # age 1, saved, never delivered
+    assert state.pending_block("sess-carry", directory=tmp_path / "state", now=time.time() + state.TTL_SECONDS + 1) == ""
+    assert not state.residual_path("sess-carry", tmp_path / "state").exists()  # the expired marker is gone, the lineage is not
+    compact()
+    assert _capture(tmp_path, transcript, _echo)["carried"] == 1
+    assert _previous(tmp_path) == [{"kind": "decision", "text": OPEN_TURN, "carried": 2}]  # the count stayed strict
+
+
+@pytest.mark.parametrize("echo", [lambda text: text, lambda text: text.upper(), lambda text: "  ".join(text.split())])
+def test_a_model_that_re_emits_the_exact_text_makes_a_fresh_item_never_a_second_claim_or_a_carried_one(svc, tmp_path, echo):
+    # Rule 5: only an exact (case/whitespace-insensitive) duplicate of a carried item replaces the carried copy. The
+    # model never sees carried text, so it can only do this when the turns state the item again; it is then a fresh
+    # item exactly as on main (age 0, shown as its own line, one claim), not something the carry keeps alive.
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": _cwd(tmp_path)}
+    _capture(tmp_path, transcript, _echo, **kwargs)
+    for _ in range(4):
+        _deliver(tmp_path)
+        compact()
+        _capture(tmp_path, transcript, lambda p, t: json.dumps({"decisions": [echo(OPEN_TURN)]}), **kwargs)
+        block = state.pending_block("sess-carry", directory=tmp_path / "state")
+        assert state.CARRIED_HEADING not in block and block.lower().count("openq") == 1
+        assert all(not i["carried"] for i in _previous(tmp_path))
+    assert len(_claim_texts(svc.db_target)) == 1

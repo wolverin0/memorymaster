@@ -366,9 +366,6 @@ def capture_residual(
         egress: dict[str, int] = {}
         items = extract_residual(excerpt, llm=llm, config=config, stats=egress)
         outcome["egress_withheld"] = egress.get("egress_withheld", 0)
-        if egress.get("answered"):  # only an answered capture ages the carry; the model never sees it
-            previous = drop_sensitive(residual_state.previous_items(session_id, directory=state_directory))
-            items = residual_state.carry_forward(items, previous)
     except Exception as exc:  # swallow-ok: provider outage or quota must never block a compaction; recorded below
         outcome["skipped"] = "llm-error"
         outcome["error"] = type(exc).__name__
@@ -377,7 +374,13 @@ def capture_residual(
         return outcome
     if reservation is not None:
         ledger.finish_llm(reservation, input_bytes=len(excerpt), output_bytes=sum(len(i["text"]) for i in items), outcome="ok")
-    outcome["items"] = len(items)
+    outcome["items"] = len(items)  # what the model returned, as before the carry
+    if egress.get("answered"):  # only an answered capture ages the carry; the model never sees it
+        try:
+            previous = drop_sensitive(residual_state.previous_items(session_id, directory=state_directory))
+            items = residual_state.carry_forward(items, previous)
+        except Exception:  # swallow-ok: a carry that cannot be built must not discard the fresh items
+            outcome["carry_error"] = True
     outcome["carried"] = sum(1 for item in items if item.get("carried"))
     if not items:
         if egress.get("answered"):  # a verdict with nothing left, carried items included: the carry is over
@@ -395,8 +398,6 @@ def capture_residual(
         saved = None
         outcome["save_error"] = type(exc).__name__
     outcome["saved"] = saved is not None
-    if saved is not None:  # the saved marker now holds the aged carry: the old copy has served
-        residual_state.retire_carried(session_id, directory=state_directory)
     try:
         fresh = [item for item in items if not item.get("carried")]  # a carried copy is already a claim
         outcome["ingested"] = ingest_residual(fresh, db_path=db_path, session_id=session_id, cwd=cwd, spool=spool)

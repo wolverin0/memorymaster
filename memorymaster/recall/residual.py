@@ -7,7 +7,8 @@ and stores it here. The UserPromptSubmit recall hook then injects it as ONE
 bounded block on the first prompt after the compaction and consumes it. The
 residual is delivered by session id, never by similarity search.
 
-Delivery does not delete the marker: it is renamed to a sibling "carried" file. The next PreCompact
+Delivery does not delete the marker: it is renamed to a sibling "carried" file (saving a marker already
+mirrors it there, so one that expires undelivered still leaves its items). The next PreCompact
 appends its still-young items, byte for byte, to the new residual (``carry_forward``): the model never
 sees them, so nothing it answers can change their text, their age or how many claims they cause. An item
 is carried through at most ``MAX_CARRIES`` answered captures. Known cost: an item that was actually
@@ -166,7 +167,7 @@ def _fit(items: list[dict[str, str]]) -> list[dict[str, str]]:
         kept.pop()
     for item in sorted((item for item in items if item.get("carried")), key=lambda item: item["carried"]):
         if len(kept) >= MAX_ITEMS or len(render_block([*kept, item])) > MAX_CHARS:
-            break  # strictly oldest-last: nothing older than a dropped item survives
+            break  # strictly oldest-last: nothing older than a dropped item survives (a long one blocks the shorter ones behind it)
         kept.append(item)
     return kept
 
@@ -190,6 +191,15 @@ def save_residual(
         "items": items,
         "meta": meta or {},
     }
+    if not _write_marker(path, payload):
+        return None
+    # The carried file mirrors the latest saved marker: a marker that expires undelivered (it is deleted
+    # unread) still leaves its items, with their ages, for the next capture. Delivery renames the same bytes.
+    _write_marker(carried_path(session_id, directory), payload)
+    return path
+
+
+def _write_marker(path: Path, payload: dict[str, Any]) -> bool:
     temporary: str | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -202,8 +212,8 @@ def save_residual(
     except OSError:
         if temporary:
             Path(temporary).unlink(missing_ok=True)
-        return None
-    return path
+        return False
+    return True
 
 
 def pending_block(
@@ -312,7 +322,7 @@ def carry_forward(fresh: list[dict[str, Any]], previous: list[dict[str, Any]]) -
 
 
 def retire_carried(session_id: object, *, directory: Path | None = None) -> None:
-    """Drop the carried file once its items live on in a saved marker or have aged out."""
+    """Drop the carried file once an answered capture left nothing, carried items included."""
     try:
         carried_path(session_id, directory).unlink(missing_ok=True)
     except OSError:
