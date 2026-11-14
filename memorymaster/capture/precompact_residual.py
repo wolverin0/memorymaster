@@ -40,7 +40,14 @@ PREVIOUS_SUMMARY_CHARS = 2500
 CARRY_HEADER = "previously open (from the last compaction):"
 CARRY_CHARS = 1500
 CARRY_MIN_PREFIX = 30  # a model that clips a verbatim copy still maps back when the clip keeps this much
-CARRY_NEAR_RATIO = 0.9
+CARRY_NEAR_RATIO = 0.7  # loose on purpose: a rewrite that slips past it is still caught by the grounding rule
+GROUND_RATIO = 0.6  # share of an item's content tokens that must appear in the conversation to count as stated there
+GROUND_MIN_TOKENS = 3  # below this (or below 20 chars) an item is too short to be "restated" by token overlap
+
+ANSWER_KEYS = frozenset({
+    "decisions", "open_decisions", "rejected", "rejected_options", "assumptions", "unverified_assumptions",
+    "cards", "in_flight_cards", "next_step", "next",
+})
 
 PREDICATES = {
     "decision": ("decision", "open_decision"),
@@ -160,7 +167,7 @@ def _newest_turns(turns: list[str], budget: int) -> tuple[list[str], int]:
 def _assemble(
     turns: list[str], previous_summary: str, budget: int, carried: list[dict] | None = None
 ) -> tuple[str, str, list[dict]]:
-    """``(excerpt, text of the turns kept, carried items offered)``; the excerpt is ``""`` without a turn."""
+    """``(excerpt, conversation text without the carry block, carried items offered)``; ``""`` without a turn."""
     if not turns:  # nothing happened after the boundary: the old summary alone is not worth a call
         return "", "", []
     # Carried items are reserved first (at most a fifth of the budget): a full excerpt is the normal case, and
@@ -176,7 +183,7 @@ def _assemble(
     room = min(PREVIOUS_SUMMARY_CHARS, budget // 5, budget - used - len(carry) - len(label) - 1)
     prefix = f"{label}{previous_summary[:room]}\n" if previous_summary and room > 0 else ""
     body = "\n".join(reversed(kept))
-    return carry + prefix + body, body, offered
+    return carry + prefix + body, prefix + body, offered  # the middle value is what the carry is judged against
 
 
 def slice_turns(transcript_path: str, max_chars: int | None = None) -> str:
@@ -290,8 +297,9 @@ def extract_residual(
     if not answer:  # a failed call (the shared client returns "") judged nothing
         return []
     parsed = parse_json_response(answer)
-    if stats is not None and any(isinstance(entry, dict) for entry in parsed):
-        stats["answered"] = 1  # a parsed object, even an empty one, is a judgment; garbage or a cut-off answer is not
+    top = next((entry for entry in parsed if isinstance(entry, dict)), {})
+    if stats is not None and ANSWER_KEYS & set(top):
+        stats["answered"] = 1  # an object with the expected keys, even all empty, is a verdict; {} / an error object / garbage is not
     return drop_sensitive(residual_state.bound_residual(_scrub_raw(parsed)))
 
 
@@ -300,6 +308,11 @@ def _norm(text: str) -> str:
 
 
 _NEGATION = re.compile(r"\b(?:not|no|never|without|nunca|sin)\b|n't")
+_STOPWORDS = frozenset(
+    "that this with from have has had will would should could about into over than then when what which "
+    "your their there these those been being were does doing done need needs use using used also just only "
+    "para como pero esto esta este que con por una uno los las del".split()
+)
 
 
 def _meaning(text: str) -> tuple[list[str], bool]:
@@ -307,24 +320,37 @@ def _meaning(text: str) -> tuple[list[str], bool]:
     return re.findall(r"\d+(?:[.,]\d+)*", text), _NEGATION.search(text) is not None
 
 
+def _tokens(text: str) -> set[str]:
+    return {t for t in re.findall(r"[\w-]{4,}", text.lower()) if t not in _STOPWORDS}
+
+
 def _same_item(item: dict, carried: dict) -> bool:
-    """Is a model item a copy of a carried one: equal, a clipped copy, or near-identical (cards: the id)."""
+    """Is a model item a copy of a carried one: equal, a clipped copy (same kind), or near-identical."""
     if (item["kind"] == "card") != (carried["kind"] == "card"):
         return False
     a, b = _norm(item["text"]), _norm(carried["text"])
     if item["kind"] == "card" or a == b:
         return a == b
     short, long_ = sorted((a, b), key=len)
-    if len(short) >= CARRY_MIN_PREFIX and long_.startswith(short):
+    if item["kind"] == carried["kind"] and len(short) >= CARRY_MIN_PREFIX and long_.startswith(short):
         return True
     # shortcut: a changed number or an added "not" is a different item and mints a new claim, never a silent merge
     return _meaning(a) == _meaning(b) and difflib.SequenceMatcher(None, a, b).ratio() >= CARRY_NEAR_RATIO
 
 
-def _restated(item: dict, turns_norm: str) -> bool:
+def _stated(item: dict, ground_norm: str, ground_tokens: set[str], *, short_by_substring: bool) -> bool:
+    """Does the conversation (summary + turns, never the carry block) say this item?
+
+    Cards: the exact id. Text: token overlap, and only for an item with enough content; a short one
+    ("run tests") is found by a raw substring only when ``short_by_substring`` (grounding a NEW item),
+    never to reset a carried item's age (it would match any later turn forever).
+    """
     if item["kind"] == "card":
-        return re.search(rf"\b{re.escape(item['text'].lower())}\b", turns_norm) is not None
-    return _norm(item["text"]) in turns_norm
+        return re.search(rf"\b{re.escape(item['text'].lower())}\b", ground_norm) is not None
+    tokens = _tokens(item["text"])
+    if len(tokens) >= GROUND_MIN_TOKENS and len(_norm(item["text"])) >= 20:
+        return len(tokens & ground_tokens) / len(tokens) >= GROUND_RATIO
+    return short_by_substring and _norm(item["text"]) in ground_norm
 
 
 def carry_candidates(carried: list[dict]) -> list[dict]:
@@ -332,35 +358,68 @@ def carry_candidates(carried: list[dict]) -> list[dict]:
     return drop_sensitive([c for c in carried if c.get("carried", 0) < residual_state.MAX_CARRIES])
 
 
-def reconcile_carried(items: list[dict], offered: list[dict], turns_text: str, *, ticked: bool = True) -> list[dict]:
-    """Map every model item that is a copy of an offered one back to the offered item's exact kind and text.
+def reconcile_carried(
+    items: list[dict],
+    offered: list[dict],
+    ground_text: str,
+    *,
+    ticked: bool = True,
+    unoffered: list[dict] | tuple = (),
+) -> list[dict]:
+    """Keep the lineage of carried items bounded whatever the model does with their text.
 
-    The ingest key is built from kind and text, so a paraphrase would mint a new claim at every
-    compaction. A copy keeps a ``carried`` counter (one more compaction crossed) unless the
-    conversation itself still shows it, which resets it; an item over the limit is not offered again.
-    ``ticked`` is False when no compaction happened since the capture that wrote the counters (a repeated
-    capture of the same stretch), so the counters stay.
+    An item of the answer is, in order: a copy of an offered item (equal, clipped or near-identical;
+    maps back to the offered kind and text, so the ingest key is unchanged); a REWRITE of an offered
+    item (not a copy and not stated in the conversation while offered items of its kind went
+    unmatched: it takes that item's place, text included); or genuinely new (stated in the
+    conversation, or nothing left to attribute it to: ingested as before, age 0). Copies and rewrites
+    keep the ``carried`` counter plus one real compaction (``ticked``), reset when the conversation
+    states the item itself; variants of one carried item collapse into it. Items that did not fit the
+    carried block were never judged: they ride along, aged, while there is room.
     """
-    if not offered:
+    if not offered and not unoffered:
         return items
-    turns_norm = _norm(turns_text)
-    pool = list(offered)
+    ground_norm = _norm(ground_text)
+    ground_tokens = _tokens(ground_text)
+
+    def aged(carried: dict) -> dict:
+        count = 0 if _stated(carried, ground_norm, ground_tokens, short_by_substring=False) else carried.get("carried", 0) + int(ticked)
+        return {"kind": carried["kind"], "text": carried["text"], **({"carried": count} if count else {})}
+
+    matched: list[int | None] = []
+    used: set[int] = set()
+    for item in items:
+        index = next((n for n, c in enumerate(offered) if c["kind"] == item["kind"] and _same_item(item, c)), None)
+        if index is None:
+            index = next((n for n, c in enumerate(offered) if _same_item(item, c)), None)
+        matched.append(index)
+        if index is not None:
+            used.add(index)
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
-    for item in items:
-        match = next((c for c in pool if c["kind"] == item["kind"] and _same_item(item, c)), None)
-        match = match or next((c for c in pool if _same_item(item, c)), None)
-        if match is None:
-            kept = item
-        else:
-            pool.remove(match)
-            count = 0 if _restated(match, turns_norm) else match.get("carried", 0) + int(ticked)
-            kept = {"kind": match["kind"], "text": match["text"], **({"carried": count} if count else {})}
-        key = (kept["kind"], kept["text"].lower())
+
+    def add(entry: dict) -> None:
+        key = (entry["kind"], entry["text"].lower())
         if key not in seen:
             seen.add(key)
-            out.append(kept)
-    return residual_state._fit(out)
+            out.append(entry)
+
+    for item, index in zip(items, matched):
+        if index is None and item["kind"] != "card" and not _stated(item, ground_norm, ground_tokens, short_by_substring=True):
+            free = [n for n, c in enumerate(offered) if n not in used and c["kind"] == item["kind"]]
+            if free:  # a rewrite of the closest unmatched carried item of its kind
+                index = max(free, key=lambda n: difflib.SequenceMatcher(None, _norm(item["text"]), _norm(offered[n]["text"])).ratio())
+                used.add(index)
+        add(aged(offered[index]) if index is not None else item)
+    fitted = residual_state._fit(out)
+    for carried in unoffered:
+        extra = aged(carried)
+        if (extra["kind"], extra["text"].lower()) in seen or len(fitted) >= residual_state.MAX_ITEMS:
+            continue
+        if len(residual_state.render_block([*fitted, extra])) <= residual_state.MAX_CHARS:
+            seen.add((extra["kind"], extra["text"].lower()))
+            fitted.append(extra)
+    return residual_state._fit(fitted)
 
 
 def _claim_args(item: dict[str, str], *, scope: str, session_id: str, subject: str) -> dict[str, Any]:
@@ -461,7 +520,8 @@ def capture_residual(
     previous, previous_boundaries = residual_state.previous_items(session_id, directory=state_directory)
     carried = carry_candidates(previous)
     turns, previous_summary, boundaries = _read_turns(str(data.get("transcript_path") or ""))
-    excerpt, turns_text, offered = _assemble(turns, previous_summary, _input_chars(), carried)
+    excerpt, ground_text, offered = _assemble(turns, previous_summary, _input_chars(), carried)
+    unoffered = [c for c in carried if not any(c is o for o in offered)]  # no room in the block: not judged, not lost
     outcome["excerpt_chars"] = len(excerpt)
     outcome["carry_offered"] = len(offered)
     if not excerpt:
@@ -480,7 +540,8 @@ def capture_residual(
         items = extract_residual(excerpt, llm=llm, config=config, stats=egress)
         outcome["egress_withheld"] = egress.get("egress_withheld", 0)
         if egress.get("answered"):
-            items = reconcile_carried(items, offered, turns_text, ticked=previous_boundaries is None or boundaries > previous_boundaries)
+            ticked = previous_boundaries is None or boundaries > previous_boundaries
+            items = reconcile_carried(items, offered, ground_text, ticked=ticked, unoffered=unoffered)
     except Exception as exc:  # swallow-ok: provider outage or quota must never block a compaction; recorded below
         outcome["skipped"] = "llm-error"
         outcome["error"] = type(exc).__name__

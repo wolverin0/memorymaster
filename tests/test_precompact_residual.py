@@ -823,7 +823,8 @@ def test_an_empty_answer_settles_the_carried_items(tmp_path):
     _capture(tmp_path, transcript, _echo_open_lines)
     _deliver(tmp_path)
     compact()
-    assert _capture(tmp_path, transcript, lambda p, t: "{}")["skipped"] == "empty-residual"
+    nothing_open = json.dumps({"decisions": [], "rejected": [], "assumptions": [], "cards": [], "next_step": ""})
+    assert _capture(tmp_path, transcript, lambda p, t: nothing_open)["skipped"] == "empty-residual"
     assert not state.carried_path("sess-carry", tmp_path / "state").exists()
 
 
@@ -856,7 +857,7 @@ def test_an_undelivered_marker_wins_over_an_older_carried_one_and_old_carried_fi
     assert not stale.exists() and state.carried_path("s", tmp_path).exists()
 
 
-@pytest.mark.parametrize("answer", ["", '{"decisions": ["x', "no json here", '["a plain string"]'])
+@pytest.mark.parametrize("answer", ["", '{"decisions": ["x', "no json here", '["a plain string"]', "{}", '{"error": {"code": 500}}'])
 def test_a_failed_or_unparseable_answer_does_not_settle_the_carried_items(tmp_path, answer):
     transcript, compact = _session(tmp_path)
     _capture(tmp_path, transcript, _echo_open_lines)
@@ -892,13 +893,146 @@ def test_a_copy_clipped_by_the_model_maps_back_to_the_full_carried_text(tmp_path
     assert OPEN_TURN in state.pending_block("sess-carry", directory=tmp_path / "state")
 
 
-def test_a_changed_number_or_an_added_negation_is_a_new_item_not_a_silent_merge():
+def test_a_changed_number_or_an_added_negation_is_a_new_item_when_the_conversation_says_so():
     carried = [{"kind": "decision", "text": "retry the sync 3 times before giving up on the upstream call", "carried": 0}]
     for text in (
         "retry the sync 5 times before giving up on the upstream call",
         "do not retry the sync 3 times before giving up on the upstream call",
     ):
-        out = pr.reconcile_carried([{"kind": "decision", "text": text}], carried, "")
-        assert out == [{"kind": "decision", "text": text}]  # not mapped back, so not carried
+        out = pr.reconcile_carried([{"kind": "decision", "text": text}], carried, "user: " + text)
+        assert out == [{"kind": "decision", "text": text}]  # stated in the turns: genuinely new, not a copy
     same = pr.reconcile_carried([{"kind": "decision", "text": "Retry the sync 3 times before giving up on the upstream call!"}], carried, "")
     assert same == [{"kind": "decision", "text": carried[0]["text"], "carried": 1}]
+
+
+# --- verifier round: lineage bounded whatever the model does with the carried text ---------------------
+
+def _words(text):
+    return text.split()
+
+
+def _rotate(text, round_no):
+    words = _words(text)
+    return " ".join(words[2:] + words[:2])
+
+
+def _heavy(text, round_no):
+    return " ".join(reversed(_words(text))) + f" v{round_no}"
+
+
+def _swap(text, round_no):
+    return text.replace("should", "do we think")
+
+
+def _rewriter(transform, *, only_carry=True, extra=()):
+    """A fake model that rewrites every carried line (the lines of the carry block) with ``transform``."""
+    rounds = {"n": 0}
+
+    def llm(prompt, text):
+        rounds["n"] += 1
+        found = []
+        for line in text.splitlines():
+            if OPEN_MARK not in line:
+                continue
+            body = line.split(": ", 1)[-1].strip()
+            found.append(transform(body, rounds["n"]) if line.startswith("- ") else body)
+        return json.dumps({"decisions": found + list(extra)})
+
+    return llm
+
+
+@pytest.mark.parametrize("transform", [_rotate, _heavy, _swap])
+def test_a_model_that_rewrites_the_carried_item_every_time_still_makes_one_claim_and_ages_out(svc, tmp_path, transform):
+    cwd = str(tmp_path / "workspace" / "SyncWorker")
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": cwd}
+    assert _capture(tmp_path, transcript, _echo_open_lines, **kwargs)["ingested"] == 1
+    seen = []
+    llm = _rewriter(transform)
+    for _ in range(6):
+        if state.previous_items("sess-carry", directory=tmp_path / "state")[0]:
+            _deliver(tmp_path)
+        compact()
+        outcome = _capture(tmp_path, transcript, llm, **kwargs)
+        seen.append((outcome["items"], outcome["ingested"]))
+    assert seen == [(1, 0), (1, 0), (0, 0), (0, 0), (0, 0), (0, 0)]  # one key, no new ingest, gone after two carries
+    rows = _claims_of(svc.db_target)
+    assert len(rows) == 1 and rows[0]["text"] == OPEN_TURN
+
+
+def test_a_rewritten_carried_item_keeps_its_text_but_a_new_item_stated_in_the_turns_is_ingested(svc, tmp_path):
+    cwd = str(tmp_path / "workspace" / "SyncWorker")
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": cwd}
+    _capture(tmp_path, transcript, _echo_open_lines, **kwargs)
+    _deliver(tmp_path)
+    new_turn = "ship the beta build on friday OPENQ blocked on signing keys"
+    compact("we also talked about the release", new_turn)
+    outcome = _capture(tmp_path, transcript, _rewriter(_heavy), **kwargs)
+    assert outcome["items"] == 2 and outcome["ingested"] == 1  # the new item only
+    block = state.pending_block("sess-carry", directory=tmp_path / "state")
+    assert OPEN_TURN in block and new_turn in block
+    texts = sorted(r["text"] for r in _claims_of(svc.db_target))
+    assert texts == sorted([OPEN_TURN, new_turn])
+
+
+def test_a_short_carried_item_does_not_get_its_age_reset_by_a_substring_in_any_later_turn(tmp_path):
+    transcript, compact = _session(tmp_path, text="run tests OPENQ")
+    verbatim_carry_only = _rewriter(lambda text, n: text)
+    _capture(tmp_path, transcript, lambda p, t: json.dumps({"decisions": ["run tests OPENQ"]}))
+    seen = []
+    for _ in range(5):
+        if state.previous_items("sess-carry", directory=tmp_path / "state")[0]:
+            _deliver(tmp_path)
+        compact("we should run tests OPENQ again at some point")  # contains the short item verbatim
+        carry_only = lambda p, t: verbatim_carry_only(p, "\n".join(x for x in t.splitlines() if x.startswith("- ")))  # noqa: E731
+        seen.append(_capture(tmp_path, transcript, carry_only)["items"])
+    assert seen == [1, 1, 0, 0, 0]
+
+
+def test_unoffered_carried_items_are_not_judged_and_keep_aging(tmp_path, monkeypatch):
+    monkeypatch.setenv(pr.ENV_INPUT_CHARS, "2000")  # carry room: 400 chars, so only a few of the ten fit
+    texts = [f"open item number {i} about the sync worker OPENQ " + "x" * 40 for i in range(10)]
+    state.save_residual("sess-carry", [{"kind": "decision", "text": t} for t in texts], directory=tmp_path / "state")
+    _deliver(tmp_path)
+    transcript, compact = _session(tmp_path)
+    compact()
+    outcome = _capture(tmp_path, transcript, _echo_open_lines)
+    assert 0 < outcome["carry_offered"] < 10
+    kept, _ = state.previous_items("sess-carry", directory=tmp_path / "state")
+    assert sorted(i["text"] for i in kept) == sorted(texts) and all(i["carried"] == 1 for i in kept)  # none lost, all aged once
+
+
+def test_a_failed_rename_never_leaves_the_stale_carried_copy_behind(tmp_path, monkeypatch):
+    state.save_residual("s", state.bound_residual({"decisions": ["old one"]}), directory=tmp_path)
+    state.consume("s", directory=tmp_path)  # carried: old one
+    state.save_residual("s", state.bound_residual({"decisions": ["new one"]}), directory=tmp_path)
+
+    def boom(src, dst):
+        raise PermissionError("held open")
+
+    monkeypatch.setattr(state.os, "replace", boom)
+    state.consume("s", directory=tmp_path)  # must not raise
+    monkeypatch.undo()
+    assert not state.carried_path("s", tmp_path).exists() and not state.residual_path("s", tmp_path).exists()
+    assert state.previous_items("s", directory=tmp_path) == ([], None)
+
+
+def test_variants_of_one_carried_item_collapse_into_it(svc, tmp_path):
+    cwd = str(tmp_path / "workspace" / "SyncWorker")
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": cwd}
+    _capture(tmp_path, transcript, _echo_open_lines, **kwargs)
+    _deliver(tmp_path)
+    compact()
+    both = lambda p, t: json.dumps({"decisions": [OPEN_TURN, OPEN_TURN.replace("should", "do we think"), OPEN_TURN + " please"]})  # noqa: E731
+    outcome = _capture(tmp_path, transcript, both, **kwargs)
+    assert outcome["items"] == 1 and outcome["ingested"] == 0
+    assert state.pending_block("sess-carry", directory=tmp_path / "state").count("OPENQ") == 1
+    assert len(_claims_of(svc.db_target)) == 1
+
+
+def test_a_clipped_prefix_only_folds_into_a_carried_item_of_the_same_kind():
+    carried = [{"kind": "decision", "text": "should the sync retry use jitter", "carried": 0}]
+    other = {"kind": "assumption", "text": "should the sync retry use jitter and also the whole backoff schedule across every region we deploy"}
+    assert pr.reconcile_carried([other], carried, "user: " + other["text"]) == [other]  # stated in the turns, other kind: new

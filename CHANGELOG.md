@@ -18,14 +18,19 @@ Read when upgrading MemoryMaster, preparing release notes, or checking migration
   `previously open` block, reserved first inside the input budget (at most a fifth of it, never at the cost of
   the newest turn, ahead of the previous summary). Same sensitivity scrub and `export_lines` gate; no new env
   flag, behind `MEMORYMASTER_PRECOMPACT_RESIDUAL`.
-- The prompt asks for a kept item verbatim; the capture then maps any copy (case/whitespace, clipped, near-identical
-  with the same numbers and negation, even under another key) back to the carried kind and text, so the ingest
-  idempotency key is unchanged and the item stays ONE claim. A carried copy is not ingested again. An item carried
-  through two real compactions (the marker records the compaction count, so a repeated capture of the same stretch
-  does not age it) without the conversation restating it (card id or verbatim text in the turns) is not offered a
-  third time. A missing or corrupt carry file means no carry; the file survives a skipped, failed or unparseable
-  capture and is retired only after a parsed answer is saved (or is empty); files older than three days are swept at
-  capture time.
+- The prompt asks for a kept item verbatim, but the lineage is bounded whatever the model does with the text. An
+  item of the answer is a copy of a carried one (equal, a same-kind clipped prefix, or near-identical, ratio >= 0.7
+  with the same numbers and negation; maps back to the carried kind and text, so the ingest key is unchanged), a
+  rewrite of one (not a copy and not stated in the summary/turns while carried items of its kind went unmatched: it
+  takes that item's place and text), or genuinely new (stated in the conversation: ingested, age 0). Copies and
+  rewrites are not ingested again, variants collapse into one line, and the age counter ticks only on a real
+  compaction (the marker records the compaction count). An item carried through two compactions without the
+  conversation stating it again (card id, or token overlap for an item with at least three content tokens; a short
+  item never resets its age) is not offered a third time. Carried items that did not fit the bounded block are not
+  judged: they ride along, aged. A missing or corrupt carry file means no carry; the file survives a skipped,
+  failed or unparseable capture and an answer with none of the expected keys (`{}`, an error object); it is retired
+  only after a verdict is saved (or says nothing is open). If the delivery rename fails the stale carried copy is
+  removed instead of surviving. Carried files older than three days are swept at capture time only.
 - Coverage: only the Claude Code PreCompact hook captures a residual. The Codex recall adapter runs the same shared
   recall template and would deliver a marker for its session, but no Codex hook writes one; agy and OpenCode do not
   use the residual.

@@ -223,8 +223,19 @@ def consume(session_id: object, *, directory: Path | None = None, keep: bool = T
     except FileNotFoundError:
         pass
     except OSError:
+        # The rename failed (on Windows, the carried file held open). Never leave the STALE carried copy in
+        # place of the delivered one: end with no carry rather than the wrong one, and never deliver twice.
+        if keep:
+            _discard(carried_path(session_id, directory))
+        _discard(pending)
+
+
+def _discard(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
         try:
-            pending.unlink(missing_ok=True)  # a marker that cannot be kept must still not be delivered twice
+            path.write_text("{}", encoding="utf-8")  # unreadable as a residual: previous_items ignores it
         except OSError:
             pass
 
@@ -269,7 +280,8 @@ def retire_carried(session_id: object, *, directory: Path | None = None) -> None
 
 
 def sweep_carried(*, directory: Path | None = None, now: float | None = None) -> None:
-    """Delete carried files past their TTL (called at capture time, never on the prompt path)."""
+    """Delete carried files past their TTL. Called at capture time only (never on the prompt path), so a
+    session that never compacts again keeps its carried file until some later capture sweeps the directory."""
     cutoff = (time.time() if now is None else now) - CARRY_TTL_SECONDS
     try:
         for path in (directory or state_dir()).glob("carried_*.json"):
