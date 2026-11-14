@@ -655,7 +655,7 @@ def _deliver(tmp_path):
 
 
 def _previous(tmp_path):
-    return state.previous_items("sess-carry", directory=tmp_path / "state")
+    return state.previous_items("sess-carry", directory=tmp_path / "state")[0]
 
 
 def _claim_texts(db):
@@ -881,12 +881,12 @@ def test_delivery_keeps_the_marker_as_carried_while_an_expired_one_is_just_delet
     state.consume("s", directory=tmp_path)
     assert not state.residual_path("s", tmp_path).exists() and state.carried_path("s", tmp_path).exists()
     assert state.pending_block("s", directory=tmp_path) == ""  # delivered once, never again
-    assert [i["text"] for i in state.previous_items("s", directory=tmp_path, now=1000.0 + 60)] == ["keep WAL on"]
-    assert state.previous_items("s", directory=tmp_path, now=1000.0 + state.CARRY_TTL_SECONDS + 1) == []
+    assert [i["text"] for i in state.previous_items("s", directory=tmp_path, now=1000.0 + 60)[0]] == ["keep WAL on"]
+    assert state.previous_items("s", directory=tmp_path, now=1000.0 + state.CARRY_TTL_SECONDS + 1)[0] == []
     state.save_residual("e", items, directory=tmp_path, now=1000.0)
     assert state.pending_block("e", directory=tmp_path, now=1000.0 + state.TTL_SECONDS + 1) == ""  # expired: never delivered
     assert not state.residual_path("e", tmp_path).exists()
-    assert [i["text"] for i in state.previous_items("e", directory=tmp_path, now=1000.0 + state.TTL_SECONDS + 1)] == ["keep WAL on"]
+    assert [i["text"] for i in state.previous_items("e", directory=tmp_path, now=1000.0 + state.TTL_SECONDS + 1)[0]] == ["keep WAL on"]
 
 
 def test_an_undelivered_marker_wins_over_an_older_carried_one_and_old_carried_files_are_swept(tmp_path):
@@ -894,7 +894,7 @@ def test_an_undelivered_marker_wins_over_an_older_carried_one_and_old_carried_fi
     state.save_residual("s", state.bound_residual({"decisions": ["old one"]}), directory=tmp_path, now=now - 100)
     state.consume("s", directory=tmp_path)
     state.save_residual("s", state.bound_residual({"decisions": ["new one"]}), directory=tmp_path, now=now - 50)
-    assert [i["text"] for i in state.previous_items("s", directory=tmp_path)] == ["new one"]
+    assert [i["text"] for i in state.previous_items("s", directory=tmp_path)[0]] == ["new one"]
     stale = state.carried_path("other", tmp_path)
     stale.write_text("{}", encoding="utf-8")
     os.utime(stale, (now - state.CARRY_TTL_SECONDS - 10, now - state.CARRY_TTL_SECONDS - 10))
@@ -914,7 +914,7 @@ def test_a_failed_rename_never_leaves_the_stale_carried_copy_behind(tmp_path, mo
     state.consume("s", directory=tmp_path)  # must not raise
     monkeypatch.undo()
     assert not state.carried_path("s", tmp_path).exists() and not state.residual_path("s", tmp_path).exists()
-    assert state.previous_items("s", directory=tmp_path) == []
+    assert state.previous_items("s", directory=tmp_path)[0] == []
 
 
 def test_a_marker_that_expires_undelivered_does_not_take_the_carry_with_it(tmp_path):
@@ -946,3 +946,26 @@ def test_a_model_that_re_emits_the_exact_text_makes_a_fresh_item_never_a_second_
         assert state.CARRIED_HEADING not in block and block.lower().count("openq") == 1
         assert all(not i["carried"] for i in _previous(tmp_path))
     assert len(_claim_texts(svc.db_target)) == 1
+
+
+def test_a_repeated_capture_of_the_same_stretch_does_not_age_the_carry(tmp_path):
+    transcript, compact = _session(tmp_path)
+    _capture(tmp_path, transcript, _echo)
+    _deliver(tmp_path)
+    compact()
+    assert _capture(tmp_path, transcript, _echo)["carried"] == 1
+    for answer in (_echo, lambda p, t: NOTHING_OPEN, lambda p, t: json.dumps({"decisions": ["something else entirely"]})):
+        assert _capture(tmp_path, transcript, answer)["carried"] == 1  # a retry or a duplicate hook firing: no compaction since
+        assert [i["carried"] for i in _previous(tmp_path) if i["text"] == OPEN_TURN] == [1]  # whatever the model answered
+    _deliver(tmp_path)
+    compact()  # the real second compaction
+    _capture(tmp_path, transcript, _echo)
+    assert [i["carried"] for i in _previous(tmp_path) if i["text"] == OPEN_TURN] == [2]  # carried once more
+    _deliver(tmp_path)
+    compact()
+    assert not [i for i in _previous_after_capture(tmp_path, transcript) if i["text"] == OPEN_TURN]  # then gone
+
+
+def _previous_after_capture(tmp_path, transcript):
+    _capture(tmp_path, transcript, _echo)
+    return _previous(tmp_path)

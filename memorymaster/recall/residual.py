@@ -268,8 +268,9 @@ def previous_items(
     *,
     directory: Path | None = None,
     now: float | None = None,
-) -> list[dict[str, Any]]:
-    """Items of this session's latest residual, for the next capture; ``[]`` on anything unreadable.
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Items of this session's latest residual and the compaction count it was written at, for the next
+    capture; ``([], None)`` on anything unreadable.
 
     An undelivered marker is newer than a carried one (it was built after it), so it wins. Every item is
     revalidated (kind, text, card id) and clipped, and at most MAX_ITEMS are returned, whatever the file holds.
@@ -293,10 +294,11 @@ def previous_items(
                 if text and (item["kind"] != "card" or CARD_RE.match(text)):
                     out.append({"kind": item["kind"], "text": text, "carried": age})
             if out:
-                return out
+                count = (payload.get("meta") or {}).get("compactions")
+                return out, count if isinstance(count, int) else None
         except (OSError, ValueError, TypeError, KeyError, AttributeError):
             continue
-    return []
+    return [], None
 
 
 def _same(item: dict[str, Any]) -> tuple[str, str]:
@@ -304,17 +306,18 @@ def _same(item: dict[str, Any]) -> tuple[str, str]:
     return item["kind"], " ".join(item["text"].lower().split())
 
 
-def carry_forward(fresh: list[dict[str, Any]], previous: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def carry_forward(fresh: list[dict[str, Any]], previous: list[dict[str, Any]], *, ticked: bool = True) -> list[dict[str, Any]]:
     """The new residual: the fresh items, then the previous items that are still young, copied as they are.
 
-    Called once per ANSWERED capture, so the age goes up by one there and nowhere else. A previous item is
-    dropped once it would be carried through more than ``MAX_CARRIES`` captures, or when a fresh item (or an
-    earlier carried one) is exactly the same kind and text; nothing fuzzy, so a wrong match is impossible.
+    Called once per ANSWERED capture; the age goes up by one only when ``ticked`` (a compaction happened since
+    the previous marker was written), and a carried item is at least 1. A previous item is dropped once it
+    would be carried through more than ``MAX_CARRIES`` compactions, or when a fresh item (or an earlier
+    carried one) is exactly the same kind and text; nothing fuzzy, so a wrong match is impossible.
     """
     taken = {_same(item) for item in fresh}
     carried: list[dict[str, Any]] = []
     for item in previous:
-        age = int(item.get("carried") or 0) + 1
+        age = max(1, int(item.get("carried") or 0) + int(ticked))
         if age <= MAX_CARRIES and _same(item) not in taken:
             taken.add(_same(item))
             carried.append({"kind": item["kind"], "text": item["text"], "carried": age})
