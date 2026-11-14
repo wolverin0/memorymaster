@@ -461,3 +461,42 @@ def test_t2548_asker_is_resolved_from_the_native_id_in_every_sources_own_shape(t
         left = ti.search("quokka timeout", idx, asker=sent, excluded=excluded)
         assert [h.session_id for h in left] == ["theirs"] and excluded == ["mine"], source
         assert {h.session_id for h in ti.search("quokka timeout", idx, asker=native[:-1] + "0")} == {"mine", "theirs"}
+
+
+LONE_SURROGATE = chr(0xD800)  # what JSON "\ud800" decodes to; it cannot be bound as a SQL parameter
+
+
+def _asker_index(tmp_path, rels):
+    """An index holding one matching fragment per ``(source, rel)``; the session id is the rel itself."""
+    idx = tmp_path / "asker.db"
+    conn, _ = ti._connect(idx)
+    with conn:
+        for n, (source, rel) in enumerate(rels):
+            frag = [("project:alpha-app", f"2026-0{n + 1}-01T00:00:00Z", 0, 1, "assistant: the quokka timeout fix")]
+            ti._write_session(conn, source, rel, rel, frag, replace=False, size=1, mtime_ns=1)
+    conn.close()
+    return idx
+
+
+def test_t2548_a_fragment_of_an_id_never_excludes_other_sessions(tmp_path):
+    """A hyphen-delimited tail of a uuid (8+ chars) used to match every rollout/file whose name ends with it."""
+    a, b = "aaaaaaaa-1111-4111-8111-0123456789ab", "bbbbbbbb-2222-4222-8222-0123456789ab"  # same last 12 hex
+    idx = _asker_index(tmp_path, [("codex", f"codex:2026/11/02/rollout-2026-11-02T10-00-00-{a}.jsonl"),
+                                  ("codex", f"codex:2026/11/03/rollout-2026-11-03T10-00-00-{b}.jsonl"),
+                                  ("claude", f"proj/{a}.jsonl"), ("claude", f"proj/{b}.jsonl")])
+    assert len(ti.search("quokka timeout", idx)) == 4
+    for tail in ("0123456789ab", "8111-0123456789ab", "1111-4111-8111-0123456789ab"):
+        excluded: list[str] = []
+        assert len(ti.search("quokka timeout", idx, asker=tail, excluded=excluded)) == 4 and excluded == [], tail
+    excluded = []
+    left = ti.search("quokka timeout", idx, asker=a, excluded=excluded)
+    assert sorted(excluded) == sorted([f"codex:2026/11/02/rollout-2026-11-02T10-00-00-{a}.jsonl", f"proj/{a}.jsonl"])
+    assert sorted(h.session_id for h in left) == sorted([f"codex:2026/11/03/rollout-2026-11-03T10-00-00-{b}.jsonl", f"proj/{b}.jsonl"])
+
+
+def test_t2548_a_resolver_error_of_its_own_fails_open(tmp_path):
+    """A lone surrogate (reachable through /hook/recall) cannot be bound: no exclusion and no empty answer."""
+    idx = _asker_index(tmp_path, [("claude", "proj/0b9f5c7e-3a41-4c8e-9d52-7f1e2a6b8c34.jsonl"),
+                                  ("claude", "proj/5d2e8a10-77c3-4b1f-a6e9-c4d03b9f1e72.jsonl")])
+    excluded: list[str] = []
+    assert len(ti.search("quokka timeout", idx, asker=LONE_SURROGATE + "a" * 12, excluded=excluded)) == 2 and excluded == []

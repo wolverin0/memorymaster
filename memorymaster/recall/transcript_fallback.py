@@ -109,7 +109,8 @@ def fragments(query: str, scope: str, slots: int, asker: str | None = None) -> l
     ``asker`` is the native session id the CLI sent in the hook payload (``session_id``): the asking session's own
     fragments are never returned (they are its own words, the best lexical match for what it is discussing), the
     other sessions' fragments take their place.  Unknown or unresolved = no exclusion.  Known limit: a resumed or
-    forked session may be a new file with a new id that copies the old turns; the older file would stay eligible.
+    forked session is a new file with a new id that copies the old turns (about 3% of Claude sessions on the live
+    index, 2026-11-14); the older file stays eligible, because finding the copies costs more than the budget allows.
 
     Every run that reaches the index logs ``recall / transcript_fallback`` with ``outcome`` = ``hits`` | ``empty`` |
     ``deadline`` (the budget was spent: nothing late is injected) | ``error:<type>``.

@@ -704,3 +704,19 @@ def test_t2548_the_run_log_says_whether_an_asker_was_left_out_and_never_who(worl
     lines = _fallback_lines(hook_log_file)
     assert [ln.split("asker=")[1].split()[0] for ln in lines] == ["1", "0", "0"]
     assert all(SESSION_A[:8] not in ln for ln in lines)
+
+
+def test_t2548_a_surrogate_session_id_over_the_route_fails_open_and_is_not_logged_as_an_error(world, tmp_path, monkeypatch, hook_log_file) -> None:
+    starlette_testclient = pytest.importorskip("starlette.testclient")
+    from memorymaster.surfaces import mcp_http
+
+    _two_sessions(world, tmp_path)
+    monkeypatch.setenv("MEMORYMASTER_MCP_AUTH_MODE", "local-trusted")
+    app = mcp_http.create_http_app(token="secret", db_target=world.db, workspace=str(tmp_path))
+    hook = {"cwd": world.cwd, "session_id": chr(0xD800) + "a" * 12}
+    body = json.dumps({"query": ASK, "hook_data": hook}).encode("ascii")  # ensure_ascii: the wire carries a JSON escape
+    response = starlette_testclient.TestClient(app).post(
+        "/hook/recall", content=body, headers={"Authorization": "Bearer secret", "Content-Type": "application/json"})
+    ctx = response.json()["ctx"]
+    assert response.status_code == 200 and "marker-alpha" in ctx and "marker-bravo" in ctx
+    assert not any("error:" in ln for ln in _fallback_lines(hook_log_file))

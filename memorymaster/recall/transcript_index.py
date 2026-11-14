@@ -49,6 +49,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 from contextlib import closing
@@ -732,28 +733,33 @@ def index_transcripts(
 
 
 MIN_ASKER_ID_CHARS = 8  # shorter ids are not session uuids: they would match unrelated rel suffixes
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 
 
 def _asker_sessions(conn: sqlite3.Connection, native: str) -> list[str]:
     """Index session ids of the asking session, from the id its CLI sends (``session_id`` of the hook payload).
 
     Index ids are opaque hashes, so the match runs on ``files.rel``, which keeps the native id in every source's
-    own shape: Claude ``<project>/<id>.jsonl``, Codex ``codex:<y>/<m>/<d>/rollout-<stamp>-<id>.jsonl``, agy
-    ``agy:<id>``, OpenCode ``opencode:<id>`` (the hook already sends it prefixed).  Nothing here depends on how the
-    OS spells a path.  Known limit: a resumed/forked session may be a NEW file with a new id that copies the old turns,
-    so the older file would be another session here and stay eligible (not observed on the live index).
+    own shape: Claude ``<project>/<id>.jsonl``, Codex ``codex:<y>/<m>/<d>/rollout-<stamp>-<id>.jsonl`` (only a
+    whole uuid matches there, never a tail of one), agy ``agy:<id>``, OpenCode ``opencode:<id>`` (the hook already
+    sends it prefixed).  Nothing here depends on how the OS spells a path.  Fails open on any error of its own:
+    an asker that cannot be resolved excludes nothing.
+
+    Known limit (measured on the live index, 2026-11-14: 34 pairs, 51 of 1,567 Claude sessions, about 3%): a resumed
+    or forked session is a NEW file with a new id that copies the old turns with their timestamps, so the older
+    file is another session here and stays eligible.  Not closed: finding the copies costs 5 ms median and up to
+    40 ms (FTS phrase of the opening turn) or 130 ms (scan) on the existing schema, against a 120 ms budget.
     """
-    if len(native) < MIN_ASKER_ID_CHARS:
-        return []
     try:
+        if len(native) < MIN_ASKER_ID_CHARS:
+            return []
         rows = conn.execute("SELECT rel, session_id FROM files WHERE instr(rel, ?) > 0", (native,)).fetchall()
-    except sqlite3.Error:  # fail open: an asker that cannot be resolved excludes nothing
+        codex_tail = f"-{native}.jsonl" if _UUID.fullmatch(native) else None
+        return [sid for rel, sid in rows
+                if rel in (native, f"agy:{native}", f"{native}.jsonl") or rel.endswith(f"/{native}.jsonl")
+                or (codex_tail and rel.startswith("codex:") and rel.endswith(codex_tail))]
+    except Exception:  # noqa: BLE001 - e.g. a lone surrogate that cannot be bound: the search must still answer
         return []
-    ids = []
-    for rel, sid in rows:
-        if rel in (native, f"agy:{native}", f"{native}.jsonl") or rel.endswith((f"/{native}.jsonl", f"-{native}.jsonl")):
-            ids.append(sid)
-    return ids
 
 
 def _fts_query(query: str) -> str:
