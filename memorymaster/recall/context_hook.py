@@ -1206,7 +1206,7 @@ def recall(
     try:
         # Raw past conversation is fetched BEFORE the claims pipeline: whether the older verbatim stream may
         # be bypassed depends on the fallback having produced usable fragments (T-1876 N8).
-        fallback_found = _transcript_fragments(query, budget, phase_ms) if hook_data is not None else []
+        fallback_found = _transcript_fragments(query, budget, phase_ms, hook_data) if hook_data is not None else []
         rendered = _recall_impl(
             query,
             db_path=db_path,
@@ -1232,15 +1232,21 @@ def recall(
         _emit_recall_latency(phase_ms, total_start)
 
 
-def _transcript_fragments(query: str, budget: int, phase_ms: dict[str, float]) -> list:
-    """Relevant raw-conversation fragments of the current project; ``[]`` when off, unavailable or no budget."""
+def _transcript_fragments(query: str, budget: int, phase_ms: dict[str, float], hook_data: dict | None = None) -> list:
+    """Relevant raw-conversation fragments of the current project; ``[]`` when off, unavailable or no budget.
+
+    The asking session's own fragments are left out: its native id is the payload's ``session_id`` (read here, not
+    through ``hook_policy.session_id_of``, which the dedup switch can turn off).
+    """
     if budget <= 0:
         return []
     try:
         from memorymaster.recall import transcript_fallback
 
         with _phase_timer(phase_ms, "transcript_fallback"):
-            return transcript_fallback.fragments(query, _current_scope(), transcript_fallback.MAX_FRAGMENTS)
+            asker = hook_data.get("session_id") if isinstance(hook_data, dict) else None
+            return transcript_fallback.fragments(query, _current_scope(), transcript_fallback.MAX_FRAGMENTS,
+                                                 asker if isinstance(asker, str) else None)
     except Exception as exc:  # noqa: BLE001 - optional evidence never breaks the hook
         logger.debug("transcript fallback unavailable: %s", type(exc).__name__)
         return []

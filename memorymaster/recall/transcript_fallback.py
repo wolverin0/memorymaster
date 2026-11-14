@@ -94,14 +94,23 @@ def _quote(text: str) -> str:
     return _ROLE_MARKER.sub(lambda m: f"[{m.group(1).lower()} said]", flat)
 
 
-def _log_outcome(outcome: str, started: float, budget_ms: float, returned: int) -> None:
-    """One counted hook-log line per fallback run (never the prompt text): ``scripts/delivery_metrics.py`` reads it."""
+def _log_outcome(outcome: str, started: float, budget_ms: float, returned: int, asker: int) -> None:
+    """One counted hook-log line per fallback run (never the prompt text): ``scripts/delivery_metrics.py`` reads it.
+
+    ``asker`` is 1 when the asking session was found in the index and left out of the candidates, else 0.
+    """
     log_hook("recall", "transcript_fallback", outcome=outcome, elapsed_ms=round((time.perf_counter() - started) * 1000.0, 1),
-             budget_ms=round(budget_ms, 1), returned=returned)
+             budget_ms=round(budget_ms, 1), returned=returned, asker=asker)
 
 
-def fragments(query: str, scope: str, slots: int) -> list[ti.TranscriptHit]:
+def fragments(query: str, scope: str, slots: int, asker: str | None = None) -> list[ti.TranscriptHit]:
     """Up to ``slots`` (at most :data:`MAX_FRAGMENTS`) relevant fragments of ``scope``; ``[]`` on any problem.
+
+    ``asker`` is the native session id the CLI sent in the hook payload (``session_id``): the asking session's own
+    fragments are never returned (they are its own words, the best lexical match for what it is discussing), the
+    other sessions' fragments take their place.  Unknown or unresolved = no exclusion.  Known limit: a resumed or
+    forked session is a new file with a new id that copies the old turns (about 3% of Claude sessions on the live
+    index, 2026-11-14); the older file stays eligible, because finding the copies costs more than the budget allows.
 
     Every run that reaches the index logs ``recall / transcript_fallback`` with ``outcome`` = ``hits`` | ``empty`` |
     ``deadline`` (the budget was spent: nothing late is injected) | ``error:<type>``.
@@ -114,6 +123,7 @@ def fragments(query: str, scope: str, slots: int) -> list[ti.TranscriptHit]:
     expires = started + budget_ms / 1000.0
     kept: list[ti.TranscriptHit] = []
     outcome = "empty"
+    left_out: list[str] = []
     try:
         terms = list(dict.fromkeys(_candidate_tokens(query)))[: ti.MAX_QUERY_TOKENS]
         keys = hook_lexical.term_keys(terms)
@@ -122,6 +132,7 @@ def fragments(query: str, scope: str, slots: int) -> list[ti.TranscriptHit]:
         hits = ti.search(
             query, index_path(), limit=CANDIDATES, scope=scope,
             excerpt_chars=SNIPPET_CHARS, deadline_ms=max(1.0, (expires - time.perf_counter()) * 1000.0),
+            asker=asker, excluded=left_out,
         )
         for hit in hits:
             if time.perf_counter() > expires:
@@ -140,7 +151,7 @@ def fragments(query: str, scope: str, slots: int) -> list[ti.TranscriptHit]:
         kept, outcome = [], f"error:{type(exc).__name__}"
     if outcome == "deadline":
         logger.debug("transcript fallback: the %.0f ms budget was spent", budget_ms)
-    _log_outcome(outcome, started, budget_ms, len(kept))
+    _log_outcome(outcome, started, budget_ms, len(kept), int(bool(left_out)))
     return kept
 
 

@@ -49,6 +49,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 from contextlib import closing
@@ -731,6 +732,36 @@ def index_transcripts(
     return stats
 
 
+MIN_ASKER_ID_CHARS = 8  # shorter ids are not session uuids: they would match unrelated rel suffixes
+_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+
+
+def _asker_sessions(conn: sqlite3.Connection, native: str) -> list[str]:
+    """Index session ids of the asking session, from the id its CLI sends (``session_id`` of the hook payload).
+
+    Index ids are opaque hashes, so the match runs on ``files.rel``, which keeps the native id in every source's
+    own shape: Claude ``<project>/<id>.jsonl``, Codex ``codex:<y>/<m>/<d>/rollout-<stamp>-<id>.jsonl`` (only a
+    whole uuid matches there, never a tail of one), agy ``agy:<id>``, OpenCode ``opencode:<id>`` (the hook already
+    sends it prefixed).  Nothing here depends on how the OS spells a path.  Fails open on any error of its own:
+    an asker that cannot be resolved excludes nothing.
+
+    Known limit (measured on the live index, 2026-11-14: 34 pairs, 51 of 1,567 Claude sessions, about 3%): a resumed
+    or forked session is a NEW file with a new id that copies the old turns with their timestamps, so the older
+    file is another session here and stays eligible.  Not closed: finding the copies costs 5 ms median and up to
+    40 ms (FTS phrase of the opening turn) or 130 ms (scan) on the existing schema, against a 120 ms budget.
+    """
+    try:
+        if len(native) < MIN_ASKER_ID_CHARS:
+            return []
+        rows = conn.execute("SELECT rel, session_id FROM files WHERE instr(rel, ?) > 0", (native,)).fetchall()
+        codex_tail = f"-{native}.jsonl" if _UUID.fullmatch(native) else None
+        return [sid for rel, sid in rows
+                if rel in (native, f"agy:{native}", f"{native}.jsonl") or rel.endswith(f"/{native}.jsonl")
+                or (codex_tail and rel.startswith("codex:") and rel.endswith(codex_tail))]
+    except Exception:  # noqa: BLE001 - e.g. a lone surrogate that cannot be bound: the search must still answer
+        return []
+
+
 def _fts_query(query: str) -> str:
     tokens = list(dict.fromkeys(_candidate_tokens(query)))[:MAX_QUERY_TOKENS]
     # Quote each token so FTS5 operators in user text (-, :, *) stay literal.
@@ -762,6 +793,8 @@ def search(
     since: str | None = None,
     excerpt_chars: int = EXCERPT_CHARS,
     deadline_ms: float | None = None,
+    asker: str | None = None,
+    excluded: list[str] | None = None,
 ) -> list[TranscriptHit]:
     """Search the sidecar index; return redacted, dated, cited fragments.
 
@@ -772,6 +805,9 @@ def search(
     cut from the already-redacted text so a window edge cannot split a secret.
     ``deadline_ms`` aborts the query once that wall-clock budget is spent
     (returns ``[]``), for callers on a latency budget such as the prompt hook.
+    ``asker`` is the native session id of the session asking (see :func:`_asker_sessions`): its own fragments
+    are left out in SQL, before the top-k cut, so the other sessions' fragments fill the window instead.  An
+    asker that does not resolve excludes nothing; ``excluded``, when given, receives the index ids left out.
     """
     index_path = index_path or default_index_path()
     started = time.perf_counter()
@@ -794,8 +830,8 @@ def search(
     if since:
         sql += " AND f.date >= ?"
         args.append(since)
-    sql += " ORDER BY x.rank LIMIT ?"
-    args.append(max(limit * 10, 50))
+    tail = " ORDER BY x.rank LIMIT ?"
+    limit_arg = max(limit * 10, 50)
     try:
         # the connect/busy wait is bounded by what is left of the deadline, not by the 2 s reader default
         wait = {} if expires is None else {"query_ms": max(1, int((expires - time.perf_counter()) * 1000))}
@@ -810,6 +846,14 @@ def search(
             sql = sql.format(source="f.source" if "source" in _columns(conn, "fragments") else "'claude'")
             if expires is not None:
                 conn.set_progress_handler(lambda: 1 if time.perf_counter() > expires else 0, 5000)
+            own = _asker_sessions(conn, asker) if isinstance(asker, str) else []
+            if own:  # before the candidate LIMIT: filtering after it would leave nothing when the asker owns the window
+                sql += f" AND f.session_id NOT IN ({','.join('?' * len(own))})"
+                args.extend(own)
+            if excluded is not None:
+                excluded.extend(own)
+            sql += tail
+            args.append(limit_arg)
             rows = conn.execute(sql, args).fetchall()
     except sqlite3.OperationalError as exc:
         # an expired deadline is the caller's budget working, not a fault
