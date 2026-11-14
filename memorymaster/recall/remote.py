@@ -26,10 +26,16 @@ from memorymaster.recall import hook_policy
 
 HOOK_RECALL_PATH = "/hook/recall"
 DEFAULT_TIMEOUT_SECONDS = 4.0
+FILE_HINT_TIMEOUT_SECONDS = 1.5  # the edit's PreToolUse hook is registered for 5 s and must never be the slow step
 
 
 class RemoteRecall(NamedTuple):
     ctx: str | None
+    reachable: bool
+
+
+class RemoteHint(NamedTuple):
+    claims: list | None
     reachable: bool
 
 
@@ -40,20 +46,14 @@ def hook_recall_url(environ=os.environ) -> str:
     return base.rstrip("/") + HOOK_RECALL_PATH
 
 
-def remote_recall(
-    query: str,
-    hook_data: dict | None = None,
-    *,
-    timeout: float = DEFAULT_TIMEOUT_SECONDS,
-    environ=os.environ,
-    opener=urllib.request.urlopen,
-) -> RemoteRecall:
+def _post(payload: dict, *, timeout: float, environ, opener) -> tuple[dict | None, bool]:
+    """POST ``payload`` to the hook route: ``(answer, reachable)``, ``answer`` None when none came back."""
     if (environ.get("MEMORYMASTER_HOOK_RECALL_REMOTE") or "1").strip().lower() in {"0", "false", "no", "off"}:
-        return RemoteRecall(None, False)
+        return None, False
     token = resolve_token(environ)
     if not token:
-        return RemoteRecall(None, False)
-    body = sanitize_text(json.dumps({"query": query, "hook_data": hook_data}, ensure_ascii=False)).encode("utf-8")
+        return None, False
+    body = sanitize_text(json.dumps(payload, ensure_ascii=False)).encode("utf-8")
     request = urllib.request.Request(
         hook_recall_url(environ),
         data=body,
@@ -62,16 +62,51 @@ def remote_recall(
     )
     try:
         with opener(request, timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8") or "{}")
-        return RemoteRecall(sanitize_text(str(payload.get("ctx") or "")), True)
+            answer = json.loads(response.read().decode("utf-8") or "{}")
+        return answer, True
     except urllib.error.HTTPError as exc:
         # 404: an older server without the route; recalling locally is safe.
-        return RemoteRecall(None, exc.code != 404)
+        return None, exc.code != 404
     except (urllib.error.URLError, OSError, ValueError) as exc:
         reason = getattr(exc, "reason", exc)
         # Only a timeout proves the server is up but busy; anything else
         # (refused, unresolvable) means it never got the request.
-        return RemoteRecall(None, isinstance(reason, (TimeoutError, socket.timeout)))
+        return None, isinstance(reason, (TimeoutError, socket.timeout))
+
+
+def remote_recall(
+    query: str,
+    hook_data: dict | None = None,
+    *,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    environ=os.environ,
+    opener=urllib.request.urlopen,
+) -> RemoteRecall:
+    answer, reachable = _post({"query": query, "hook_data": hook_data}, timeout=timeout, environ=environ, opener=opener)
+    if answer is None:
+        return RemoteRecall(None, reachable)
+    return RemoteRecall(sanitize_text(str(answer.get("ctx") or "")), True)
+
+
+def remote_file_hint(
+    lookup: str,
+    cwd: str,
+    *,
+    timeout: float = FILE_HINT_TIMEOUT_SECONDS,
+    environ=os.environ,
+    opener=urllib.request.urlopen,
+) -> RemoteHint:
+    """Candidate claims for one file from the warm server (the pre-edit hint), recording nothing.
+
+    The lookup text travels under ``file_hint``, never ``query``: a server that does not know the field must
+    not run the prompt recall path (its seen/access/receipt side effects) for an edit. It also never gets
+    the session id. ``claims`` is None when no usable answer came back; the caller stays silent then, it
+    never recalls cold.
+    """
+    answer, reachable = _post({"file_hint": {"query": lookup}, "hook_data": {"cwd": cwd}},
+                              timeout=timeout, environ=environ, opener=opener)
+    claims = answer.get("claims") if isinstance(answer, dict) else None  # an older server answers {"ctx": ""}
+    return RemoteHint(claims if isinstance(claims, list) else None, reachable)
 
 
 def hook_recall(query: str, hook_data: dict | None, *, db_path: str, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> tuple[str, str]:

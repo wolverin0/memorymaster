@@ -10,7 +10,7 @@ Interactive prompts for:
     - LLM provider (google/openai/anthropic/ollama) + API key
     - Project root (where memorymaster.db lives)
     - Claude Code hooks (recall, classify, validate-wiki, session-start, auto-ingest, precompact;
-      plus opt-in --pretooluse grep/glob recall-inject)
+      plus opt-in --pretooluse grep/glob recall-inject and --pre-edit file hint)
     - Codex AGENTS.md integration
     - CLAUDE.md global integration
     - Steward cron (every 6h)
@@ -309,7 +309,8 @@ def _write_hook_template(dest, content):
     print(f"  Installed: {dest}")
 
 
-def install_hooks(llm_config, include_pretooluse: bool = False, *, config_dir: Path | None = None):
+def install_hooks(llm_config, include_pretooluse: bool = False, *, include_pre_edit: bool = False,
+                  config_dir: Path | None = None):
     banner("Claude Code Hooks")
 
     target_dir = Path(config_dir) if config_dir is not None else CLAUDE_DIR
@@ -451,9 +452,14 @@ def install_hooks(llm_config, include_pretooluse: bool = False, *, config_dir: P
     # hook" silently required hand-editing settings.json.
     pretooluse_hooks = hooks.setdefault("PreToolUse", [])
     pretooluse_hooks[:] = [h for h in pretooluse_hooks if "memorymaster-pretooluse-recall" not in json.dumps(h)]
-    if include_pretooluse:
+    # The pre-edit hint (T-2548) is a different activation decision from the Grep/Glob recall: its own
+    # install switch (--pre-edit) adds the edit tools to the same entry, so --pretooluse alone stays "Grep|Glob"
+    # and nobody starts paying a process spawn on every edit by upgrading. Runtime switch MEMORYMASTER_PRE_EDIT_HINT=1.
+    pretooluse_matchers = [*(("Grep", "Glob") if include_pretooluse else ()),
+                           *(("Edit", "Write", "MultiEdit", "NotebookEdit") if include_pre_edit else ())]
+    if pretooluse_matchers:
         pretooluse_hooks.append({
-            "matcher": "Grep|Glob",
+            "matcher": "|".join(pretooluse_matchers),
             "hooks": [{
                 "type": "command",
                 "command": f'python "{hooks_dir / "memorymaster-pretooluse-recall.py"}"',
@@ -1548,6 +1554,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="also register the opt-in PreToolUse Grep/Glob recall-inject hook "
              "(runtime-gated by MEMORYMASTER_PRETOOLUSE_RECALL=1)",
     )
+    p.add_argument(
+        "--pre-edit",
+        action="store_true",
+        help="also register the opt-in PreToolUse hint for Edit/Write/MultiEdit/NotebookEdit "
+             "(runtime-gated by MEMORYMASTER_PRE_EDIT_HINT=1; independent of --pretooluse)",
+    )
     p.add_argument("--verify-only", action="store_true", help="run only the verify round-trip and exit")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON result")
     return p
@@ -1763,7 +1775,8 @@ def _run_main(args: argparse.Namespace) -> tuple[int, Optional[dict[str, Any]]]:
 
     # --- Claude Code hooks (idempotent remove-then-add; brownfield-safe) ---
     if detected.claude_code:
-        install_hooks(llm_config, include_pretooluse=getattr(args, "pretooluse", False))
+        install_hooks(llm_config, include_pretooluse=getattr(args, "pretooluse", False),
+                      include_pre_edit=getattr(args, "pre_edit", False))
         applied["hooks"] = "installed"
     else:
         applied["hooks"] = "skipped (no ~/.claude/)"

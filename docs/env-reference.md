@@ -5,7 +5,7 @@ Complete inventory of `MEMORYMASTER_*` variables referenced in the package,
 script after adding or removing a variable. For what each does, follow the
 listed source files (most are read next to a docstring or comment).
 
-Total: 357 variables.
+Total: 358 variables.
 
 | Variable | Referenced in |
 |---|---|
@@ -68,7 +68,7 @@ Total: 357 variables.
 | `MEMORYMASTER_DEDUPE_ENABLED` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/candidate_dedupe.py` |
 | `MEMORYMASTER_DEDUPE_JACCARD_HIGH` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/candidate_dedupe.py` |
 | `MEMORYMASTER_DEDUPE_SHADOW` | `memorymaster/config_templates/hooks/memorymaster-steward-cycle.py`, `memorymaster/govern/candidate_dedupe.py` |
-| `MEMORYMASTER_DEFAULT_DB` | `memorymaster/config_templates/hooks/memorymaster-dream-sync.py`, `memorymaster/config_templates/hooks/memorymaster-precompact.py`, `memorymaster/config_templates/hooks/memorymaster-pretooluse-recall.py`, `memorymaster/config_templates/hooks/memorymaster-recall.py` (+11 more) |
+| `MEMORYMASTER_DEFAULT_DB` | `memorymaster/config_templates/hooks/memorymaster-dream-sync.py`, `memorymaster/config_templates/hooks/memorymaster-precompact.py`, `memorymaster/config_templates/hooks/memorymaster-pretooluse-recall.py`, `memorymaster/config_templates/hooks/memorymaster-recall.py` (+12 more) |
 | `MEMORYMASTER_DEFAULT_PROJECT_SCOPE` | `memorymaster/surfaces/mcp_server.py` |
 | `MEMORYMASTER_DEFER_HOOK_EVENT` | `memorymaster/config_templates/hooks/memorymaster-codex-recall.py`, `memorymaster/config_templates/hooks/memorymaster-recall.py`, `memorymaster/config_templates/hooks/memorymaster-session-start.py` |
 | `MEMORYMASTER_DISABLE_ST` | `memorymaster/knowledge/wiki_similarity.py` |
@@ -211,6 +211,7 @@ Total: 357 variables.
 | `MEMORYMASTER_PRECOMPACT_RESIDUAL_MODEL` | `memorymaster/capture/precompact_residual.py` |
 | `MEMORYMASTER_PRECOMPACT_RESIDUAL_PROVIDER` | `memorymaster/capture/precompact_residual.py` |
 | `MEMORYMASTER_PRETOOLUSE_RECALL` | `memorymaster/config_templates/hooks/memorymaster-pretooluse-recall.py`, `memorymaster/surfaces/setup_hooks.py` |
+| `MEMORYMASTER_PRE_EDIT_HINT` | `memorymaster/config_templates/hooks/memorymaster-pretooluse-recall.py`, `memorymaster/surfaces/setup_hooks.py` |
 | `MEMORYMASTER_PROFILE_CADENCE_DAYS` | `memorymaster/profile/engine.py` |
 | `MEMORYMASTER_PROFILE_MAP_MODEL` | `memorymaster/profile/providers.py` |
 | `MEMORYMASTER_PROFILE_MAX_FACTS` | `memorymaster/profile/engine.py` |

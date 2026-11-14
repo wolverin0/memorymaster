@@ -7,6 +7,12 @@
 # UserPromptSubmit recall hook, so it stays dark unless the operator opts
 # in with MEMORYMASTER_PRETOOLUSE_RECALL=1. Flag unset/0 => emit nothing,
 # exit 0 (pure passthrough — the tool call proceeds unchanged).
+#
+# SECOND, INDEPENDENT OPT-IN (T-2548): before Edit/Write/MultiEdit/NotebookEdit,
+# at most two lines of what memory already holds about THAT FILE (a claim
+# naming it), once per file per session, from the warm shared server only.
+# Separate switch MEMORYMASTER_PRE_EDIT_HINT=1 and separate install switch
+# (`setup-hooks --pre-edit`); silent in every other case. Never blocks.
 import json
 import os
 import sys
@@ -25,12 +31,33 @@ def _is_enabled() -> bool:
     return os.environ.get("MEMORYMASTER_PRETOOLUSE_RECALL", "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _edit_hint_enabled() -> bool:
+    return os.environ.get("MEMORYMASTER_PRE_EDIT_HINT", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+
 try:
-    if not _is_enabled():
-        sys.exit(0)  # opt-in flag not set: pure passthrough, inject nothing
+    if not (_is_enabled() or _edit_hint_enabled()):
+        sys.exit(0)  # no opt-in flag set: pure passthrough, inject nothing
 
     data = json.loads(sys.stdin.read() or "{}")
     tool_name = data.get("tool_name", "")
+    if tool_name in EDIT_TOOLS:
+        # Own switch, own try: the edit path never reaches the Grep/Glob cold recall below.
+        if _edit_hint_enabled():
+            try:
+                from memorymaster.recall.file_hint import hint_for_edit  # lazy: nothing heavy unless opted in
+                hint = hint_for_edit(data)
+                if hint:
+                    sys.stdout.write(json.dumps({
+                        "hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": hint}
+                    }))
+            except Exception as e:  # the edit always proceeds; the type only, a message may carry a path
+                log_hook("pre-edit-hint", "error", error=type(e).__name__)
+        sys.exit(0)
+    if not _is_enabled():
+        sys.exit(0)  # only the edit hint is switched on: Grep/Glob stays a passthrough
     session_id = data.get("session_id", "")[:16]
     tool_input = data.get("tool_input", {}) or {}
     # Grep uses `pattern`, Glob uses `pattern` too; fall back to `query`.

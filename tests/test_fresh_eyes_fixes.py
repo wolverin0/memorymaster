@@ -254,3 +254,37 @@ def test_installer_default_does_not_register_pretooluse(hermetic_home):
     settings = json.loads((hermetic_home / "settings.json").read_text(encoding="utf-8"))
     ptu = settings["hooks"].get("PreToolUse", [])
     assert not [h for h in ptu if "memorymaster-pretooluse-recall" in json.dumps(h)]
+
+
+def _pretooluse_entries(claude_dir):
+    settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+    return [h for h in settings["hooks"].get("PreToolUse", []) if "memorymaster-pretooluse-recall" in json.dumps(h)]
+
+
+_LLM = {"provider": "ollama", "api_key": "", "model": "llama3.2:3b"}
+
+
+def test_pre_edit_has_its_own_install_switch_and_pretooluse_alone_is_unchanged(hermetic_home):
+    """T-2548: the edit hint is a different activation decision. --pretooluse alone keeps Grep|Glob exactly,
+    so nobody starts paying a process spawn on every edit; --pre-edit registers only the edit tools."""
+    import memorymaster.surfaces.setup_hooks as sh
+
+    sh.install_hooks(_LLM, include_pretooluse=True)
+    assert [h["matcher"] for h in _pretooluse_entries(hermetic_home)] == ["Grep|Glob"]
+    sh.install_hooks(_LLM, include_pre_edit=True)  # re-install replaces the entry (idempotent)
+    (entry,) = _pretooluse_entries(hermetic_home)
+    assert entry["matcher"] == "Edit|Write|MultiEdit|NotebookEdit" and entry["hooks"][0]["timeout"] == 5
+    sh.install_hooks(_LLM, include_pretooluse=True, include_pre_edit=True)
+    (entry,) = _pretooluse_entries(hermetic_home)
+    assert entry["matcher"] == "Grep|Glob|Edit|Write|MultiEdit|NotebookEdit"
+    sh.install_hooks(_LLM)
+    assert _pretooluse_entries(hermetic_home) == []  # neither switch: nothing registered
+
+
+def test_the_setup_command_line_has_the_pre_edit_switch_off_by_default():
+    import memorymaster.surfaces.setup_hooks as sh
+
+    parser = sh.build_arg_parser()
+    assert parser.parse_args([]).pre_edit is False
+    assert parser.parse_args(["--pre-edit"]).pre_edit is True
+    assert parser.parse_args(["--pre-edit"]).pretooluse is False

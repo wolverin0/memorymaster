@@ -1145,6 +1145,16 @@ def _emit_recall_latency(phase_ms: dict[str, float], total_start: float) -> None
         pass
 
 
+def _scopes_for_cwd(cwd: object) -> tuple[str, tuple[str, ...]]:
+    """The project scope of a hook's cwd and the project scopes of its two nearest parent folders."""
+    from memorymaster.core.scope_utils import scope_from_cwd
+
+    parents = list(Path(str(cwd)).parents)[:2]
+    shared = tuple(dict.fromkeys(s for s in (scope_from_cwd(str(p)) for p in parents)
+                                 if s.startswith("project:")))
+    return scope_from_cwd(cwd), shared
+
+
 def recall(
     query: str,
     *,
@@ -1192,12 +1202,8 @@ def recall(
     rendered_ids: list[int] = []
     cwd = hook_data.get("cwd") if isinstance(hook_data, dict) else None
     if cwd:
-        from memorymaster.core.scope_utils import scope_from_cwd
-
-        scope_token = _REQUEST_SCOPE.set(scope_from_cwd(cwd))
-        parents = list(Path(str(cwd)).parents)[:2]
-        shared = tuple(dict.fromkeys(s for s in (scope_from_cwd(str(p)) for p in parents)
-                                     if s.startswith("project:")))
+        scope, shared = _scopes_for_cwd(cwd)
+        scope_token = _REQUEST_SCOPE.set(scope)
         shared_token = _REQUEST_SHARED_SCOPES.set(shared)
     else:
         scope_token = shared_token = None

@@ -140,22 +140,31 @@ def create_http_app(
             hook_data = payload.get("hook_data")
             if hook_data is not None and not isinstance(hook_data, dict):
                 raise ValueError("hook_data must be an object")
+            file_hint = payload.get("file_hint")  # the opt-in pre-edit hint (T-2548), never a prompt
+            if file_hint is not None and not isinstance(file_hint, dict):
+                raise ValueError("file_hint must be an object")
         except (ValueError, AttributeError):
             return JSONResponse({"error": "bad_request"}, status_code=400)
         import anyio
         from memorymaster.context_hook import recall
-        from memorymaster.recall import hook_policy
+        from memorymaster.recall import file_hint as pre_edit_hint, hook_policy
 
         if hook_policy.disabled_for((hook_data or {}).get("cwd")):  # older hooks still ask the server (T-1351)
-            return JSONResponse({"ctx": ""})
-        if hook_policy.is_trivial_prompt(query):  # installed hooks that skip nothing still ask the server (T-1433)
+            return JSONResponse({"claims": []} if file_hint is not None else {"ctx": ""})
+        # installed hooks that skip nothing still ask the server (T-1433); a file hint has no prompt to judge
+        if file_hint is None and hook_policy.is_trivial_prompt(query):
             return JSONResponse({"ctx": ""})
 
         if _hook_recall_limiter is None:
             _hook_recall_limiter = anyio.CapacityLimiter(_HOOK_RECALL_THREADS)
         extra = {"hook_data": hook_data} if hook_data else {}
         enqueued = time.perf_counter()
-        run = partial(recall, query, db_path=resolved_db, skip_qdrant=True, **extra)
+        if file_hint is not None:
+            # Candidates only: no seen ids, accesses, receipts or transcript fallback (see recall/file_hint.py).
+            run = partial(pre_edit_hint.lookup, str(file_hint.get("query") or "")[:pre_edit_hint.LOOKUP_MAX_CHARS],
+                          db_path=resolved_db, hook_data=hook_data)
+        else:
+            run = partial(recall, query, db_path=resolved_db, skip_qdrant=True, **extra)
 
         def run_probed() -> Any:  # T-1648: how long the request waited behind the limiter (observation only)
             stall_probe.worker_started(enqueued)
@@ -166,6 +175,9 @@ def create_http_app(
 
         with timed_event(_HOOK_LOG, "hook_recall", surface="hook", query_chars=len(query)) as fields:
             ctx = await anyio.to_thread.run_sync(run_probed, limiter=_hook_recall_limiter)
+            if file_hint is not None:
+                fields["file_hint_claims"] = len(ctx)
+                return JSONResponse({"claims": ctx})
             fields["ctx_chars"] = len(ctx or "")
         return JSONResponse({"ctx": ctx or ""})
 

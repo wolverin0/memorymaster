@@ -224,6 +224,49 @@ def remember(session_id: str, ids: list[int], *, now: float | None = None) -> No
                 pass
 
 
+# --- files the pre-edit hint already spoke about in a session --------------------------------
+
+
+def _files_path(session_id: str) -> Path:
+    return _seen_path(session_id).with_suffix(".files.json")
+
+
+def hinted_files(session_id: str, *, now: float | None = None) -> frozenset[str]:
+    """Keys (hashes, never paths) of the files hinted in this session, unexpired; empty on any problem."""
+    now = time.time() if now is None else now
+    try:
+        state = json.loads(_files_path(session_id).read_text(encoding="utf-8"))
+        if not 0 <= now - float(state["ts"]) < SEEN_TTL_SECONDS:
+            return frozenset()
+        return frozenset(str(key) for key in state["files"])
+    except (OSError, ValueError, TypeError, KeyError):
+        return frozenset()
+
+
+def remember_file(session_id: str, key: str, *, now: float | None = None) -> None:
+    """Record that the session got the pre-edit hint for ``key`` (bounded, expiring); never raises."""
+    now = time.time() if now is None else now
+    path = _files_path(session_id)
+    temporary = None
+    try:
+        merged = [*(k for k in hinted_files(session_id, now=now) if k != key), key]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False,
+                                         suffix=".tmp") as handle:
+            temporary = Path(handle.name)
+            json.dump({"ts": now, "files": merged[-SEEN_MAX_IDS:]}, handle)
+        os.replace(temporary, path)
+        temporary = None
+    except OSError:
+        pass
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 # --- the turn staged between recall and emission (T-2275) -------------------------------------
 
 
@@ -321,7 +364,7 @@ def forget(session_id: str) -> None:
     """A new/compacted session lost the injected context: its claims may be injected again."""
     seen = _seen_path(session_id)
     try:
-        for path in (seen, *seen.parent.glob(seen.stem + ".*.turn.json")):
+        for path in (seen, _files_path(session_id), *seen.parent.glob(seen.stem + ".*.turn.json")):
             path.unlink(missing_ok=True)
     except OSError:
         pass
