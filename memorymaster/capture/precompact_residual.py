@@ -41,6 +41,10 @@ CARRY_HEADER = "previously open (from the last compaction):"
 CARRY_CHARS = 1500
 CARRY_MIN_PREFIX = 30  # a model that clips a verbatim copy still maps back when the clip keeps this much
 CARRY_NEAR_RATIO = 0.7  # loose on purpose: a rewrite that slips past it is still caught by the grounding rule
+# Overlap of content tokens (shared / the shorter side) under which an ungrounded item is no rewrite of a carried
+# one. Measured on the test cases: a heavy rewrite of the same words 1.0, a loose paraphrase 0.33-0.6, an item lifted
+# from the summary or a rewrite beyond recognition 0.0; 0.3 keeps every paraphrase seen and none of the unrelated ones.
+ATTRIBUTE_FLOOR = 0.3
 GROUND_RATIO = 0.6  # share of an item's content tokens that must appear in the conversation to count as stated there
 GROUND_MIN_TOKENS = 3  # below this (or below 20 chars) an item is too short to be "restated" by token overlap
 
@@ -358,6 +362,12 @@ def _stated(item: dict, ground_norm: str, ground_tokens: set[str], *, short_by_s
     return short_by_substring and _norm(item["text"]) in ground_norm
 
 
+def _overlap(a: str, b: str) -> float:
+    """Shared content tokens over the shorter side: how much of one text the other repeats."""
+    ta, tb = _tokens(a), _tokens(b)
+    return len(ta & tb) / min(len(ta), len(tb)) if ta and tb else 0.0
+
+
 def carry_candidates(carried: list[dict]) -> list[dict]:
     """Previous items worth offering again: below the carry limit and clean for the provider."""
     return drop_sensitive([c for c in carried if c.get("carried", 0) < residual_state.MAX_CARRIES])
@@ -373,14 +383,19 @@ def reconcile_carried(
 ) -> list[dict]:
     """Keep the lineage of carried items bounded whatever the model does with their text.
 
-    An item of the answer is, in order: a copy of an offered item (equal, clipped or near-identical;
-    maps back to the offered kind and text, so the ingest key is unchanged); a REWRITE of an offered
-    item (not a copy and not stated in the conversation while offered items of its kind went
-    unmatched: it takes that item's place, text included); or genuinely new (stated in the
-    turns, or nothing left to attribute it to: ingested as before, age 0). Copies and rewrites
-    keep the ``carried`` counter plus one real compaction (``ticked``), reset when the conversation
-    states the item itself; variants of one carried item collapse into it. Items that did not fit the
-    carried block were never judged: they ride along, aged, while there is room.
+    An item of the answer is, in order: a copy of an offered item (equal, same-kind clipped, or
+    near-identical; maps back to the carried kind and text, so the ingest key is unchanged); stated in
+    the turns after the boundary (genuinely new: age 0); else UNGROUNDED, and then either a rewrite of
+    an unmatched offered item of its kind whose content tokens overlap at least ``ATTRIBUTE_FLOOR``
+    (it IS that item: carried text, age + 1), or, below the floor for all of them, a new text that
+    inherits age + 1 from the OLDEST such offered item, whose lineage ends there (so a model that
+    rewrites beyond recognition every round mints at most two extra claims and the item is gone after
+    two unstated compactions); with none unmatched it is simply new. Copies and rewrites age by one
+    real compaction (``ticked``), reset when the turns state the carried item; variants collapse.
+    Items that did not fit the carried block were never judged: they ride along, aged, while there is room.
+    Trade-offs: an unstated change of number or negation folds into the carried item (a stated one is
+    new); the near ratio 0.7 can collapse a new item worded like a carried one; unoffered extras are
+    dropped when the marker is full.
     """
     if not offered and not unoffered:
         return items
@@ -409,13 +424,31 @@ def reconcile_carried(
             seen.add(key)
             out.append(entry)
 
-    for item, index in zip(items, matched):
-        if index is None and item["kind"] != "card" and not _stated(item, ground_norm, ground_tokens, short_by_substring=True):
-            free = [n for n, c in enumerate(offered) if n not in used and c["kind"] == item["kind"]]
-            if free:  # a rewrite of the closest unmatched carried item of its kind
-                index = max(free, key=lambda n: difflib.SequenceMatcher(None, _norm(item["text"]), _norm(offered[n]["text"])).ratio())
-                used.add(index)
-        add(aged(offered[index]) if index is not None else item)
+    def attributable(item: dict) -> bool:
+        return item["kind"] != "card" and not _stated(item, ground_norm, ground_tokens, short_by_substring=True)
+
+    inherited: dict[int, int] = {}  # item position -> offered index it takes its age from
+    for position, (item, index) in enumerate(zip(items, matched)):
+        if index is not None or not attributable(item):
+            continue
+        free = [n for n, c in enumerate(offered) if n not in used and c["kind"] == item["kind"]]
+        best = max(free, key=lambda n: _overlap(item["text"], offered[n]["text"]), default=None)
+        if best is not None and _overlap(item["text"], offered[best]["text"]) >= ATTRIBUTE_FLOOR:
+            matched[position] = best  # a rewrite of that carried item
+            used.add(best)
+    for position, (item, index) in enumerate(zip(items, matched)):
+        if index is not None or not attributable(item):
+            continue
+        free = [n for n, c in enumerate(offered) if n not in used and c["kind"] == item["kind"]]
+        if free:  # below the floor for every unmatched one: its own text, the oldest lineage's age
+            inherited[position] = max(free, key=lambda n: offered[n].get("carried", 0))
+            used.add(inherited[position])
+    for position, (item, index) in enumerate(zip(items, matched)):
+        if position in inherited:
+            count = offered[inherited[position]].get("carried", 0) + int(ticked)
+            add({"kind": item["kind"], "text": item["text"], **({"carried": count} if count else {})})
+        else:
+            add(aged(offered[index]) if index is not None else item)
     fitted = residual_state._fit(out)
     for carried in unoffered:
         extra = aged(carried)
@@ -576,8 +609,10 @@ def capture_residual(
     if saved is not None and egress.get("answered"):  # re-saved with new counters: the old copy has served
         residual_state.retire_carried(session_id, directory=state_directory)
     try:
-        # A carried copy is already a claim from the capture that found it: no second write, no revival churn.
-        fresh = [i for i in items if not i.get("carried")]
+        # An item whose kind and text the previous marker already held is already a claim: no second write, no
+        # revival churn. A new text that only inherited an age is a new claim and is written once.
+        known = {(i["kind"], i["text"].lower()) for i in previous}
+        fresh = [i for i in items if (i["kind"], i["text"].lower()) not in known]
         outcome["ingested"] = ingest_residual(fresh, db_path=db_path, session_id=session_id, cwd=cwd, spool=spool)
     except Exception as exc:  # swallow-ok: the residual file already protects the session; ingest is the durable extra
         outcome["ingest_error"] = type(exc).__name__

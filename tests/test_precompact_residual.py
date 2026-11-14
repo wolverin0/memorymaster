@@ -1054,3 +1054,61 @@ def test_a_clipped_prefix_only_folds_into_a_carried_item_of_the_same_kind():
     carried = [{"kind": "decision", "text": "should the sync retry use jitter", "carried": 0}]
     other = {"kind": "assumption", "text": "should the sync retry use jitter and also the whole backoff schedule across every region we deploy"}
     assert pr.reconcile_carried([other], carried, "user: " + other["text"]) == [other]  # stated in the turns, other kind: new
+
+
+# --- similarity floor: an unrelated ungrounded item is its own claim but inherits the lineage's age ----------
+
+CARRIED_A = "should the sync retry use jitter? OPENQ still undecided"
+LIFTED = "migrate the logging format to json lines before the release"
+
+
+def test_an_item_lifted_from_the_summary_is_kept_as_itself_and_does_not_keep_the_unrelated_carried_one_alive():
+    carried = [{"kind": "decision", "text": CARRIED_A, "carried": 0}]
+    out = pr.reconcile_carried([{"kind": "decision", "text": LIFTED}], carried, "user: something unrelated")
+    assert out == [{"kind": "decision", "text": LIFTED, "carried": 1}]  # own text, age + 1; the unrelated carried item is gone
+
+
+def test_a_loose_paraphrase_above_the_floor_is_still_the_carried_item():
+    carried = [{"kind": "decision", "text": CARRIED_A, "carried": 0}]
+    for paraphrase in ("whether jitter helps retries in the sync worker today", "jitter for sync retries is still open"):
+        assert pr._overlap(paraphrase, CARRIED_A) >= pr.ATTRIBUTE_FLOOR
+        out = pr.reconcile_carried([{"kind": "decision", "text": paraphrase}], carried, "user: something unrelated")
+        assert out == [{"kind": "decision", "text": CARRIED_A, "carried": 1}]
+    assert pr._overlap(LIFTED, CARRIED_A) < pr.ATTRIBUTE_FLOOR
+
+
+def test_a_lifted_item_is_ingested_once_and_inherits_the_age_end_to_end(svc, tmp_path):
+    cwd = str(tmp_path / "workspace" / "SyncWorker")
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": cwd}
+    _capture(tmp_path, transcript, _echo_open_lines, **kwargs)
+    _deliver(tmp_path)
+    compact()
+    outcome = _capture(tmp_path, transcript, lambda p, t: json.dumps({"decisions": [LIFTED]}), **kwargs)
+    assert outcome["items"] == 1 and outcome["ingested"] == 1
+    items, _ = state.previous_items("sess-carry", directory=tmp_path / "state")
+    assert items == [{"kind": "decision", "text": LIFTED, "carried": 1}]  # the old lineage ended, the new one is aged
+    assert sorted(r["text"] for r in _claims_of(svc.db_target)) == sorted([OPEN_TURN, LIFTED])
+
+
+def test_a_model_that_rewrites_beyond_recognition_every_round_mints_at_most_two_extra_claims_and_ends(svc, tmp_path):
+    cwd = str(tmp_path / "workspace" / "SyncWorker")
+    transcript, compact = _session(tmp_path)
+    kwargs = {"db": "residual.db", "cwd": cwd}
+    _capture(tmp_path, transcript, _echo_open_lines, **kwargs)
+    vocab = ["quartz lantern meadow harbor compass velvet", "granite orchard saddle ribbon thunder mosaic",
+             "pewter canyon violin lattice ember tundra", "marble falcon cobalt hollow juniper anchor",
+             "walnut glacier trumpet saffron bramble quiver", "copper meadow lantern ripple summit orchid"]
+    seen = []
+    for number, words in enumerate(vocab):
+        def llm(prompt, text, words=words):
+            carry_lines = [ln for ln in text.splitlines() if ln.startswith("- ")]
+            return json.dumps({"decisions": [f"{words} {number}"] if carry_lines else []})
+
+        if state.previous_items("sess-carry", directory=tmp_path / "state")[0]:
+            _deliver(tmp_path)
+        compact()
+        outcome = _capture(tmp_path, transcript, llm, **kwargs)
+        seen.append((outcome["items"], outcome["ingested"]))
+    assert seen == [(1, 1), (1, 1), (0, 0), (0, 0), (0, 0), (0, 0)]
+    assert len(_claims_of(svc.db_target)) == 3  # the original plus at most two extra
