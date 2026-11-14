@@ -5,12 +5,15 @@ One block per drift, each driven through ``index_transcripts`` on synthetic stor
 from __future__ import annotations
 
 import logging
+import sqlite3
 import sys
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 from test_transcript_index_sources import (
     SECRET,
+    _codex_line,
     _codex_meta,
     _codex_msg,
     world,
@@ -160,3 +163,143 @@ def test_the_zstd_extra_is_declared_optional_in_pyproject():
     assert 'zstd = ["zstandard' in text
     assert "zstandard" not in text.split("[project.optional-dependencies]")[0]  # not a hard dependency
 
+
+
+# --- D2: Codex Desktop re-stamped replays ---------------------------------------------------------------------
+
+TURN_A = "0198aaaa-1111-4222-8333-444455556666"
+TURN_B = "0198bbbb-1111-4222-8333-444455556666"
+RESTAMP = "2026-11-07T12:00:00Z"  # the write time every record of a re-stamped rollout carries
+STARTED_AT = 1793871045  # 2026-11-05T09:30:45Z, the real turn clock
+
+
+def _turn(turn_id: str, started_at: int | None, question: str, answer: str, ts: str = RESTAMP) -> list[str]:
+    started = {"type": "task_started", "turn_id": turn_id, **({"started_at": started_at} if started_at else {})}
+    return [_codex_line("event_msg", started, ts), _codex_msg("user", question, ts), _codex_msg("assistant", answer, ts)]
+
+
+def _dates(world) -> list[str]:
+    return [row[0] for row in world.rows("SELECT date FROM fragments ORDER BY id")]
+
+
+def test_a_restamped_rollout_is_dated_from_the_turn_clock(world):
+    write_codex(world.home, "0198a000", [
+        _codex_meta(world.cwd),
+        *_turn(TURN_A, STARTED_AT, "What retention window should the quartzite audit logs have?",
+               "We decided the quartzite audit logs retention window is 45 days, final.")])
+    world.index()
+    assert _dates(world) == ["2026-11-05T09:30:45Z"]
+    [hit] = world.search("quartzite audit logs retention window")
+    assert hit.date == "2026-11-05T09:30:45Z"
+
+
+def test_a_grown_rollout_keeps_the_turn_date_on_resume_and_a_new_turn_gets_its_own(world):
+    path = write_codex(world.home, "0198a000", [
+        _codex_meta(world.cwd),
+        *_turn(TURN_A, STARTED_AT, "What retention window should the quartzite audit logs have?",
+               "We decided the quartzite audit logs retention window is 45 days, final.")])
+    world.index()
+    with path.open("a", encoding="utf-8") as fh:  # more of the same turn: no new task_started
+        fh.write(_codex_msg("user", "Follow up about the okapi cache eviction policy please.", RESTAMP) + "\n")
+    world.index()
+    assert _dates(world) == ["2026-11-05T09:30:45Z", "2026-11-05T09:30:45Z"]
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write("\n".join(_turn(TURN_B, STARTED_AT + 86400, "A new question about the pumice scheduler backlog today?",
+                                 "The pumice scheduler backlog drains by friday, final answer.")) + "\n")
+    world.index()
+    assert _dates(world)[-1] == "2026-11-06T09:30:45Z"
+    assert world.rows("SELECT count(*) FROM fragments") == [(3,)]
+
+
+def test_a_rollout_without_a_turn_clock_keeps_the_record_timestamp(world):
+    write_codex(world.home, "0198a000", [
+        _codex_meta(world.cwd), _codex_line("event_msg", {"type": "task_started", "turn_id": TURN_A}, RESTAMP),
+        _codex_msg("user", "What retention window should the quartzite audit logs have?", "2026-11-04T08:00:00Z")])
+    world.index()
+    assert _dates(world) == ["2026-11-04T08:00:00Z"]
+
+
+def _replay_pair(world) -> tuple[Path, Path]:
+    question, answer = "What retention window should the quartzite audit logs have?", "We decided it is 45 days, final."
+    original = write_codex(world.home, "0198a000", [_codex_meta(world.cwd), *_turn(TURN_A, STARTED_AT, question, answer)])
+    replay = write_codex(world.home, "0198b000", [
+        _codex_meta(world.cwd), *_turn(TURN_A, STARTED_AT, question, answer),
+        *_turn(TURN_B, STARTED_AT + 60, "A new question about the pumice scheduler backlog today?",
+               "The pumice scheduler backlog drains by friday, final answer.")])
+    return original, replay
+
+
+def _fragments_of(world, name: str) -> int:
+    return world.rows(f"SELECT count(*) FROM fragments WHERE session_id IN "
+                      f"(SELECT session_id FROM files WHERE rel LIKE '%{name}.jsonl')")[0][0]
+
+
+def test_a_turn_already_indexed_from_another_rollout_is_not_indexed_twice_and_the_earliest_file_wins(world):
+    _replay_pair(world)
+    world.index()
+    assert len(world.search("quartzite audit logs retention window", limit=5)) == 1  # not two sessions
+    assert len(world.search("pumice scheduler backlog")) == 1  # the replay's own turn is kept
+    assert _fragments_of(world, "0198a000") == 1 and _fragments_of(world, "0198b000") == 1
+    assert "quartzite" in world.rows("SELECT text FROM fragments WHERE session_id IN "
+                                     "(SELECT session_id FROM files WHERE rel LIKE '%0198a000.jsonl')")[0][0]
+
+
+def test_lines_appended_to_a_skipped_turn_stay_skipped_on_resume(world):
+    _replay_pair(world)
+    copy = write_codex(world.home, "0198c000", [
+        _codex_meta(world.cwd),
+        _codex_line("event_msg", {"type": "task_started", "turn_id": TURN_A, "started_at": STARTED_AT}, RESTAMP),
+        _codex_msg("user", "Which retention window should the quartzite audit logs have?", RESTAMP)])
+    world.index()
+    assert _fragments_of(world, "0198c000") == 0
+    with copy.open("a", encoding="utf-8") as fh:  # still inside the copied turn: no new task_started
+        fh.write(_codex_msg("assistant", "A copied answer about the quartzite audit logs retention.", RESTAMP) + "\n")
+    world.index()
+    assert _fragments_of(world, "0198c000") == 0
+    with copy.open("a", encoding="utf-8") as fh:  # its own turn afterwards is indexed
+        fh.write("\n".join(_turn(TURN_B.replace("bbbb", "cccc"), STARTED_AT + 120, "A brand new question about the heron ingest backlog?",
+                                 "The heron ingest backlog is cleared every night, final.")) + "\n")
+    world.index()
+    assert _fragments_of(world, "0198c000") == 1 and len(world.search("heron nightly cleared")) == 1
+
+
+def test_a_full_reparse_of_both_rollouts_gives_the_same_result(world):
+    _replay_pair(world)
+    world.index()
+    before = world.rows("SELECT session_id, text FROM fragments ORDER BY session_id, id")
+    with closing(sqlite3.connect(world.idx)) as con:
+        con.execute("UPDATE files SET size = -1, prefix_sha = '' WHERE source = 'codex'")
+        con.commit()
+    assert world.index()["codex_files_indexed"] == 2
+    assert world.rows("SELECT session_id, text FROM fragments ORDER BY session_id, id") == before
+
+
+def test_turns_without_a_uuid_id_are_never_treated_as_copies(world):
+    for name in ("0198a000", "0198b000"):  # imported turns reuse one literal id across hundreds of unrelated rollouts
+        write_codex(world.home, name, [
+            _codex_meta(world.cwd),
+            *_turn("external-import-turn-1", None, f"A question {name} about the marzipan snapshot cadence?",
+                   f"The marzipan snapshot cadence for {name} is every 7 hours, final.")])
+    world.index()
+    assert world.rows("SELECT count(*) FROM fragments") == [(2,)]
+
+
+def test_a_copy_that_was_indexed_before_its_original_stays_known_residue(world):
+    """Limit, pinned on purpose: the earliest file wins only in the order the index meets them.  A replay indexed in an
+    earlier run keeps its turn when the original appears later (no per-turn fragment ids exist to retract it)."""
+    question, answer = "What retention window should the quartzite audit logs have?", "We decided it is 45 days, final."
+    write_codex(world.home, "0198b000", [_codex_meta(world.cwd), *_turn(TURN_A, STARTED_AT, question, answer)])
+    world.index()
+    write_codex(world.home, "0198a000", [_codex_meta(world.cwd), *_turn(TURN_A, STARTED_AT, question, answer)])
+    world.index()
+    assert _fragments_of(world, "0198b000") == 1 and _fragments_of(world, "0198a000") == 0
+
+
+def test_the_state_of_an_existing_row_keeps_its_old_shape_without_turn_data(world):
+    path = write_codex(world.home, "0198a000", [_codex_meta(world.cwd), _codex_msg("user", "A message about the kestrel failover plan.")])
+    world.index()
+    assert world.rows("SELECT state FROM files") == [("project:alpha-app",)]  # a bare scope, as before
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(_codex_msg("user", "Follow up about the okapi cache eviction policy please.") + "\n")
+    world.index()
+    assert len(world.search("okapi cache eviction")) == 1

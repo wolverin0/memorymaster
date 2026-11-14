@@ -372,17 +372,41 @@ def _conversation_record() -> Callable[..., Any]:
     return record
 
 
+def _turn_clock(started_at: object) -> str:
+    """``started_at`` (epoch seconds; milliseconds tolerated) of a Codex ``task_started`` as an ISO date, else ``""``."""
+    if isinstance(started_at, bool) or not isinstance(started_at, (int, float)):
+        return ""
+    seconds = started_at / 1000 if started_at > 1e11 else started_at
+    try:
+        return datetime.fromtimestamp(seconds, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
 def _codex_read(record: dict, state: dict, scopes: dict[str, str]) -> tuple[str, str, str]:
     payload = record.get("payload")
     if record.get("type") in ("session_meta", "turn_context") and isinstance(payload, dict):
         if payload.get("cwd"):
             state["scope"] = _scope_for_cwd(payload["cwd"], scopes)  # the scope, never the raw path, is what persists
         return "", "", ""
+    if record.get("type") == "event_msg" and isinstance(payload, dict) and payload.get("type") == "task_started":
+        # Codex Desktop writes rollouts that replay earlier turns and stamps every record with the write time: the
+        # turn clock dates the fragments, and a turn id (uuid only: imported turns reuse one literal id) names a turn
+        turn_id = payload.get("turn_id")
+        is_uuid = isinstance(turn_id, str) and _UUID.fullmatch(turn_id)
+        state["turn_id"] = hashlib.sha256(turn_id.lower().encode()).hexdigest()[:12] if is_uuid else ""
+        state["turn_date"] = _turn_clock(payload.get("started_at")) or state.get("turn_date", "")
+        return "", "", ""
+    turn_id = state.get("turn_id", "")
+    if turn_id and state.get("_owners", {}).get(turn_id, state.get("_rel")) != state.get("_rel"):
+        return "", "", ""  # a turn another (earlier) rollout already holds: the same turn is not indexed twice
     found = _conversation_record()(record, "codex", state=state.setdefault("mm", {}))
     if not found:
         return "", "", ""
     role, spans = found
     text = ts.usable_text(role, "\n".join(span.text for span in spans))
+    if text and state.get("scope") and turn_id and turn_id not in state.setdefault("turns", []):
+        state["turns"].append(turn_id)  # only turns that store fragments are claimed
     return role, text, state.get("scope", "") if text else ""
 
 
@@ -428,6 +452,27 @@ def _open_transcript(path: Path) -> BinaryIO:
     return backend(path) if backend else path.open("rb")
 
 
+def _load_state(text: str) -> dict:
+    """``files.state``: a bare scope (every row written before turn data existed) or a JSON object carrying the scope
+    plus the Codex turn clock and turn ids."""
+    if not text.startswith("{"):
+        return {"scope": text}
+    try:
+        loaded = json.loads(text)
+    except ValueError:
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return {key: loaded[key] for key in ("scope", "turn_date", "turn_id", "turns") if key in loaded}
+
+
+def _dump_state(state: dict) -> str:
+    extra = {key: state[key] for key in ("turn_date", "turn_id", "turns") if state.get(key)}
+    if not extra:
+        return state.get("scope", "")
+    return json.dumps({"scope": state.get("scope", ""), **extra}, separators=(",", ":"))
+
+
 def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, skip_automated: bool,
                      hasher, scopes: dict[str, str], dialect: _Dialect = _DIALECTS["claude"],
                      state: dict | None = None):
@@ -465,7 +510,8 @@ def _parse_increment(path: Path, offset: int, line_no: int, fallback_date: str, 
                 return [], offset, line_no, True
             role, text, scope = dialect.read(record, state, scopes)
             if text and scope:
-                packer.add(role, text, scope, _iso_date(record.get("timestamp"), fallback_date), this_line)
+                packer.add(role, text, scope, state.get("turn_date") or _iso_date(record.get("timestamp"), fallback_date),
+                           this_line)
     return packer.done(), offset, line_no, False
 
 
@@ -546,6 +592,10 @@ def _index_jsonl(run: _Run, source: str, root: Path, paths: list[Path]) -> None:
     # a compressed rollout counts as existing whether or not it can be read, so it never purges a session that was
     # indexed while plain
     _drop_gone(conn, stats, source, {prefix + _rel_posix(root, path) for path in paths})
+    owners: dict[str, str] = {}  # turn id -> rel of the rollout holding it (Codex; paths come oldest first)
+    for held in conn.execute("SELECT rel, state FROM files WHERE source = ? AND state LIKE '{%'", (source,)):
+        for turn in _load_state(held["state"]).get("turns", ()):
+            owners.setdefault(turn, held["rel"])
     for path in paths:
         if run.full(source):
             break
@@ -580,9 +630,13 @@ def _index_jsonl(run: _Run, source: str, root: Path, paths: list[Path]) -> None:
             resumable = row and not zst and st.st_size >= row["offset"] and not was_automated  # a .zst is immutable
             hasher = _verified_prefix(path, row["offset"], row["prefix_sha"]) if resumable else None
             if hasher is not None:
-                offset, line_no, state = row["offset"], row["lines"], {"scope": row["state"]}
+                offset, line_no, state = row["offset"], row["lines"], _load_state(row["state"])
             else:
                 hasher = hashlib.sha256()  # new, shrunk or rewritten file: parse from the start
+            if offset == 0 and row:  # a full re-read: the rollout's old claims on turns are replaced by what it now holds
+                for turn in [turn for turn, held in owners.items() if held == rel]:
+                    del owners[turn]
+            state.update(_owners=owners, _rel=rel)  # transient: _dump_state never persists them
             frags, new_offset, new_lines, automated = _parse_increment(
                 path, offset, line_no, _mtime_iso(st.st_mtime_ns), not run.include_automated, hasher, run.scopes,
                 dialect, state,
@@ -597,7 +651,8 @@ def _index_jsonl(run: _Run, source: str, root: Path, paths: list[Path]) -> None:
             _tick(stats, source, "errors")  # complete lines but not one JSON object: not a transcript of this source
         _write_session(conn, source, rel, sid, frags, replace=bool(row) and offset == 0, size=st.st_size,
                        mtime_ns=st.st_mtime_ns, offset=new_offset, lines=new_lines, prefix_sha=hasher.hexdigest(),
-                       automated=automated, state=state.get("scope", ""))
+                       automated=automated, state=_dump_state(state))
+        owners.update({turn: rel for turn in state.get("turns", ())})
         if automated:
             stats["files_automated"] += 1
             continue
